@@ -1,8 +1,6 @@
 """Settings for a migration run.
 
-Build a :class:`Settings` yourself, or call :meth:`Settings.from_env` to read the
-``TELEGRAM_*`` environment variables (a local ``.env`` file and Google Colab Secrets are
-supported). The package modules read the *active* settings through ``config.settings``
+The package modules read the *active* settings through ``config.settings``
 at call time; :func:`use_settings` scopes them to the current thread/async context.
 
 Nothing is read from the environment at import time.
