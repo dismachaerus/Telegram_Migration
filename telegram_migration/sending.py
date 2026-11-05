@@ -60,8 +60,10 @@ async def _send_text_chunks(client, channel, chunks, reply_to, state, prog_key,
 
     Takes the whole `state` so each successful chunk can be checkpointed to
     disk (when `persist` is true). A crash between chunks then resumes at the
-    next unsent chunk rather than replaying from the top. Single-chunk sends
-    pass persist=False: there is nothing to resume in the middle of.
+    next unsent chunk rather than replaying from the top. Even a single-chunk
+    send benefits from the checkpoint: if the process dies between Telegram
+    confirming the message and the id-map write, the persisted `done` count
+    prevents the next run from repeating it.
     """
     prog = state.setdefault(prog_key, {})
     # If a persisted run used different chunking, `done` may not correspond to
@@ -229,9 +231,14 @@ async def _send_no_caption_media(client, channel, chunks, media, reply_to, state
 
 
 async def _send_text_only(client, channel, chunks, reply_to, state, source_id):
+    # persist=True for every chunk count. The default used to be persist=len(chunks) > 1
+    # here, on the theory that a single-chunk send has nothing to resume in the middle
+    # of — but it also meant a crash between Telegram confirming the message and the
+    # id-map write left no recovery point at all, so the next run would repeat that
+    # one message. Media sends already save_state immediately after upload; this
+    # brings plain text in line with the media path.
     return await _send_text_chunks(
         client, channel, chunks, reply_to, state, "text_prog", source_id,
-        persist=len(chunks) > 1,
     )
 
 
