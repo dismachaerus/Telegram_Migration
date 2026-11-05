@@ -1,6 +1,6 @@
 """Command line: ``python -m telegram_migration`` or the ``telegram-migration`` command."""
 import argparse
-import sys
+import sys.
 
 from ._version import __version__
 
