@@ -111,6 +111,29 @@ class TextAndEntityTests(unittest.TestCase):
                 self.assertGreaterEqual(current.offset, 0)
                 self.assertLessEqual(current.offset + current.length, textutil.u16len(piece))
 
+    def test_split_preserves_spaces_at_boundaries(self):
+        """Concatenating the chunks must reproduce the input exactly, including
+        whitespace at chunk boundaries. Previously nxt=i+1 skipped the space."""
+        text = "abc def ghi jkl mno"
+        chunks = textutil.split_with_entities(text, [], first_limit=8, limit=8)
+        pieces = [chunk for chunk, _entities in chunks]
+        self.assertGreater(len(pieces), 1)
+        self.assertEqual("".join(pieces), text)
+        self.assertTrue(all(textutil.u16len(piece) <= 8 for piece in pieces))
+
+    def test_split_advances_past_a_surrogate_pair_when_limit_is_one(self):
+        """A limit of 1 with a surrogate pair at the boundary used to loop
+        forever because nxt stayed equal to start. The forward-progress guard
+        takes the whole pair (2 units) instead of hanging."""
+        chunks = textutil.split_with_entities("😀x", [], first_limit=1, limit=1)
+        pieces = [chunk for chunk, _entities in chunks]
+        self.assertEqual("".join(pieces), "😀x")
+        self.assertTrue(any(piece == "😀" for piece in pieces))
+
+    def test_split_rejects_a_limit_below_one(self):
+        with self.assertRaises(ValueError):
+            textutil.split_with_entities("abc", [], first_limit=0, limit=1)
+
     def test_entity_error_detection_does_not_match_generic_word_entities(self):
         self.assertTrue(formatfallback._is_entity_error(ValueError("invalid bounds for formatting")))
         self.assertFalse(formatfallback._is_entity_error(RuntimeError("unrelated entities database failure")))
@@ -433,7 +456,7 @@ class AsyncSendTests(unittest.TestCase):
                     saved = progress.load_partial()
             self.assertEqual(result, 999)
             self.assertEqual(calls, ["hello"])
-            self.assertIn("42", saved)                       # ← the fix, verified
+            self.assertIn("42", saved)
             self.assertEqual(saved["42"]["text_prog"]["done"], 1)
             self.assertEqual(saved["42"]["text_prog"]["first"], 999)
         asyncio.run(scenario())
