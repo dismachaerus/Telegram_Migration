@@ -79,6 +79,22 @@ def compose_message(watermark, sender, forward, body_text, body_entities, extra_
 
 
 def split_with_entities(text, entities, first_limit, limit):
+    """Split text into chunks no larger than the limits.
+
+    Whitespace is preserved at chunk boundaries: the whole input is stripped
+    once at the top, then continuation chunks are NOT individually stripped,
+    so ``"".join(piece for piece, _ in chunks) == stripped_text``.
+
+    Surrogate pairs are never split across chunks. If a limit of 1 lands on a
+    non-BMP character, that one chunk exceeds the limit by one UTF-16 unit
+    rather than looping forever (a defensive guard; config rejects limits
+    below 4, so this cannot happen through the public API).
+    """
+    if first_limit < 1 or limit < 1:
+        raise ValueError(
+            f"split limits must be at least 1 (got first_limit={first_limit}, limit={limit})"
+        )
+    text, entities = strip_with_entities(text, entities)
     b = text.encode("utf-16-le")
     n = len(b) // 2
     if n <= first_limit:
@@ -95,16 +111,19 @@ def split_with_entities(text, entities, first_limit, limit):
         else:
             end = nxt = hard
             lo = start + (lim * 3) // 4
-            for i in range(hard - 1, lo - 1, -1):      # last whitespace in the final quarter
+            for i in range(hard - 1, lo - 1, -1):
                 if unit(i) in (0x0A, 0x20):
-                    end, nxt = i, i + 1
+                    end = nxt = i + 1     # keep the whitespace in this chunk
                     break
             else:
-                if 0xD800 <= unit(hard - 1) <= 0xDBFF:  # do not split a surrogate pair
+                if 0xD800 <= unit(hard - 1) <= 0xDBFF:
                     end = nxt = hard - 1
+        if nxt <= start:
+            # Forward-progress guard: a surrogate pair at the boundary with
+            # lim == 1 would otherwise leave nxt == start and loop forever.
+            end = nxt = min(start + 2, n)
         seg = b[2 * start:2 * end].decode("utf-16-le")
         ents = _clip_entities(entities, start, end)
-        seg, ents = strip_with_entities(seg, ents)
         if seg:
             chunks.append((seg, ents))
         start, lim = nxt, limit

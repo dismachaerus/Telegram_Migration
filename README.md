@@ -141,7 +141,7 @@ run(settings)                       # or: run(dry_run=False)
 
 `Settings` is a plain dataclass, so everything can also be given directly (`Settings(api_id=..., base_dir=..., max_upload_mb=500)`). `run()` works from scripts and notebooks; `await telegram_migration.run_async(settings)` is the coroutine version. Async runs scope settings to their task, so concurrent migrations do not overwrite each other's configuration. `run_async()` does not apply the `nest_asyncio` patch used by `run()` inside an already-running event loop. Importing the package reads no environment variables and performs no file I/O; credentials problems raise `telegram_migration.ConfigError`.
 
-Telegram's message limit is 4096 UTF-16 units for every account, and media captions are limited to 1024 for a bot (2048 applies only to Premium user accounts, and a bot is not one). The defaults are `text_limit=4096` and `caption_limit=1024`; you can lower them to split text into shorter parts. `Settings.validate()` rejects values above Telegram's maximums (4096 for text, 2048 for captions), but a bot can only actually send captions up to 1024, so a `caption_limit` above 1024 passes validation and then fails at send time.
+Telegram's message limit is 4096 UTF-16 units for every account, and media captions are limited to 1024 for a bot (2048 applies only to Premium user accounts, and a bot is not one). The defaults are `text_limit=4096` and `caption_limit=1024`; you can lower them to split text into shorter parts. `Settings.validate()` rejects `text_limit` or `caption_limit` below 4, and `text_limit` above 4096 and `caption_limit` above 1024 (the actual ceiling for a bot).
 
 ## Progress files and resuming
 

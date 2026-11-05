@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Mapping, Optional, Tuple, Union
 
-from .constants import BOT_CAPTION_LIMIT, MAX_CAPTION_LIMIT, TEXT_LIMIT
+from .constants import BOT_CAPTION_LIMIT, MAX_CAPTION_LIMIT, MIN_TEXT_LIMIT, TEXT_LIMIT
 
 PLACEHOLDER_API_ID = 12345678          # the value shipped in .env.example
 _TRUE = {"1", "true", "yes", "y", "on"}
@@ -113,10 +113,12 @@ class Settings:
     max_json_fallback_mb: int = 512
     verify_replies: bool = True
     # Telegram's message limit is 4096 for every account; lower it only to split long text into
-    # shorter parts. Settings.validate() rejects values above Telegram's maximums.
+    # shorter parts. Settings.validate() rejects values above Telegram's maximum and below
+    # MIN_TEXT_LIMIT, where the splitter's surrogate-pair handling could produce a chunk
+    # slightly larger than the requested limit.
     text_limit: int = TEXT_LIMIT
-    # Caption limit for media. A bot account is not Premium, so keep 1024 (2048 applies only to
-    # Premium user accounts).
+    # Caption limit for media. A bot account is not Premium, so this is BOT_CAPTION_LIMIT
+    # (1024) rather than MAX_CAPTION_LIMIT (2048, Premium user accounts only).
     caption_limit: int = BOT_CAPTION_LIMIT
     # Try a native forward first when the export links the original message; a native
     # forward cannot carry our timestamp/sender line, so forward_annotate sends it as a reply.
@@ -151,12 +153,16 @@ class Settings:
                 found.append(f"{env_name} is still the example value")
         if self.channel_peer in (None, ""):
             found.append("TELEGRAM_CHANNEL_PEER is not set (numeric peer id or @username)")
-        if not 1 <= self.text_limit <= TEXT_LIMIT:
-            found.append(f"text_limit must be between 1 and {TEXT_LIMIT} (Telegram's maximum)")
-        if not 1 <= self.caption_limit <= BOT_CAPTION_LIMIT:
+        if not MIN_TEXT_LIMIT <= self.text_limit <= TEXT_LIMIT:
             found.append(
-                f"caption_limit must be between 1 and {BOT_CAPTION_LIMIT} "
-                f"(the limit for bot accounts; Premium user accounts can reach {MAX_CAPTION_LIMIT})"
+                f"text_limit must be between {MIN_TEXT_LIMIT} and {TEXT_LIMIT} "
+                f"(Telegram's maximum; the lower bound avoids a splitter edge case)"
+            )
+        if not MIN_TEXT_LIMIT <= self.caption_limit <= BOT_CAPTION_LIMIT:
+            found.append(
+                f"caption_limit must be between {MIN_TEXT_LIMIT} and {BOT_CAPTION_LIMIT} "
+                f"(the limit for bot accounts; Premium user accounts can reach {MAX_CAPTION_LIMIT}; "
+                f"the lower bound avoids a splitter edge case)"
             )
         return found
 
