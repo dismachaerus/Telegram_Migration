@@ -78,7 +78,6 @@ Optional settings (defaults in brackets):
 | `TELEGRAM_SEND_DELAY` [`2.5`] | Seconds to wait between messages. |
 | `TELEGRAM_SESSION_NAME` [`colab_bot_restorer_session`] | Name of the Telethon session file. |
 
-
 ### Google Colab
 
 Colab Secrets named `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHANNEL_PEER` are read automatically (enable notebook access for each). Run the migration **inside the notebook** so it can read the secrets (a `!python ...` command starts a separate process that cannot):
@@ -142,7 +141,7 @@ run(settings)                       # or: run(dry_run=False)
 
 `Settings` is a plain dataclass, so everything can also be given directly (`Settings(api_id=..., base_dir=..., max_upload_mb=500)`). `run()` works from scripts and notebooks; `await telegram_migration.run_async(settings)` is the coroutine version. Async runs scope settings to their task, so concurrent migrations do not overwrite each other's configuration. `run_async()` does not apply the `nest_asyncio` patch used by `run()` inside an already-running event loop. Importing the package reads no environment variables and performs no file I/O; credentials problems raise `telegram_migration.ConfigError`.
 
-Telegram's per-message and caption limits default to 4096 and 1024 UTF-16 units. Set `text_limit` and `caption_limit` on `Settings` when the destination account supports different limits (for example, `caption_limit=2048` for Premium).
+Telegram's message limit is 4096 UTF-16 units for every account, and media captions are limited to 1024 for a bot (2048 applies only to Premium user accounts, and a bot is not one). The defaults are `text_limit=4096` and `caption_limit=1024`; you can lower them to split text into shorter parts. `Settings.validate()` rejects values above Telegram's maximums (4096 for text, 2048 for captions), but a bot can only actually send captions up to 1024, so a `caption_limit` above 1024 passes validation and then fails at send time.
 
 ## Progress files and resuming
 
