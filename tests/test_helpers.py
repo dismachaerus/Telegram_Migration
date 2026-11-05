@@ -524,6 +524,40 @@ class AsyncSendTests(unittest.TestCase):
                 self.assertEqual(persisted["album_id"], 501)
         asyncio.run(scenario())
 
+    def test_album_send_passes_entities_aligned_with_captions(self):
+        """Telethon accepts a flat entity list and normalizes it to a
+        one-element list-of-lists, then pairs entity lists with captions.
+        The flat form would associate every entity with the first caption
+        only, and a caption mismatch trips the entity-bounds check and
+        triggers the formatting fallback. Pass one list per caption
+        instead — entities on the first caption, empty lists on the rest
+        (empty lists, not None, so the value stays a proper list-of-lists
+        and is never misread as a flat entity list)."""
+        async def scenario():
+            with tempfile.TemporaryDirectory() as temp:
+                calls = []
+                async def send_file(channel, files, **kwargs):
+                    calls.append((channel, files, kwargs))
+                    return [SimpleNamespace(id=501), SimpleNamespace(id=502)]
+                client = SimpleNamespace(send_file=send_file)
+                state = {"src": "77"}
+                bold = tl.MessageEntityBold(offset=0, length=5)
+                with patch.object(config.get_settings(), "partial_file",
+                                  str(Path(temp) / "partial.jsonl")):
+                    await sending._do_send(
+                        client, "channel", [("hello", [bold])],
+                        [("photos/a.jpg", "photo"), ("photos/b.jpg", "photo")],
+                        None, None, state, None,
+                    )
+                self.assertEqual(len(calls), 1)
+                kwargs = calls[0][2]
+                self.assertIn("formatting_entities", kwargs)
+                ents = kwargs["formatting_entities"]
+                self.assertEqual(len(ents), 2)
+                self.assertEqual(ents[0], [bold])
+                self.assertEqual(ents[1], [])
+        asyncio.run(scenario())
+
     def test_video_without_audio_probe_result_is_not_forced_to_silent_video(self):
         async def scenario():
             calls = []
