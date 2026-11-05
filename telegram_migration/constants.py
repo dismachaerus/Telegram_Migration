@@ -1,7 +1,14 @@
 """Fixed values that are part of how Telegram and the export work (not user settings)."""
 
-# Telegram's hard limit for the text of one message.
+# Telegram's hard limit for the text of one message (every account, Premium included).
 TEXT_LIMIT = 4096
+
+# The largest caption any account can send (Premium user accounts); bots are limited to 1024.
+MAX_CAPTION_LIMIT = 2048
+
+# The caption limit this tool can actually use: the script authenticates with a bot token,
+# and bot accounts cannot be Premium, so 1024 is the effective ceiling.
+BOT_CAPTION_LIMIT = 1024
 
 # messages.html, messages2.html, ... in a Telegram Desktop HTML export.
 HTML_FILE_PATTERN = r"^messages(\d*)\.html$"
