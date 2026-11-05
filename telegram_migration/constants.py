@@ -10,9 +10,10 @@ MAX_CAPTION_LIMIT = 2048
 # and bot accounts cannot be Premium, so 1024 is the effective ceiling.
 BOT_CAPTION_LIMIT = 1024
 
-# The smallest text_limit that makes sense. Below 4, the splitter's surrogate-pair
-# avoidance can produce a chunk that exceeds the limit by one unit; Settings.validate()
-# rejects such values so the splitter never has to make that choice in practice.
+# The smallest text_limit or caption_limit that makes sense. Below 4, the splitter's
+# surrogate-pair avoidance can produce a chunk that exceeds the requested limit by one
+# UTF-16 unit; Settings.validate() rejects such values so the splitter never faces that
+# choice through the public API.
 MIN_TEXT_LIMIT = 4
 
 # messages.html, messages2.html, ... in a Telegram Desktop HTML export.
