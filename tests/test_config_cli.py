@@ -20,12 +20,40 @@ GOOD_ENV = {
 
 
 class SettingsTests(unittest.TestCase):
+    def test_limits_follow_telegram_and_cannot_exceed_its_maximums(self):
+        self.assertEqual((Settings().text_limit, Settings().caption_limit), (4096, 1024))
+        for field_name, value in (("text_limit", 4097), ("text_limit", 0), ("caption_limit", 2049), ("caption_limit", 0)):
+            with self.assertRaises(ConfigError, msg=f"{field_name}={value}") as caught:
+                Settings.from_env(GOOD_ENV, **{field_name: value}).validate()
+            self.assertIn(field_name, str(caught.exception))
+        Settings.from_env(GOOD_ENV, text_limit=1000, caption_limit=900).validate()
+
+    def test_text_limit_below_4_is_rejected(self):
+        with self.assertRaises(ConfigError) as caught:
+            Settings.from_env(GOOD_ENV, text_limit=3).validate()
+        self.assertIn("text_limit", str(caught.exception))
+        self.assertIn("4", str(caught.exception))
+
+    def test_caption_limit_below_4_is_rejected(self):
+        with self.assertRaises(ConfigError) as caught:
+            Settings.from_env(GOOD_ENV, caption_limit=3).validate()
+        self.assertIn("caption_limit", str(caught.exception))
+        self.assertIn("4", str(caught.exception))
+
+    def test_the_settings_proxy_is_read_only_so_patching_cannot_corrupt_it(self):
+        before = config.get_settings().idmap_file
+        with self.assertRaises(AttributeError):
+            config.settings.idmap_file = "/elsewhere"
+        with self.assertRaises(AttributeError):
+            patch.object(config.settings, "idmap_file", "/elsewhere").start()
+        self.assertEqual(config.get_settings().idmap_file, before)
+
     def test_from_env_reads_the_documented_variables(self):
         s = Settings.from_env(GOOD_ENV)
         self.assertEqual((s.api_id, s.api_hash, s.bot_token), (424242, "abcdef", "1:token"))
         self.assertEqual(s.channel_peer, -1001234567890)
         self.assertEqual(s.base_dir, os.path.abspath("/data/export"))
-        self.assertTrue(s.dry_run)                       # safe default
+        self.assertTrue(s.dry_run)
         self.assertFalse(s.skip_confirmation)
 
     def test_channel_peer_may_be_a_username(self):
@@ -165,6 +193,17 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(code, 130)
         self.assertIn("Progress made so far is saved", err)
 
+    def test_run_returning_false_exits_with_status_1(self):
+        """run() returning False must become exit code 1 — a start failure."""
+        with patch.object(runner, "run", lambda settings: False):
+            code, _, _ = self.run_cli([], GOOD_ENV)
+        self.assertEqual(code, 1)
+
+    def test_run_returning_true_exits_with_status_0(self):
+        with patch.object(runner, "run", lambda settings: True):
+            code, _, _ = self.run_cli([], GOOD_ENV)
+        self.assertEqual(code, 0)
+
     def test_version_flag_prints_the_version(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as caught:
@@ -187,7 +226,7 @@ class PackageTests(unittest.TestCase):
                 timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
         version, telethon_loaded = result.stdout.split()
-        self.assertEqual(telethon_loaded, "False")        # heavy imports wait until you call run()
+        self.assertEqual(telethon_loaded, "False")
         self.assertRegex(version, r"^\d+\.\d+\.\d+")
 
     def test_python_dash_m_help_works(self):
