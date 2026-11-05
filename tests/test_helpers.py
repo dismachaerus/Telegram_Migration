@@ -212,6 +212,42 @@ class MediaTests(unittest.TestCase):
             )
             self.assertEqual(media[0][1], "photo")
 
+    def test_find_media_accepts_file_names_written_raw_or_percent_encoded(self):
+        with tempfile.TemporaryDirectory() as temp:
+            files = Path(temp) / "files"
+            files.mkdir()
+            (files / "My File \u00e9.pdf").write_bytes(b"pdf bytes")
+            for href in ("files/My File \u00e9.pdf", "files/My%20File%20%C3%A9.pdf"):
+                elem = etree.fromstring(
+                    '<div class="message" id="message1"><div class="media_wrap">'
+                    f'<a class="media_file" href="{href}"><div class="title">x</div></a></div></div>'
+                )
+                with patch.object(config.get_settings(), "base_dir", temp):
+                    media = exportmedia.find_media(elem)
+                self.assertEqual([kind for _, kind in media], ["document"], href)
+
+    def test_find_media_resolves_percent_encoded_image_src(self):
+        """<img src> uses the same path helper as <a href>; verify the sticker
+        fallback also unquotes. Stickers are the media type that relies
+        entirely on <img src>."""
+        with tempfile.TemporaryDirectory() as temp:
+            sticker = Path(temp) / "stickers" / "My Sticker.webp"
+            sticker.parent.mkdir()
+            sticker.write_bytes(b"sticker bytes")
+            elem = etree.fromstring(
+                '<div class="message" id="message1"><div class="sticker_wrap">'
+                '<img src="stickers/My%20Sticker.webp"/>'
+                '</div></div>'
+            )
+            with patch.object(config.get_settings(), "base_dir", temp):
+                media = exportmedia.find_media(elem)
+            self.assertEqual(len(media), 1)
+            self.assertEqual(
+                os.path.normcase(os.path.normpath(media[0][0])),
+                os.path.normcase(os.path.normpath(str(sticker))),
+            )
+            self.assertEqual(media[0][1], "sticker_static")
+
     def test_album_compatibility_only_allows_supported_media_groups(self):
         self.assertTrue(exportmedia.album_compatible([("a", "photo"), ("b", "video")]))
         self.assertTrue(exportmedia.album_compatible([("a", "document"), ("b", "document")]))
@@ -374,6 +410,32 @@ class AsyncSendTests(unittest.TestCase):
             )
             self.assertEqual(result, 50)
             self.assertEqual(calls, [])
+        asyncio.run(scenario())
+
+    def test_send_text_only_persists_state_for_a_single_chunk(self):
+        """A single-chunk text send must checkpoint to disk. Otherwise a crash
+        between Telegram confirming the message and the id-map write would
+        repeat that message on the next run. Media sends already save state;
+        this test ensures plain text does too."""
+        async def scenario():
+            calls = []
+            async def send_message(channel, text, **kwargs):
+                calls.append(text)
+                return SimpleNamespace(id=999)
+            client = SimpleNamespace(send_message=send_message)
+            state = {"src": "42"}
+            with tempfile.TemporaryDirectory() as temp:
+                with patch.object(config.get_settings(), "partial_file",
+                                  str(Path(temp) / "partial.jsonl")):
+                    result = await sending._send_text_only(
+                        client, "channel", [("hello", [])], None, state, "42",
+                    )
+                    saved = progress.load_partial()
+            self.assertEqual(result, 999)
+            self.assertEqual(calls, ["hello"])
+            self.assertIn("42", saved)                       # ← the fix, verified
+            self.assertEqual(saved["42"]["text_prog"]["done"], 1)
+            self.assertEqual(saved["42"]["text_prog"]["first"], 999)
         asyncio.run(scenario())
 
     def test_document_upload_forces_document_and_disables_reparsing(self):
