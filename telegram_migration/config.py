@@ -1,6 +1,8 @@
 """Settings for a migration run.
 
-The package modules read the *active* settings through ``config.settings``
+Build a :class:`Settings` yourself, or call :meth:`Settings.from_env` to read the
+``TELEGRAM_*`` environment variables (a local ``.env`` file and Google Colab Secrets are
+supported). The package modules read the *active* settings through ``config.settings``
 at call time; :func:`use_settings` scopes them to the current thread/async context.
 
 Nothing is read from the environment at import time.
@@ -13,6 +15,8 @@ from contextvars import ContextVar
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Mapping, Optional, Tuple, Union
+
+from .constants import BOT_CAPTION_LIMIT, MAX_CAPTION_LIMIT, TEXT_LIMIT
 
 PLACEHOLDER_API_ID = 12345678          # the value shipped in .env.example
 _TRUE = {"1", "true", "yes", "y", "on"}
@@ -108,8 +112,12 @@ class Settings:
     json_reaction_file_candidates: Tuple[str, ...] = ("result.json", "messages.json")
     max_json_fallback_mb: int = 512
     verify_replies: bool = True
-    text_limit: int = 4096                       # Telegram's per-message limit
-    caption_limit: int = 1024                      # 2048 for Telegram Premium accounts
+    # Telegram's message limit is 4096 for every account; lower it only to split long text into
+    # shorter parts. Settings.validate() rejects values above Telegram's maximums.
+    text_limit: int = TEXT_LIMIT
+    # Caption limit for media. A bot account is not Premium, so keep 1024 (2048 applies only to
+    # Premium user accounts).
+    caption_limit: int = BOT_CAPTION_LIMIT
     # Try a native forward first when the export links the original message; a native
     # forward cannot carry our timestamp/sender line, so forward_annotate sends it as a reply.
     native_forward: bool = True
@@ -143,6 +151,13 @@ class Settings:
                 found.append(f"{env_name} is still the example value")
         if self.channel_peer in (None, ""):
             found.append("TELEGRAM_CHANNEL_PEER is not set (numeric peer id or @username)")
+        if not 1 <= self.text_limit <= TEXT_LIMIT:
+            found.append(f"text_limit must be between 1 and {TEXT_LIMIT} (Telegram's maximum)")
+        if not 1 <= self.caption_limit <= BOT_CAPTION_LIMIT:
+            found.append(
+                f"caption_limit must be between 1 and {BOT_CAPTION_LIMIT} "
+                f"(the limit for bot accounts; Premium user accounts can reach {MAX_CAPTION_LIMIT})"
+            )
         return found
 
     def validate(self) -> "Settings":
@@ -223,11 +238,20 @@ class _SettingsProxy:
     def __getattr__(self, name):
         return getattr(get_settings(), name)
 
+    # Read-only on purpose. Writing through the proxy would change whichever Settings happens to be
+    # active (and unittest.mock.patch.object, which restores a value by *deleting* it, would then
+    # leave a field reset to its class default instead of its original value).
     def __setattr__(self, name, value):
-        setattr(get_settings(), name, value)
+        raise AttributeError(
+            "config.settings is read-only; build a Settings and activate it with "
+            "config.use_settings(...) or config.set_settings(...)"
+        )
 
     def __delattr__(self, name):
-        delattr(get_settings(), name)
+        raise AttributeError(
+            "config.settings is read-only; build a Settings and activate it with "
+            "config.use_settings(...) or config.set_settings(...)"
+        )
 
     def __repr__(self):
         return repr(get_settings())
