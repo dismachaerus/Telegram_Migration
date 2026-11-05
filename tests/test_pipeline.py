@@ -36,7 +36,7 @@ class PipelineTests(unittest.TestCase):
         settings = self.settings(**changes)
         with contextlib.redirect_stdout(io.StringIO()) as output:
             with config.use_settings(settings):
-                    asyncio.run(pipeline.run_async(settings))
+                asyncio.run(pipeline.run_async(settings))
         return FakeTelegram.instances[-1], output.getvalue(), settings
 
     def path(self, name):
@@ -55,7 +55,7 @@ class PipelineTests(unittest.TestCase):
         client, _, _ = self.run_once()
         self.assertEqual(client.texts(), ["[2023-03-12 10:01]\nAlice:\nhello there"])
         sent = client.kinds("send_message")[0][2]
-        self.assertIsNone(sent["parse_mode"])                    # our text is never re-parsed as markdown
+        self.assertIsNone(sent["parse_mode"])
         with config.use_settings(self.settings()):
             self.assertEqual(progress.load_id_map(), {"1": 1001})
 
@@ -109,9 +109,9 @@ class PipelineTests(unittest.TestCase):
         ])
         client, _, _ = self.run_once()
         order = client.texts()
-        self.assertTrue(order[1].endswith("the target"), order)          # target went out before the reply
+        self.assertTrue(order[1].endswith("the target"), order)
         reply_call = [c for c in client.kinds("send_message") if "reply to the next one" in c[1]][0]
-        target_id = 1002                                                  # second message sent
+        target_id = 1002
         self.assertEqual(reply_call[2]["reply_to"], target_id)
 
     def test_reply_to_a_message_outside_the_export_gets_a_note(self):
@@ -120,7 +120,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("Original reply target #999 is unavailable", client.texts()[0])
 
     def test_oversize_file_stops_cleanly_and_the_next_run_skips_it(self):
-        fakes.write_file(self.folder.name, "video_files/big.mp4", size=2 * 1024 * 1024)      # limit is 1 MiB
+        fakes.write_file(self.folder.name, "video_files/big.mp4", size=2 * 1024 * 1024)
         fakes.write_export(self.folder.name, [
             fakes.message(1, fakes.text("before")),
             fakes.message(2, fakes.text("has a big video") + fakes.video("video_files/big.mp4")),
@@ -128,20 +128,17 @@ class PipelineTests(unittest.TestCase):
             fakes.message(4, fakes.reply_to(2) + fakes.text("reply to the big one")),
         ])
         client, output, _ = self.run_once()
-        # stopped cleanly: first message sent, nothing of the big message, nothing after it
         self.assertEqual(len(client.texts()), 1)
         self.assertEqual(client.kinds("send_file"), [])
         self.assertTrue(client.disconnected)
         self.assertIn("STOPPED: message id=2", output)
         self.assertIn(os.path.abspath(self.path("video_files/big.mp4")), output)
-        # logged, and recorded for the next run automatically
         with open(self.path("failed_messages.txt"), encoding="utf-8") as handle:
             self.assertTrue(handle.read().startswith("2\tFILE_TOO_LARGE"))
         with config.use_settings(self.settings()):
             self.assertEqual(progress.load_id_map(), {"1": 1001})
             self.assertEqual(bigfiles.load_manual_uploads()[0], {"2"})
-        self.assertFalse(os.path.exists(self.path("migration_reply_audit.jsonl")))   # no audit pass after a stop
-        # second run: message 2 is skipped (you uploaded it by hand), 3 and 4 are sent
+        self.assertFalse(os.path.exists(self.path("migration_reply_audit.jsonl")))
         client, output, _ = self.run_once()
         self.assertEqual(client.kinds("send_file"), [])
         self.assertTrue(any("after" in t for t in client.texts()))
@@ -196,6 +193,34 @@ class PipelineTests(unittest.TestCase):
     def test_missing_credentials_raise_a_config_error(self):
         with self.assertRaises(config.ConfigError):
             asyncio.run(pipeline.run_async(Settings(base_dir=self.folder.name)))
+
+    def test_run_async_returns_true_on_success(self):
+        fakes.write_export(self.folder.name, [fakes.message(1, fakes.text("hello"))])
+        settings = self.settings()
+        with contextlib.redirect_stdout(io.StringIO()):
+            with config.use_settings(settings):
+                result = asyncio.run(pipeline.run_async(settings))
+        self.assertIs(result, True)
+
+    def test_run_async_returns_false_when_export_folder_is_empty(self):
+        settings = self.settings()
+        with contextlib.redirect_stdout(io.StringIO()):
+            with config.use_settings(settings):
+                result = asyncio.run(pipeline.run_async(settings))
+        self.assertIs(result, False)
+
+    def test_run_async_returns_false_when_channel_cannot_be_resolved(self):
+        fakes.write_export(self.folder.name, [fakes.message(1, fakes.text("hello"))])
+        settings = self.settings()
+
+        async def broken_get_entity(self, peer):
+            raise ValueError("channel not found")
+
+        with patch.object(FakeTelegram, "get_entity", broken_get_entity):
+            with contextlib.redirect_stdout(io.StringIO()):
+                with config.use_settings(settings):
+                    result = asyncio.run(pipeline.run_async(settings))
+        self.assertIs(result, False)
 
 
 if __name__ == "__main__":
