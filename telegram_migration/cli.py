@@ -81,8 +81,8 @@ def main(argv=None) -> int:
     except KeyboardInterrupt:
         print("\nInterrupted. Progress made so far is saved; run again to resume.", file=sys.stderr)
         return 130
-    # run() returns True on success/abort/oversize-stop, False only when the
-    # migration could not start (no export found, or the channel did not resolve).
+    # run() returns True on success, user abort, or a clean oversize stop, and False only
+    # when the migration could not start (no export, or the channel did not resolve).
     return 0 if result is not False else 1
 
 
