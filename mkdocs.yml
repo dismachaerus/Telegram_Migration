@@ -7,7 +7,6 @@ edit_uri: edit/main/docs/
 theme:
   name: material
   features:
-    - navigation.sections
     - navigation.top
     - navigation.toc.integrate
     - search.suggest
@@ -27,19 +26,6 @@ theme:
 
 nav:
   - Home: index.md
-  - Features: index.md#features
-  - Requirements: index.md#requirements
-  - Install: index.md#install
-  - Configure: index.md#configure
-  - Google Colab: index.md#google-colab
-  - Run safely: index.md#run-safely
-  - Python library: index.md#use-as-a-python-library
-  - Progress files: index.md#progress-files-and-resuming
-  - Project layout: index.md#project-layout
-  - Known limitations: index.md#known-limitations
-  - Development: index.md#development-checks
-  - Security: index.md#security
-  - License: index.md#license
 
 plugins:
   - search
