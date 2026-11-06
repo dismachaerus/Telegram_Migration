@@ -45,3 +45,6 @@ format_debug*.jsonl
 build/
 dist/
 *.egg-info/
+
+# MkDocs build output
+site/
