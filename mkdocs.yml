@@ -9,6 +9,7 @@ theme:
   features:
     - navigation.sections
     - navigation.top
+    - navigation.toc.integrate
     - search.suggest
     - search.highlight
     - content.code.copy
@@ -40,4 +41,4 @@ markdown_extensions:
   - admonition
   - tables
   - toc:
-      permalink: true
+      permalink: false
