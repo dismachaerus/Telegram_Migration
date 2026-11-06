@@ -111,6 +111,29 @@ class TextAndEntityTests(unittest.TestCase):
                 self.assertGreaterEqual(current.offset, 0)
                 self.assertLessEqual(current.offset + current.length, textutil.u16len(piece))
 
+    def test_split_preserves_spaces_at_boundaries(self):
+        """Concatenating the chunks must reproduce the input exactly, including
+        whitespace at chunk boundaries. Previously nxt=i+1 skipped the space."""
+        text = "abc def ghi jkl mno"
+        chunks = textutil.split_with_entities(text, [], first_limit=8, limit=8)
+        pieces = [chunk for chunk, _entities in chunks]
+        self.assertGreater(len(pieces), 1)
+        self.assertEqual("".join(pieces), text)
+        self.assertTrue(all(textutil.u16len(piece) <= 8 for piece in pieces))
+
+    def test_split_advances_past_a_surrogate_pair_when_limit_is_one(self):
+        """A limit of 1 with a surrogate pair at the boundary used to loop
+        forever because nxt stayed equal to start. The forward-progress guard
+        takes the whole pair (2 units) instead of hanging."""
+        chunks = textutil.split_with_entities("😀x", [], first_limit=1, limit=1)
+        pieces = [chunk for chunk, _entities in chunks]
+        self.assertEqual("".join(pieces), "😀x")
+        self.assertTrue(any(piece == "😀" for piece in pieces))
+
+    def test_split_rejects_a_limit_below_one(self):
+        with self.assertRaises(ValueError):
+            textutil.split_with_entities("abc", [], first_limit=0, limit=1)
+
     def test_entity_error_detection_does_not_match_generic_word_entities(self):
         self.assertTrue(formatfallback._is_entity_error(ValueError("invalid bounds for formatting")))
         self.assertFalse(formatfallback._is_entity_error(RuntimeError("unrelated entities database failure")))
@@ -211,6 +234,42 @@ class MediaTests(unittest.TestCase):
                 os.path.normcase(os.path.normpath(str(photo))),
             )
             self.assertEqual(media[0][1], "photo")
+
+    def test_find_media_accepts_file_names_written_raw_or_percent_encoded(self):
+        with tempfile.TemporaryDirectory() as temp:
+            files = Path(temp) / "files"
+            files.mkdir()
+            (files / "My File \u00e9.pdf").write_bytes(b"pdf bytes")
+            for href in ("files/My File \u00e9.pdf", "files/My%20File%20%C3%A9.pdf"):
+                elem = etree.fromstring(
+                    '<div class="message" id="message1"><div class="media_wrap">'
+                    f'<a class="media_file" href="{href}"><div class="title">x</div></a></div></div>'
+                )
+                with patch.object(config.get_settings(), "base_dir", temp):
+                    media = exportmedia.find_media(elem)
+                self.assertEqual([kind for _, kind in media], ["document"], href)
+
+    def test_find_media_resolves_percent_encoded_image_src(self):
+        """<img src> uses the same path helper as <a href>; verify the sticker
+        fallback also unquotes. Stickers are the media type that relies
+        entirely on <img src>."""
+        with tempfile.TemporaryDirectory() as temp:
+            sticker = Path(temp) / "stickers" / "My Sticker.webp"
+            sticker.parent.mkdir()
+            sticker.write_bytes(b"sticker bytes")
+            elem = etree.fromstring(
+                '<div class="message" id="message1"><div class="sticker_wrap">'
+                '<img src="stickers/My%20Sticker.webp"/>'
+                '</div></div>'
+            )
+            with patch.object(config.get_settings(), "base_dir", temp):
+                media = exportmedia.find_media(elem)
+            self.assertEqual(len(media), 1)
+            self.assertEqual(
+                os.path.normcase(os.path.normpath(media[0][0])),
+                os.path.normcase(os.path.normpath(str(sticker))),
+            )
+            self.assertEqual(media[0][1], "sticker_static")
 
     def test_album_compatibility_only_allows_supported_media_groups(self):
         self.assertTrue(exportmedia.album_compatible([("a", "photo"), ("b", "video")]))
@@ -376,6 +435,32 @@ class AsyncSendTests(unittest.TestCase):
             self.assertEqual(calls, [])
         asyncio.run(scenario())
 
+    def test_send_text_only_persists_state_for_a_single_chunk(self):
+        """A single-chunk text send must checkpoint to disk. Otherwise a crash
+        between Telegram confirming the message and the id-map write would
+        repeat that message on the next run. Media sends already save state;
+        this test ensures plain text does too."""
+        async def scenario():
+            calls = []
+            async def send_message(channel, text, **kwargs):
+                calls.append(text)
+                return SimpleNamespace(id=999)
+            client = SimpleNamespace(send_message=send_message)
+            state = {"src": "42"}
+            with tempfile.TemporaryDirectory() as temp:
+                with patch.object(config.get_settings(), "partial_file",
+                                  str(Path(temp) / "partial.jsonl")):
+                    result = await sending._send_text_only(
+                        client, "channel", [("hello", [])], None, state, "42",
+                    )
+                    saved = progress.load_partial()
+            self.assertEqual(result, 999)
+            self.assertEqual(calls, ["hello"])
+            self.assertIn("42", saved)
+            self.assertEqual(saved["42"]["text_prog"]["done"], 1)
+            self.assertEqual(saved["42"]["text_prog"]["first"], 999)
+        asyncio.run(scenario())
+
     def test_document_upload_forces_document_and_disables_reparsing(self):
         async def scenario():
             calls = []
@@ -437,6 +522,40 @@ class AsyncSendTests(unittest.TestCase):
                 self.assertEqual(len(calls), 1)
                 self.assertEqual(state["album_id"], 501)
                 self.assertEqual(persisted["album_id"], 501)
+        asyncio.run(scenario())
+
+    def test_album_send_passes_entities_aligned_with_captions(self):
+        """Telethon accepts a flat entity list and normalizes it to a
+        one-element list-of-lists, then pairs entity lists with captions.
+        The flat form would associate every entity with the first caption
+        only, and a caption mismatch trips the entity-bounds check and
+        triggers the formatting fallback. Pass one list per caption
+        instead — entities on the first caption, empty lists on the rest
+        (empty lists, not None, so the value stays a proper list-of-lists
+        and is never misread as a flat entity list)."""
+        async def scenario():
+            with tempfile.TemporaryDirectory() as temp:
+                calls = []
+                async def send_file(channel, files, **kwargs):
+                    calls.append((channel, files, kwargs))
+                    return [SimpleNamespace(id=501), SimpleNamespace(id=502)]
+                client = SimpleNamespace(send_file=send_file)
+                state = {"src": "77"}
+                bold = tl.MessageEntityBold(offset=0, length=5)
+                with patch.object(config.get_settings(), "partial_file",
+                                  str(Path(temp) / "partial.jsonl")):
+                    await sending._do_send(
+                        client, "channel", [("hello", [bold])],
+                        [("photos/a.jpg", "photo"), ("photos/b.jpg", "photo")],
+                        None, None, state, None,
+                    )
+                self.assertEqual(len(calls), 1)
+                kwargs = calls[0][2]
+                self.assertIn("formatting_entities", kwargs)
+                ents = kwargs["formatting_entities"]
+                self.assertEqual(len(ents), 2)
+                self.assertEqual(ents[0], [bold])
+                self.assertEqual(ents[1], [])
         asyncio.run(scenario())
 
     def test_video_without_audio_probe_result_is_not_forced_to_silent_video(self):

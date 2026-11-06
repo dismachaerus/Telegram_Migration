@@ -1,6 +1,7 @@
 """Find and classify the media files of an exported message."""
 
 import os
+from urllib.parse import unquote
 
 from . import config
 from .htmlutil import css_classes, find_first
@@ -79,6 +80,15 @@ def _classify(rel, wrap_class, full, anchor_classes=(), export_label=""):
     return "document"
 
 
+def _resolve_media_path(relative):
+    """Path of an exported file, or None. The HTML may write file names raw or percent-encoded."""
+    for candidate in (relative, unquote(relative)):
+        path = os.path.join(config.settings.base_dir, candidate)
+        if os.path.exists(path):
+            return path
+    return None
+
+
 def find_media(msg):
     results, seen = [], set()
     # The sticker_wrap class is sometimes on the link inside media_wrap rather
@@ -94,8 +104,8 @@ def find_media(msg):
             href = a.get("href")
             if not href:
                 continue
-            path = os.path.join(config.settings.base_dir, href)
-            if os.path.exists(path) and path not in seen:
+            path = _resolve_media_path(href)
+            if path and path not in seen:
                 seen.add(path)
                 child_image_classes = [
                     cls for img in a.iter("img") for cls in css_classes(img)
@@ -111,8 +121,8 @@ def find_media(msg):
                 src = img.get("src")
                 if not src:
                     continue
-                path = os.path.join(config.settings.base_dir, src)
-                if os.path.exists(path) and path not in seen:
+                path = _resolve_media_path(src)
+                if path and path not in seen:
                     seen.add(path)
                     results.append((path, _classify(
                         src, wrap_class, path, css_classes(wrap) + css_classes(img), export_label

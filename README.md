@@ -28,24 +28,29 @@ A Python tool for reconstructing a Telegram conversation in a destination channe
 ### Install
 
 ```bash
+pip install telegram-migration
+```
+
+That's it. You get the `telegram-migration` command and the `telegram_migration` Python package.
+
+For video-sticker metadata support (optional, only needed if your archive contains `.webm` stickers and ffprobe isn't already installed):
+
+```bash
+pip install "telegram-migration[media]"
+```
+
+#### From source (for development)
+
+If you want to modify the tool or run the test suite:
+
+```bash
+git clone https://github.com/ifaac/Telegram_Migration.git
+cd Telegram_Migration
 python -m venv .venv
+# activate the venv, then:
+python -m pip install -e ".[media]"
+python -m unittest discover -s tests -v
 ```
-
-Activate the virtual environment, then install the package from a clone of this repository:
-
-```bash
-python -m pip install .
-```
-
-or straight from GitHub:
-
-```bash
-python -m pip install git+https://github.com/ifaac/Telegram_Migration
-```
-
-For development (run from the repository root, no install needed) use `python -m pip install -r requirements.txt`.
-
-`static-ffmpeg` is an optional helper for automatic FFmpeg/ffprobe setup when a video sticker needs metadata (`python -m pip install ".[media]"`). The program attempts a lazy install only if it is needed and no working system binaries are available.
 
 ## Configure
 
@@ -78,13 +83,12 @@ Optional settings (defaults in brackets):
 | `TELEGRAM_SEND_DELAY` [`2.5`] | Seconds to wait between messages. |
 | `TELEGRAM_SESSION_NAME` [`colab_bot_restorer_session`] | Name of the Telethon session file. |
 
-
 ### Google Colab
 
 Colab Secrets named `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHANNEL_PEER` are read automatically (enable notebook access for each). Run the migration **inside the notebook** so it can read the secrets (a `!python ...` command starts a separate process that cannot):
 
 ```python
-!pip install -q git+https://github.com/ifaac/Telegram_Migration
+!pip install -q telegram-migration
 ```
 
 ```python
@@ -142,7 +146,7 @@ run(settings)                       # or: run(dry_run=False)
 
 `Settings` is a plain dataclass, so everything can also be given directly (`Settings(api_id=..., base_dir=..., max_upload_mb=500)`). `run()` works from scripts and notebooks; `await telegram_migration.run_async(settings)` is the coroutine version. Async runs scope settings to their task, so concurrent migrations do not overwrite each other's configuration. `run_async()` does not apply the `nest_asyncio` patch used by `run()` inside an already-running event loop. Importing the package reads no environment variables and performs no file I/O; credentials problems raise `telegram_migration.ConfigError`.
 
-Telegram's per-message and caption limits default to 4096 and 1024 UTF-16 units. Set `text_limit` and `caption_limit` on `Settings` when the destination account supports different limits (for example, `caption_limit=2048` for Premium).
+Telegram's message limit is 4096 UTF-16 units for every account, and media captions are limited to 1024 for a bot (2048 applies only to Premium user accounts, and a bot is not one). The defaults are `text_limit=4096` and `caption_limit=1024`; you can lower them to split text into shorter parts. `Settings.validate()` rejects `text_limit` or `caption_limit` below 4, and `text_limit` above 4096 and `caption_limit` above 1024 (the actual ceiling for a bot).
 
 ## Progress files and resuming
 

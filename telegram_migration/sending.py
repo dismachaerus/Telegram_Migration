@@ -60,12 +60,12 @@ async def _send_text_chunks(client, channel, chunks, reply_to, state, prog_key,
 
     Takes the whole `state` so each successful chunk can be checkpointed to
     disk (when `persist` is true). A crash between chunks then resumes at the
-    next unsent chunk rather than replaying from the top. Single-chunk sends
-    pass persist=False: there is nothing to resume in the middle of.
+    next unsent chunk rather than replaying from the top. Even a single-chunk
+    send benefits from the checkpoint: if the process dies between Telegram
+    confirming the message and the id-map write, the persisted `done` count
+    prevents the next run from repeating it.
     """
     prog = state.setdefault(prog_key, {})
-    # If a persisted run used different chunking, `done` may not correspond to
-    # any real chunk boundary in this run. Reset it whenever it looks stale.
     done = prog.get("done", 0)
     if done > len(chunks):
         print(f"    note: resetting stale {prog_key}.done={done} for src={state.get('src')} (current chunk count {len(chunks)})")
@@ -73,9 +73,7 @@ async def _send_text_chunks(client, channel, chunks, reply_to, state, prog_key,
     for i, (text, ents) in enumerate(chunks):
         if i < prog.get("done", 0):
             continue
-        # Enforce Telegram's entity-bounds invariants before every send.
         ents = clean_invalid_entities(text, ents)
-        # parse_mode=None: our text is final; Telethon must not re-parse it as markdown.
         m = await formatfallback.with_formatting_fallback(
             lambda **kw: client.send_message(channel, text, **kw),
             {"formatting_entities": ents or None,
@@ -127,7 +125,18 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
     safe_first_ents = clean_invalid_entities(first_text, first_ents)
     album_kwargs = {"caption": captions, "reply_to": reply_to, "parse_mode": None}
     if safe_first_ents:
-        album_kwargs["formatting_entities"] = safe_first_ents
+        # Telethon accepts a flat entity list and normalizes it to a
+        # one-element list-of-lists, then pairs entity lists with captions.
+        # The flat form associates every entity with caption 1 only, and
+        # the empty captions then mismatch and trigger the bounds check.
+        # Pass one list per caption, in the same order as `captions`:
+        # entities on the first caption, empty lists on the rest. Empty
+        # lists (not None) keep the "list of lists" shape consistent —
+        # a mixed [list, None] value can be misread as a flat entity list
+        # by the version check that decides which branch to take.
+        album_kwargs["formatting_entities"] = (
+            [safe_first_ents] + [[] for _ in range(len(files) - 1)]
+        )
     msgs = await formatfallback.with_formatting_fallback(
         lambda **kw: uploads.send_file(client, channel, files, **kw),
         album_kwargs, first_text, safe_first_ents, source_id,
@@ -229,9 +238,14 @@ async def _send_no_caption_media(client, channel, chunks, media, reply_to, state
 
 
 async def _send_text_only(client, channel, chunks, reply_to, state, source_id):
+    # persist=True for every chunk count. The default used to be persist=len(chunks) > 1
+    # here, on the theory that a single-chunk send has nothing to resume in the middle
+    # of — but it also meant a crash between Telegram confirming the message and the
+    # id-map write left no recovery point at all, so the next run would repeat that
+    # one message. Media sends already save_state immediately after upload; this
+    # brings plain text in line with the media path.
     return await _send_text_chunks(
         client, channel, chunks, reply_to, state, "text_prog", source_id,
-        persist=len(chunks) > 1,
     )
 
 
@@ -245,8 +259,6 @@ async def _send_single_media(client, channel, chunks, media, reply_to, state, so
             caption=first_text, entities=first_ents,
         )
         state["media_id"] = media_msg.id
-        # Always persist, so a crash between the upload returning and the id-map
-        # write cannot re-upload the same media on the next run.
         progress.save_state(state["src"], state)
     if rest:
         await _send_text_chunks(client, channel, rest, state["media_id"],

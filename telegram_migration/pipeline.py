@@ -222,11 +222,12 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
 async def run_async(settings=None, **overrides):
     """Run (or resume) one migration pass.
 
-    `settings` is a :class:`~telegram_migration.config.Settings`; when omitted it is read
-    from the environment (``Settings.from_env()``). Keyword arguments override single
-    settings, e.g. ``run_async(dry_run=False)``. Settings are scoped to this async task,
-    so concurrent runs remain isolated. Raises :class:`~telegram_migration.config.ConfigError` when the
-    credentials or the destination are missing.
+    Returns True when the run completed, was aborted by the user at the
+    confirmation prompt, or stopped cleanly at an oversize file (all three
+    are expected outcomes). Returns False only when the run could not start —
+    no export was found in ``base_dir``, or the destination channel could not
+    be resolved. Raises :class:`~telegram_migration.config.ConfigError` when
+    the credentials or the destination are missing or invalid.
     """
     resolved = config.resolve_settings(settings, **overrides).validate()
     with config.use_settings(resolved):
@@ -244,17 +245,15 @@ async def _run_migration():
         from google.colab import drive
         drive.mount("/content/drive")
 
-    # FFmpeg/ffprobe are installed lazily only if a .webm video sticker needs
-    # dimensions/duration and no usable ffprobe is already available.
     files = htmlexport.discover_export_files(config.settings.base_dir)
     if not files:
         print(f"No messages.html / messages2.html ... found in: {config.settings.base_dir}")
-        return
+        return False
 
     id_map = progress.load_id_map()
     manual_done, manual_map = bigfiles.load_manual_uploads()
     for _src, _dst in manual_map.items():
-        id_map.setdefault(_src, _dst)         # so replies to your manual uploads link to them
+        id_map.setdefault(_src, _dst)
     if manual_done:
         _ids = sorted(manual_done, key=int)
         _shown = ", ".join(_ids[:20]) + (" ..." if len(_ids) > 20 else "")
@@ -262,14 +261,13 @@ async def _run_migration():
         print(f"  Make sure they are really in the channel; remove a line from {os.path.basename(config.settings.manual_uploads_file)} to have the script send it.")
     partial = progress.load_partial()
     pending_replies = progress.load_pending_replies()
-    source_ids = progress.collect_source_ids(files)           # one cheap pass; len() is the message count
+    source_ids = progress.collect_source_ids(files)
     total = len(source_ids)
     reaction_map = reaction_archive.load_json_reactions(files, source_ids)
 
     print(f"Export files: {len(files)}   Already processed: {len(id_map)}   File(s) contain: {total} messages")
     print(f"{len(pending_replies)} deferred replies are queued.")
 
-    # Session renamed to '_bot' to keep it isolated from any user-account session.
     client = TelegramClient(config.settings.session_name, config.settings.api_id, config.settings.api_hash)
     await client.start(bot_token=config.settings.bot_token)
     print("Logged in officially as a bot.")
@@ -279,13 +277,13 @@ async def _run_migration():
     except Exception as e:
         print(f"Channel error: {e}")
         await client.disconnect()
-        return
+        return False
 
     if not cli.confirm_target(
             channel, max(0, total - len(set(id_map) | manual_done)), len(files), config.get_settings()):
         print("Aborted by user.")
         await client.disconnect()
-        return
+        return True
 
     stats = {"sent": 0, "skipped": 0, "failed": 0, "forwarded": 0, "reaction_notes": 0}
     ctx = {
@@ -294,11 +292,11 @@ async def _run_migration():
         "source_ids": source_ids,
         "processed_source_ids": set(),
         "reaction_map": reaction_map,
-        "reply_map": {},          # source reply targets, collected during the main pass
-        "audit": [],              # reply-audit records for this run
-        "manual_done": manual_done,   # ids you uploaded by hand (never sent by the script)
-        "halt": [],                   # non-empty => an oversize file stopped the run
-        "oversize_report": [],        # dry run: every message with an oversize file
+        "reply_map": {},
+        "audit": [],
+        "manual_done": manual_done,
+        "halt": [],
+        "oversize_report": [],
         "last_dest_id": None,
     }
 
@@ -306,14 +304,11 @@ async def _run_migration():
         if await process_file(client, channel, path, id_map, partial, pending_replies, stats, ctx):
             break
 
-    # Second pass: deferred replies whose target has now been migrated. Any whose
-    # target ultimately failed are sent with the archived reply preview instead.
     if not ctx["stop"] and pending_replies:
-        # Repeat if a deferred reply was itself a parent for another deferred reply.
         while pending_replies and not ctx["stop"]:
             before_pending = len(pending_replies)
             before_completed = len(ctx["processed_source_ids"])
-            pending_ctx = dict(ctx)          # shallow copy: shares the maps/lists above
+            pending_ctx = dict(ctx)
             pending_ctx["last_sender"] = ""
             pending_ctx["stop"] = False
             for path in files:
@@ -326,13 +321,11 @@ async def _run_migration():
                 break
 
     if ctx["halt"]:
-        # Clean stop: everything already sent is in the id map, deferred replies and
-        # partial-send states are on disk. No audit/reaction pass, no further sends.
         progress.save_pending_replies(pending_replies)
         print(f"Stopped at message id={ctx['halt'][0]}: sent={stats['sent']} this run, progress saved.")
         print("Follow the instructions above, then run the script again to resume.")
         await client.disconnect()
-        return
+        return True
 
     if not reaction_map:
         print("No reaction metadata was found. Telegram Desktop HTML exports generally do not expose full reaction data.")
@@ -362,3 +355,4 @@ async def _run_migration():
         print(f"Failed IDs are logged in {config.settings.failed_file}")
     print("═" * 60)
     await client.disconnect()
+    return True

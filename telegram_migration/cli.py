@@ -68,7 +68,7 @@ def main(argv=None) -> int:
     if args.max_upload_mb is not None:
         overrides["max_upload_mb"] = args.max_upload_mb or None
 
-    from .config import ConfigError, Settings            # imported late so --help/--version stay light
+    from .config import ConfigError, Settings
     try:
         settings = Settings.from_env(env_file=args.env_file, **overrides).validate()
     except ConfigError as exc:
@@ -77,12 +77,14 @@ def main(argv=None) -> int:
 
     from .runner import run
     try:
-        run(settings)
+        result = run(settings)
     except KeyboardInterrupt:
         print("\nInterrupted. Progress made so far is saved; run again to resume.", file=sys.stderr)
         return 130
-    return 0
+    # run() returns True on success, user abort, or a clean oversize stop, and False only
+    # when the migration could not start (no export, or the channel did not resolve).
+    return 0 if result is not False else 1
 
 
-if __name__ == "__main__":      # python -m telegram_migration.cli
+if __name__ == "__main__":
     raise SystemExit(main())
