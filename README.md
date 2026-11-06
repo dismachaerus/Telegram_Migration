@@ -31,8 +31,6 @@ A Python tool for reconstructing a Telegram conversation in a destination channe
 pip install telegram-migration
 ```
 
-That's it. You get the `telegram-migration` command and the `telegram_migration` Python package.
-
 For video-sticker metadata support (optional, only needed if your archive contains `.webm` stickers and ffprobe isn't already installed):
 
 ```bash
