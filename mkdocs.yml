@@ -40,4 +40,4 @@ markdown_extensions:
   - admonition
   - tables
   - toc:
-      permalink: true
+      permalink: false
