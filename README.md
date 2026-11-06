@@ -28,24 +28,29 @@ A Python tool for reconstructing a Telegram conversation in a destination channe
 ### Install
 
 ```bash
+pip install telegram-migration
+```
+
+That's it. You get the `telegram-migration` command and the `telegram_migration` Python package.
+
+For video-sticker metadata support (optional, only needed if your archive contains `.webm` stickers and ffprobe isn't already installed):
+
+```bash
+pip install "telegram-migration[media]"
+```
+
+#### From source (for development)
+
+If you want to modify the tool or run the test suite:
+
+```bash
+git clone https://github.com/ifaac/Telegram_Migration.git
+cd Telegram_Migration
 python -m venv .venv
+# activate the venv, then:
+python -m pip install -e ".[media]"
+python -m unittest discover -s tests -v
 ```
-
-Activate the virtual environment, then install the package from a clone of this repository:
-
-```bash
-python -m pip install .
-```
-
-or straight from GitHub:
-
-```bash
-python -m pip install git+https://github.com/ifaac/Telegram_Migration
-```
-
-For development (run from the repository root, no install needed) use `python -m pip install -r requirements.txt`.
-
-`static-ffmpeg` is an optional helper for automatic FFmpeg/ffprobe setup when a video sticker needs metadata (`python -m pip install ".[media]"`). The program attempts a lazy install only if it is needed and no working system binaries are available.
 
 ## Configure
 
@@ -83,7 +88,7 @@ Optional settings (defaults in brackets):
 Colab Secrets named `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHANNEL_PEER` are read automatically (enable notebook access for each). Run the migration **inside the notebook** so it can read the secrets (a `!python ...` command starts a separate process that cannot):
 
 ```python
-!pip install -q git+https://github.com/ifaac/Telegram_Migration
+!pip install -q telegram-migration
 ```
 
 ```python
