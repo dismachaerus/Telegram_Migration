@@ -1,6 +1,48 @@
 site_name: Telegram Migration
 site_description: Migrate a Telegram Desktop HTML export to a channel with a bot. Resumable, handles media and replies.
+site_url: https://site_name: Telegram Migration
+site_description: Migrate a Telegram Desktop HTML export to a channel with a bot. Resumable, handles media and replies.
 site_url: https://ifaac.github.io/Telegram_Migration/
+repo_url: https://github.com/ifaac/Telegram_Migration
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.top
+    - navigation.toc.integrate
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
+
+nav:
+  - Home: index.md
+
+plugins:
+  - search
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - tables
+  - toc:
+      permalink: falseifaac.github.io/Telegram_Migration/
 repo_url: https://github.com/ifaac/Telegram_Migration
 edit_uri: edit/main/docs/
 
