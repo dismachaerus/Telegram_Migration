@@ -108,7 +108,8 @@ def collect_source_ids(files):
     """One cheap regex pass over every HTML page: all real message ids.
 
     The number of ids is also the message count, so no separate counting pass
-    is needed. Service messages (id="message-N") never match.
+    is needed. Telegram Desktop's negative-ID date-divider blocks do not match;
+    real service events retain positive source message IDs and are included.
     """
     out = set()
     id_re = re.compile(rb'''id=["']message(\d+)["']''')
