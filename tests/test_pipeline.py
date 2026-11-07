@@ -59,6 +59,32 @@ class PipelineTests(unittest.TestCase):
         with config.use_settings(self.settings()):
             self.assertEqual(progress.load_id_map(), {"1": 1001})
 
+    def test_service_events_are_migrated_as_dated_archival_entries(self):
+        fakes.write_export(self.folder.name, [
+            '<div class="message service" id="message-1">'
+            '<div class="body details">12 March 2023</div></div>',
+            '<div class="message service" id="message2">'
+            '<div class="body details">Alice invited Bob</div></div>',
+            fakes.message(3, fakes.text("hello")),
+        ])
+        client, _, _ = self.run_once()
+        self.assertEqual(client.texts(), [
+            "[2023-03-12]\n[Telegram service event]\nAlice invited Bob",
+            "[2023-03-12 10:03]\nAlice:\nhello",
+        ])
+        with config.use_settings(self.settings()):
+            self.assertEqual(progress.load_id_map(), {"2": 1001, "3": 1002})
+
+    def test_service_events_can_be_disabled(self):
+        fakes.write_export(self.folder.name, [
+            '<div class="message service" id="message-1">'
+            '<div class="body details">12 March 2023</div></div>',
+            '<div class="message service" id="message2">'
+            '<div class="body details">Alice invited Bob</div></div>',
+        ])
+        client, _, _ = self.run_once(preserve_service_messages=False)
+        self.assertEqual(client.texts(), [])
+
     def test_concurrent_runs_keep_settings_and_exports_isolated(self):
         with tempfile.TemporaryDirectory() as first_dir, tempfile.TemporaryDirectory() as second_dir:
             fakes.write_export(first_dir, [fakes.message(1, fakes.text("first run"))])
