@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 license = { text = "GPL-3.0-only" }
 keywords = ["archive", "backup-script", "backup-solution", "backup-tool", "chat-export", "data-migration", "migration", "python", "telegram", "telegram-archiver", "telegram-backup-tools", "telegram-download-2025", "telegrambot", "telethon"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 6 - Mature",
     "Environment :: Console",
     "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
