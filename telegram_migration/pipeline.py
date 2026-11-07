@@ -16,6 +16,9 @@ from .constants import NO_CAPTION_KINDS, STICKER_KINDS
 async def process_file(client, channel, path, id_map, partial, pending_replies, stats, ctx,
                       only_pending=False):
     print(("Retrying deferred replies in " if only_pending else "Streaming ") + os.path.basename(path) + " ...")
+    # A new HTML page starts a new export slice. Do not carry a date from the
+    # previous file if this page has no divider or is malformed.
+    ctx["current_export_date"] = None
     with open(path, "rb") as export_file:
         context = etree.iterparse(export_file, events=("end",), tag="div", html=True, encoding="utf-8")
         for _event, elem in context:
@@ -107,8 +110,24 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         raw_elem_id = elem.get("id", "")
         if raw_elem_id.startswith("message") and raw_elem_id[7:].isdigit():
             source_id = raw_elem_id[7:]
-        data = htmlexport.extract_message_data(elem)
+        classes = css_classes(elem)
+        if "service" in classes:
+            # Telegram Desktop uses negative-ID service blocks as date dividers
+            # (e.g. message-1). Keep their date for subsequent real service events,
+            # but do not import the divider as a separate message.
+            date_separator = htmlexport.extract_date_separator(elem)
+            if date_separator is not None:
+                ctx["current_export_date"] = date_separator
+                return
+            data = (htmlexport.extract_service_event_data(
+                elem, ctx.get("current_export_date")
+            ) if config.settings.preserve_service_messages else None)
+        else:
+            data = htmlexport.extract_message_data(elem)
+
         if data is None:
+            if "service" in classes and source_id:
+                stats["skipped"] += 1
             mark_completed = bool(source_id)
             return
         source_id = str(data["msg_id"])
@@ -150,8 +169,14 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             return
 
         timestamp = data["timestamp"]
-        watermark = (f"[{timestamp.strftime('%Y-%m-%d %H:%M')}]\n", []) if timestamp else ("", [])
-        sender = (f"{data['sender']}:\n", []) if data["sender"] else ("", [])
+        if data.get("service_event"):
+            # HTML service-event blocks do not carry their own clock time. The
+            # preceding negative-ID date divider gives us the day, not a time.
+            watermark = (f"[{timestamp.strftime('%Y-%m-%d')}]\n", []) if timestamp else ("", [])
+            sender = ("[Telegram service event]\n", [])
+        else:
+            watermark = (f"[{timestamp.strftime('%Y-%m-%d %H:%M')}]\n", []) if timestamp else ("", [])
+            sender = (f"{data['sender']}:\n", []) if data["sender"] else ("", [])
         forward = (data["forward_header"], [])
 
         reply_to, reply_fallback, deferred = _resolve_reply(
@@ -288,6 +313,7 @@ async def _run_migration():
     stats = {"sent": 0, "skipped": 0, "failed": 0, "forwarded": 0, "reaction_notes": 0}
     ctx = {
         "last_sender": "",
+        "current_export_date": None,
         "stop": False,
         "source_ids": source_ids,
         "processed_source_ids": set(),
