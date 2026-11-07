@@ -48,6 +48,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-limit", type=int, metavar="N", help="stop after this many messages")
     parser.add_argument("--delay", type=float, dest="send_delay_seconds", metavar="SECONDS",
                         help="seconds to wait between messages")
+    parser.add_argument("--no-service-messages", dest="preserve_service_messages",
+                        action="store_false", default=None,
+                        help="skip Telegram service events such as joins, leaves, pins and title changes")
     return parser
 
 
@@ -62,7 +65,8 @@ def main(argv=None) -> int:
             overrides["channel_peer"] = int(args.channel)
         except ValueError:
             overrides["channel_peer"] = args.channel
-    for name in ("dry_run", "skip_confirmation", "batch_limit", "send_delay_seconds"):
+    for name in ("dry_run", "skip_confirmation", "batch_limit", "send_delay_seconds",
+                 "preserve_service_messages"):
         if getattr(args, name) is not None:
             overrides[name] = getattr(args, name)
     if args.max_upload_mb is not None:
