@@ -53,9 +53,18 @@ class PipelineTests(unittest.TestCase):
     def test_text_messages_are_sent_with_time_and_sender_and_recorded(self):
         fakes.write_export(self.folder.name, [fakes.message(1, fakes.text("hello <b>there</b>"))])
         client, _, _ = self.run_once()
-        self.assertEqual(client.texts(), ["[2023-03-12 10:01]\nAlice:\nhello there"])
+        self.assertEqual(client.texts(), ["Alice\n12 March 2023 · 10:01\n\nhello there"])
         sent = client.kinds("send_message")[0][2]
         self.assertIsNone(sent["parse_mode"])
+        entities = sent["formatting_entities"]
+        self.assertEqual(
+            [(type(entity).__name__, entity.offset, entity.length) for entity in entities[:2]],
+            [("MessageEntityBold", 0, 5), ("MessageEntityItalic", 6, 21)],
+        )
+        self.assertEqual(
+            (type(entities[2]).__name__, entities[2].offset, entities[2].length),
+            ("MessageEntityBold", 35, 5),
+        )
         with config.use_settings(self.settings()):
             self.assertEqual(progress.load_id_map(), {"1": 1001})
 
@@ -69,8 +78,8 @@ class PipelineTests(unittest.TestCase):
         ])
         client, _, _ = self.run_once()
         self.assertEqual(client.texts(), [
-            "[2023-03-12]\n[Telegram service event]\nAlice invited Bob",
-            "[2023-03-12 10:03]\nAlice:\nhello",
+            "Telegram service event\n12 March 2023\n\nAlice invited Bob",
+            "Alice\n12 March 2023 · 10:03\n\nhello",
         ])
         with config.use_settings(self.settings()):
             self.assertEqual(progress.load_id_map(), {"2": 1001, "3": 1002})
@@ -103,8 +112,8 @@ class PipelineTests(unittest.TestCase):
 
         clients = FakeTelegram.instances[-2:]
         self.assertCountEqual([client.texts() for client in clients], [
-            ["[2023-03-12 10:01]\nAlice:\nfirst run"],
-            ["[2023-03-12 10:02]\nAlice:\nsecond run"],
+            ["Alice\n12 March 2023 · 10:01\n\nfirst run"],
+            ["Alice\n12 March 2023 · 10:02\n\nsecond run"],
         ])
 
     def test_configured_text_limit_splits_reconstructed_messages(self):
