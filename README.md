@@ -8,13 +8,14 @@ A Python tool for reconstructing a Telegram conversation in a destination channe
 
 - Streams Telegram Desktop HTML exports instead of loading every page into memory at once.
 - Reconstructs supported rich-text formatting (including italics, bold, underline, strike, code, links, spoilers, and blockquotes) using Telegram message entities.
-- Preserves sender names and original timestamps as archival text where available.
+- Preserves sender names and original timestamps as archival text where available; original accounts are not impersonated.
+- Reconstructs Telegram Desktop service events (such as joins, removals, pins and group changes) as clearly labelled archival entries. HTML exports provide the calendar date for these events, but not always the exact clock time.
 - Handles common exported media: photos, documents, videos, GIFs, voice messages, round videos, and sticker files.
 - Maps source message IDs to destination IDs to restore reply links where possible; audits available reply links.
 - Persists partial-send state so interrupted runs can often resume without intentionally resending already-recorded pieces.
 - Checks oversized attachments before sending and stops with instructions for manual handling.
 - Uses FloodWait handling and records failures and formatting fallbacks.
-- Can archive reaction metadata from a compatible companion JSON export as **text notes**. It cannot restore the original native reaction bar, original voters, or historical reaction counts as live Telegram reactions.
+- Can archive reaction metadata from a compatible companion JSON export as **text notes**, including available counts and actor labels. It cannot recreate the original voters or historical totals as live Telegram reactions.
 - Uses a Telegram bot session for sending. It does not require a personal-account login for the migration itself.
 
 ## Requirements
@@ -79,6 +80,7 @@ Optional settings (defaults in brackets):
 | `TELEGRAM_MAX_UPLOAD_MB` [`2000`] | Stop at any message with a file larger than this many MiB (`0` disables the check). 2000 MiB is believed to be Telegram's MTProto ceiling; verify it with your bot. |
 | `TELEGRAM_BATCH_LIMIT` [`1000`] | Stop after this many messages (sent + failed). |
 | `TELEGRAM_SEND_DELAY` [`2.5`] | Seconds to wait between messages. |
+| `TELEGRAM_PRESERVE_SERVICE_MESSAGES` [`true`] | Include service events as labelled archival text entries (`false` to skip). |
 | `TELEGRAM_SESSION_NAME` [`colab_bot_restorer_session`] | Name of the Telethon session file. |
 
 ### Google Colab
@@ -131,6 +133,7 @@ Command-line options override the environment (`python -m telegram_migration --h
 | `--yes` | Skip the confirmation prompt. |
 | `--max-upload-mb N` | Stop at files larger than N MiB (`0` disables). |
 | `--batch-limit N`, `--delay SECONDS` | Stop after N messages / wait between messages. |
+| `--no-service-messages` | Skip Telegram service events. |
 | `--env-file PATH` | Load this `.env` file instead of `./.env`. |
 
 ## Use as a Python library
@@ -170,11 +173,11 @@ The code is a small package instead of one long script:
 
 ## Known limitations
 
-- Telegram service messages (for example, join/leave events and title changes) are intentionally excluded.
-- The destination messages are not identical to the original Telegram records. Sender names and timestamps are represented as text in reconstructed messages unless a native forward is possible.
+- Service events are reconstructed as ordinary labelled text messages, not genuine Telegram service messages; the bot cannot create native join/leave/pin system events. HTML exports usually provide the date divider but not the exact service-event clock time.
+- The destination messages are not identical to the original Telegram records. The destination bot is the technical sender; original sender names and timestamps are represented as archival text unless a native forward is possible. Telegram's separate native history-import API is user-account-only and is not used by this bot-based project.
 - The source HTML and media folder must contain the required data. A missing attachment cannot be recreated by this program.
 - If Telegram rejects formatting entities, the script can fall back to plain text for that message; check `migration_formatting_dropped.jsonl`.
-- Reaction archives are informational text notes, not native Telegram reactions.
+- Reaction archives are informational text notes, not native historical reactions. A bot may add its own single reaction to a message, but cannot recreate other users' original votes or historical counts.
 - Native forwards may be unavailable for source messages whose origins are inaccessible; the program's configured forwarding fallback may use a textual header.
 - Files above the upload limit (`max_upload_mb`) cause a clean stop and require manual handling. Files below the configured limit can still fail due to network, server, permissions, or media constraints.
 
