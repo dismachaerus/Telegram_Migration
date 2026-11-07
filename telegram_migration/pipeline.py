@@ -1,300 +1,385 @@
-"""Settings for a migration run.
+"""The migration run: stream the export, send each message, resume, stop cleanly."""
 
-Build a :class:`Settings` yourself, or call :meth:`Settings.from_env` to read the
-``TELEGRAM_*`` environment variables (a local ``.env`` file and Google Colab Secrets are
-supported). The package modules read the *active* settings through ``config.settings``
-at call time; :func:`use_settings` scopes them to the current thread/async context.
-
-Nothing is read from the environment at import time.
-"""
-from __future__ import annotations
-
-import dataclasses
+import asyncio
 import os
-from contextvars import ContextVar
-from contextlib import contextmanager
-from dataclasses import dataclass, field
-from typing import Mapping, Optional, Tuple, Union
+import sys
 
-from .constants import BOT_CAPTION_LIMIT, MAX_CAPTION_LIMIT, MIN_TEXT_LIMIT, TEXT_LIMIT
+from lxml import etree
+from telethon import TelegramClient
 
-PLACEHOLDER_API_ID = 12345678          # the value shipped in .env.example
-_TRUE = {"1", "true", "yes", "y", "on"}
-
-# Progress files kept inside the export folder: attribute name -> file name.
-_DERIVED_FILES = {
-    "idmap_file": "migration_id_map.jsonl",
-    "failed_file": "failed_messages.txt",
-    "partial_file": "migration_partial_sends.jsonl",
-    "pending_replies_file": "migration_pending_replies.json",
-    "reaction_note_map_file": "migration_reaction_notes.jsonl",
-    "reaction_archive_file": "migration_reactions_archive.jsonl",
-    "reaction_source_file": "migration_reactions_source.jsonl",
-    "reply_audit_file": "migration_reply_audit.jsonl",
-    "format_debug_file": "migration_formatting_dropped.jsonl",
-    "manual_uploads_file": "migration_manual_uploads.txt",
-}
+from . import bigfiles, cli, config, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
+from .htmlutil import css_classes
+from .textutil import (compose_message, compose_message_header,
+                       split_with_entities, strip_with_entities)
+from .constants import NO_CAPTION_KINDS, STICKER_KINDS
 
 
-class ConfigError(ValueError):
-    """The settings are incomplete or still contain example values."""
+async def process_file(client, channel, path, id_map, partial, pending_replies, stats, ctx,
+                      only_pending=False):
+    print(("Retrying deferred replies in " if only_pending else "Streaming ") + os.path.basename(path) + " ...")
+    # A new HTML page starts a new export slice. Do not carry a date from the
+    # previous file if this page has no divider or is malformed.
+    ctx["current_export_date"] = None
+    with open(path, "rb") as export_file:
+        context = etree.iterparse(export_file, events=("end",), tag="div", html=True, encoding="utf-8")
+        for _event, elem in context:
+            if "message" in css_classes(elem):
+                await _process_message(
+                    elem, client, channel, id_map, partial, pending_replies, stats, ctx,
+                    only_pending,
+                )
+                if ctx["stop"]:
+                    break
+    return ctx["stop"]
 
 
-def _truthy(value: Optional[str], default: bool) -> bool:
-    if value is None or not str(value).strip():
-        return default
-    return str(value).strip().casefold() in _TRUE
+def _resolve_reply(data, source_id, id_map, pending_replies, ctx):
+    reply_to = id_map.get(str(data["reply_src_id"])) if data["reply_src_id"] else None
+    reply_fallback = ("", [])
+    if not data["reply_src_id"] or reply_to is not None:
+        return reply_to, reply_fallback, False
+
+    target_src = str(data["reply_src_id"])
+    if target_src in ctx["source_ids"] and target_src not in ctx["processed_source_ids"]:
+        if not config.settings.dry_run:
+            if pending_replies.get(source_id) != target_src:
+                pending_replies[source_id] = target_src
+                progress.save_pending_replies(pending_replies)
+        else:
+            print(f"  [dry] would defer reply id={source_id} until target id={target_src} is migrated")
+        return None, reply_fallback, True
+
+    fallback = f"[Original reply target #{target_src} is unavailable in the destination]\n"
+    if data.get("reply_preview"):
+        fallback += f"Original reply preview: {data['reply_preview']}\n"
+    return None, (fallback + "\n", []), False
 
 
-def load_secret(name: str, env: Optional[Mapping[str, str]] = None) -> str:
-    """Read a value from the environment, then (in Google Colab) from Colab Secrets."""
-    source = os.environ if env is None else env
-    value = (source.get(name, "") or "").strip()
-    if value or env is not None:
-        return value
-    try:
-        from google.colab import userdata  # type: ignore
-        return (userdata.get(name) or "").strip()
-    except Exception:
-        return ""
+def _print_dry_run(source_id, data, text, entities, first_limit, reply_to,
+                   kind_summary, stats, pending_replies):
+    chunks = split_with_entities(text, entities, first_limit, config.settings.text_limit)
+    flag = "↪" if reply_to else ("?" if data["reply_src_id"] else " ")
+    fwd = "F" if data["forward_source"] else " "
+    preview = text[:80].replace("\n", "⏎")
+    extra = f" +{len(chunks) - 1} part(s)" if len(chunks) > 1 else ""
+    print(f"  [dry] {flag}{fwd} id={source_id:<6} ({kind_summary:<15}) {preview!r}{extra}")
+    stats["sent"] += 1
+    pending_replies.pop(source_id, None)
 
 
-def _load_dotenv(env_file: Optional[str]) -> None:
-    try:
-        from dotenv import load_dotenv
-    except ImportError:
-        print("Warning: python-dotenv is not installed; .env files will be ignored.")
+async def _send_migrated_message(client, channel, data, source_id, text, entities,
+                                 first_limit, reply_to, annotation, partial,
+                                 pending_replies, id_map, stats, ctx, kind_summary, when):
+    entities = await sending.resolve_mentions(client, entities)
+    chunks = split_with_entities(text, entities, first_limit, config.settings.text_limit)
+    state = {"src": source_id, "force_reconstruction": bool(data["reply_src_id"])}
+    if source_id in partial:
+        state.update(partial[source_id])
+
+    new_id = await sending.send_one(
+        client, channel, data, chunks, reply_to, state, annotation, source_id
+    )
+    if new_id:
+        id_map[source_id] = int(new_id)
+        ctx["last_dest_id"] = int(new_id)
+        progress.append_id_map(source_id, new_id)
+        stats["sent"] += 1
+        if state.get("native"):
+            stats["forwarded"] += 1
+        was_pending = source_id in pending_replies
+        pending_replies.pop(source_id, None)
+        if was_pending:
+            progress.save_pending_replies(pending_replies)
+        print(f"  [{stats['sent']:>4}] id={source_id:<6} → {new_id:<7}  ({kind_summary})  {when}")
         return
-    load_dotenv(env_file) if env_file else load_dotenv()
+
+    stats["failed"] += 1
+    if data["reply_src_id"]:
+        ctx["audit"].append({
+            "src": source_id,
+            "source_reply_to": str(data["reply_src_id"]),
+            "verified": False,
+            "status": "send_failed",
+        })
 
 
-@dataclass
-class Settings:
-    """Everything that can be configured. Defaults are the safe ones (dry run on)."""
-
-    # --- Telegram credentials -------------------------------------------------------------
-    api_id: Optional[int] = None
-    api_hash: str = field(default="", repr=False)
-    bot_token: str = field(default="", repr=False)
-    channel_peer: Union[int, str, None] = None     # numeric peer id (-100...) or "@username"
-    session_name: str = "colab_bot_restorer_session"
-
-    # --- where things live ----------------------------------------------------------------
-    base_dir: str = "./telegram_export"            # folder with messages.html, media folders, ...
-    # Progress files; when left as None they are placed inside base_dir.
-    idmap_file: Optional[str] = None
-    failed_file: Optional[str] = None
-    partial_file: Optional[str] = None
-    pending_replies_file: Optional[str] = None
-    reaction_note_map_file: Optional[str] = None
-    reaction_archive_file: Optional[str] = None
-    reaction_source_file: Optional[str] = None
-    reply_audit_file: Optional[str] = None
-    format_debug_file: Optional[str] = None
-    manual_uploads_file: Optional[str] = None
-
-    # --- behaviour --------------------------------------------------------------------------
-    dry_run: bool = True                           # preview only; nothing is sent
-    skip_confirmation: bool = False                # do not ask before sending
-    # Largest file the run will try to upload; a message with a bigger file stops the run
-    # (nothing from it is sent) so it can be uploaded by hand. None or 0 disables the check.
-    # 2000 MiB is believed to be Telegram's MTProto ceiling; verify it with your bot.
-    max_upload_mb: Optional[float] = 2000
-    # On an oversize stop, record that message in manual_uploads_file so the next run skips it.
-    # UPLOAD THE FILE(S) BEFORE RERUNNING, or that message is left out of the channel.
-    auto_mark_manual_on_stop: bool = True
-    batch_limit: int = 1000                        # stop after this many messages (sent + failed)
-    max_retries: int = 5
-    max_flood_waits: int = 10
-    send_delay_seconds: float = 2.5
-    preserve_sender_names: bool = True
-    preserve_service_messages: bool = True
-    preserve_reactions_as_annotations: bool = True
-    json_reaction_file_candidates: Tuple[str, ...] = ("result.json", "messages.json")
-    max_json_fallback_mb: int = 512
-    verify_replies: bool = True
-    # Telegram's message limit is 4096 for every account; lower it only to split long text into
-    # shorter parts. Settings.validate() rejects values above Telegram's maximum and below
-    # MIN_TEXT_LIMIT, where the splitter's surrogate-pair handling could produce a chunk
-    # slightly larger than the requested limit.
-    text_limit: int = TEXT_LIMIT
-    # Caption limit for media. A bot account is not Premium, so this is BOT_CAPTION_LIMIT
-    # (1024) rather than MAX_CAPTION_LIMIT (2048, Premium user accounts only).
-    caption_limit: int = BOT_CAPTION_LIMIT
-    # Try a native forward first when the export links the original message; a native
-    # forward cannot carry our formatted sender/timestamp header, so forward_annotate sends it as a reply.
-    native_forward: bool = True
-    forward_annotate: bool = True
-
-    def __post_init__(self) -> None:
-        self.base_dir = os.path.abspath(os.path.expanduser(str(self.base_dir)))
-        for attr, filename in _DERIVED_FILES.items():
-            if getattr(self, attr) is None:
-                setattr(self, attr, os.path.join(self.base_dir, filename))
-
-    # ------------------------------------------------------------------------------------
-    def replace(self, **changes) -> "Settings":
-        """Copy with some fields changed. Changing base_dir moves the progress files too."""
-        if "base_dir" in changes:
-            for attr in _DERIVED_FILES:
-                changes.setdefault(attr, None)
-        return dataclasses.replace(self, **changes)
-
-    def problems(self) -> list:
-        """Human-readable list of what is missing or still an example value."""
-        found = []
-        if self.api_id is None:
-            found.append("TELEGRAM_API_ID is not set")
-        elif self.api_id == PLACEHOLDER_API_ID:
-            found.append("TELEGRAM_API_ID is still the example value; use your own from my.telegram.org")
-        for env_name, value in (("TELEGRAM_API_HASH", self.api_hash), ("TELEGRAM_BOT_TOKEN", self.bot_token)):
-            if not value:
-                found.append(f"{env_name} is not set")
-            elif value.startswith("replace_with"):
-                found.append(f"{env_name} is still the example value")
-        if self.channel_peer in (None, ""):
-            found.append("TELEGRAM_CHANNEL_PEER is not set (numeric peer id or @username)")
-        if not MIN_TEXT_LIMIT <= self.text_limit <= TEXT_LIMIT:
-            found.append(
-                f"text_limit must be between {MIN_TEXT_LIMIT} and {TEXT_LIMIT} "
-                f"(Telegram's maximum; the lower bound avoids a splitter edge case)"
-            )
-        if not MIN_TEXT_LIMIT <= self.caption_limit <= BOT_CAPTION_LIMIT:
-            found.append(
-                f"caption_limit must be between {MIN_TEXT_LIMIT} and {BOT_CAPTION_LIMIT} "
-                f"(the limit for bot accounts; Premium user accounts can reach {MAX_CAPTION_LIMIT}; "
-                f"the lower bound avoids a splitter edge case)"
-            )
-        return found
-
-    def validate(self) -> "Settings":
-        """Raise ConfigError if credentials or the destination are missing."""
-        found = self.problems()
-        if found:
-            raise ConfigError(
-                "; ".join(found) + ". Set them in .env/the environment or as Colab Secrets. "
-                "Never commit credentials to Git."
-            )
-        return self
-
-    @classmethod
-    def from_env(cls, env: Optional[Mapping[str, str]] = None, *, env_file: Optional[str] = None,
-                 use_dotenv: bool = True, **overrides) -> "Settings":
-        """Read the TELEGRAM_* variables. Explicit keyword arguments win over the environment.
-
-        With env=None the process environment is used, a local .env file is loaded first
-        (it never overrides variables that are already set) and Colab Secrets are consulted.
-        Pass a mapping as ``env`` to read from it only (useful in tests).
-        """
-        if env is None and use_dotenv:
-            _load_dotenv(env_file)
-        get = lambda name: load_secret(name, env)          # noqa: E731
-
-        values: dict = {}
-        raw_id = get("TELEGRAM_API_ID")
-        if raw_id:
-            try:
-                values["api_id"] = int(raw_id)
-            except ValueError:
-                raise ConfigError(f"TELEGRAM_API_ID must be a number, got {raw_id!r}") from None
-        values["api_hash"] = get("TELEGRAM_API_HASH")
-        values["bot_token"] = get("TELEGRAM_BOT_TOKEN")
-        raw_peer = get("TELEGRAM_CHANNEL_PEER")
-        if raw_peer:
-            try:
-                values["channel_peer"] = int(raw_peer)
-            except ValueError:
-                values["channel_peer"] = raw_peer
-        source = os.environ if env is None else env
-        if source.get("TELEGRAM_EXPORT_DIR"):
-            values["base_dir"] = source["TELEGRAM_EXPORT_DIR"]
-        if source.get("TELEGRAM_SESSION_NAME"):
-            values["session_name"] = source["TELEGRAM_SESSION_NAME"]
-        values["dry_run"] = _truthy(source.get("TELEGRAM_DRY_RUN"), True)
-        values["skip_confirmation"] = _truthy(source.get("TELEGRAM_SKIP_CONFIRMATION"), False)
-        values["preserve_service_messages"] = _truthy(
-            source.get("TELEGRAM_PRESERVE_SERVICE_MESSAGES"), True
-        )
-
-        raw = (source.get("TELEGRAM_MAX_UPLOAD_MB") or "").strip().casefold()
-        if raw:
-            values["max_upload_mb"] = None if raw in {"0", "none", "off", "false"} else _number(raw, "TELEGRAM_MAX_UPLOAD_MB", float)
-        raw = (source.get("TELEGRAM_BATCH_LIMIT") or "").strip()
-        if raw:
-            values["batch_limit"] = _number(raw, "TELEGRAM_BATCH_LIMIT", int)
-        raw = (source.get("TELEGRAM_SEND_DELAY") or "").strip()
-        if raw:
-            values["send_delay_seconds"] = _number(raw, "TELEGRAM_SEND_DELAY", float)
-
-        values.update(overrides)
-        return cls(**values)
-
-
-def _number(raw: str, name: str, kind):
+async def _process_message(elem, client, channel, id_map, partial, pending_replies,
+                           stats, ctx, only_pending):
+    source_id = None
+    mark_completed = False
     try:
-        return kind(raw)
-    except ValueError:
-        raise ConfigError(f"{name} must be a number, got {raw!r}") from None
+        raw_elem_id = elem.get("id", "")
+        if raw_elem_id.startswith("message") and raw_elem_id[7:].isdigit():
+            source_id = raw_elem_id[7:]
+        classes = css_classes(elem)
+        if "service" in classes:
+            # Telegram Desktop uses negative-ID service blocks as date dividers
+            # (e.g. message-1). Keep their date for subsequent real service events,
+            # but do not import the divider as a separate message.
+            date_separator = htmlexport.extract_date_separator(elem)
+            if date_separator is not None:
+                ctx["current_export_date"] = date_separator
+                return
+            data = (htmlexport.extract_service_event_data(
+                elem, ctx.get("current_export_date")
+            ) if config.settings.preserve_service_messages else None)
+        else:
+            data = htmlexport.extract_message_data(elem)
 
+        if data is None:
+            if "service" in classes and source_id:
+                stats["skipped"] += 1
+            mark_completed = bool(source_id)
+            return
+        source_id = str(data["msg_id"])
 
-# Defaults only: nothing is read from the environment until Settings.from_env() (or run()).
-_default_settings = Settings()
-_active_settings = ContextVar("telegram_migration_settings", default=None)
+        if data["sender"]:
+            ctx["last_sender"] = data["sender"]
+        elif data["joined"] and config.settings.preserve_sender_names:
+            data["sender"] = ctx["last_sender"]
 
+        if data["reply_src_id"]:
+            ctx["reply_map"][source_id] = str(data["reply_src_id"])
+        if data.get("reactions") and source_id not in ctx["reaction_map"]:
+            ctx["reaction_map"][source_id] = data["reactions"]
 
-class _SettingsProxy:
-    """Resolve settings in the current async context, falling back to defaults."""
+        if only_pending and source_id not in pending_replies:
+            return
 
-    def __getattr__(self, name):
-        return getattr(get_settings(), name)
+        if source_id in id_map or source_id in ctx["manual_done"]:
+            was_pending = source_id in pending_replies
+            pending_replies.pop(source_id, None)
+            if was_pending and not config.settings.dry_run:
+                progress.save_pending_replies(pending_replies)
+            mark_completed = True
+            return
 
-    # Read-only on purpose. Writing through the proxy would change whichever Settings happens to be
-    # active (and unittest.mock.patch.object, which restores a value by *deleting* it, would then
-    # leave a field reset to its class default instead of its original value).
-    def __setattr__(self, name, value):
-        raise AttributeError(
-            "config.settings is read-only; build a Settings and activate it with "
-            "config.use_settings(...) or config.set_settings(...)"
+        if stats["sent"] + stats["failed"] >= config.settings.batch_limit:
+            print(f"Batch limit reached ({config.settings.batch_limit}). Restart to continue.")
+            ctx["stop"] = True
+            return
+
+        has_content = bool(data["body_text"].strip() or data["media"])
+        if not has_content:
+            stats["skipped"] += 1
+            was_pending = source_id in pending_replies
+            pending_replies.pop(source_id, None)
+            if was_pending and not config.settings.dry_run:
+                progress.save_pending_replies(pending_replies)
+            mark_completed = True
+            return
+
+        timestamp = data["timestamp"]
+        if data.get("service_event"):
+            # HTML service-event blocks inherit only the day from the preceding
+            # negative-ID date divider; they do not carry an individual clock time.
+            header = compose_message_header(
+                timestamp, "Telegram service event", date_only=True
+            )
+        else:
+            header = compose_message_header(timestamp, data["sender"])
+        forward = (data["forward_header"], [])
+
+        reply_to, reply_fallback, deferred = _resolve_reply(
+            data, source_id, id_map, pending_replies, ctx
         )
+        if deferred:
+            return
 
-    def __delattr__(self, name):
-        raise AttributeError(
-            "config.settings is read-only; build a Settings and activate it with "
-            "config.use_settings(...) or config.set_settings(...)"
+        text, entities = compose_message(
+            header, ("", []), forward, data["body_text"], data["body_entities"],
+            extra_before_body=reply_fallback,
         )
+        text, entities = strip_with_entities(text, entities)
 
-    def __repr__(self):
-        return repr(get_settings())
+        oversize = bigfiles.find_oversize_media(data["media"])
+        if oversize:
+            if config.settings.dry_run:
+                bigfiles.print_oversize_dry_run(source_id, data, oversize)
+                ctx["oversize_report"].append(source_id)
+                mark_completed = True
+                return
+            bigfiles.halt_for_oversize(source_id, data, text, oversize, id_map, ctx)
+            return
 
+        annotation_text, annotation_entities = compose_message(header, ("", []), ("", []), "", [])
+        annotation_text, annotation_entities = strip_with_entities(annotation_text, annotation_entities)
+        annotation = [(annotation_text, annotation_entities)] if annotation_text.strip() else None
 
-settings = _SettingsProxy()
+        kinds = [kind for _path, kind in data["media"]]
+        captionable = bool(kinds) and kinds[0] not in NO_CAPTION_KINDS
+        has_sticker = any(kind in STICKER_KINDS for kind in kinds)
+        first_limit = config.settings.text_limit if has_sticker else (
+            config.settings.caption_limit if (captionable or len(kinds) > 1)
+            else config.settings.text_limit
+        )
+        kind_summary = ",".join(kinds) or "text"
+        when = timestamp.strftime("%Y-%m-%d %H:%M") if timestamp else "?"
 
+        if config.settings.dry_run:
+            _print_dry_run(
+                source_id, data, text, entities, first_limit, reply_to,
+                kind_summary, stats, pending_replies,
+            )
+            mark_completed = True
+            return
 
-def get_settings() -> Settings:
-    """Return the settings active in the current thread/async context."""
-    active = _active_settings.get()
-    return active if active is not None else _default_settings
-
-
-def set_settings(new: Settings) -> Settings:
-    """Set fallback settings for callers overriding the default outside `use_settings`."""
-    global _default_settings
-    _default_settings = new
-    return new
-
-
-@contextmanager
-def use_settings(new: Settings):
-    """Temporarily activate `new` in this thread/async context only."""
-    token = _active_settings.set(new)
-    try:
-        yield new
+        await _send_migrated_message(
+            client, channel, data, source_id, text, entities, first_limit,
+            reply_to, annotation, partial, pending_replies, id_map, stats,
+            ctx, kind_summary, when,
+        )
+        mark_completed = True
+        await asyncio.sleep(config.settings.send_delay_seconds)
+    except Exception as exc:
+        mid = ("message" + source_id) if source_id else elem.get("id", "?")
+        print(f"    failed {mid}: {type(exc).__name__}: {exc}")
+        progress.log_failure(mid, f"{type(exc).__name__}: {exc}")
+        stats["failed"] += 1
+        mark_completed = True
     finally:
-        _active_settings.reset(token)
+        if source_id and mark_completed:
+            ctx["processed_source_ids"].add(source_id)
+        elem.clear()
+        while elem.getprevious() is not None:
+            del elem.getparent()[0]
 
 
-def resolve_settings(settings_arg: Optional[Settings] = None, **overrides) -> Settings:
-    """`settings_arg` (or Settings.from_env()) with keyword overrides applied."""
-    if settings_arg is None:
-        return Settings.from_env(**overrides)
-    return settings_arg.replace(**overrides) if overrides else settings_arg
+async def run_async(settings=None, **overrides):
+    """Run (or resume) one migration pass.
+
+    Returns True when the run completed, was aborted by the user at the
+    confirmation prompt, or stopped cleanly at an oversize file (all three
+    are expected outcomes). Returns False only when the run could not start —
+    no export was found in ``base_dir``, or the destination channel could not
+    be resolved. Raises :class:`~telegram_migration.config.ConfigError` when
+    the credentials or the destination are missing or invalid.
+    """
+    resolved = config.resolve_settings(settings, **overrides).validate()
+    with config.use_settings(resolved):
+        return await _run_migration()
+
+
+async def _run_migration():
+    uploads.configure_send_file_compat()
+    mediatools.enable_hachoir()
+
+    drive_root = os.path.abspath("/content/drive")
+    configured_dir = os.path.abspath(config.settings.base_dir)
+    using_drive = configured_dir == drive_root or configured_dir.startswith(drive_root + os.sep)
+    if "google.colab" in sys.modules and using_drive and not os.path.isdir("/content/drive/MyDrive"):
+        from google.colab import drive
+        drive.mount("/content/drive")
+
+    files = htmlexport.discover_export_files(config.settings.base_dir)
+    if not files:
+        print(f"No messages.html / messages2.html ... found in: {config.settings.base_dir}")
+        return False
+
+    id_map = progress.load_id_map()
+    manual_done, manual_map = bigfiles.load_manual_uploads()
+    for _src, _dst in manual_map.items():
+        id_map.setdefault(_src, _dst)
+    if manual_done:
+        _ids = sorted(manual_done, key=int)
+        _shown = ", ".join(_ids[:20]) + (" ..." if len(_ids) > 20 else "")
+        print(f"{len(manual_done)} message(s) marked as uploaded by hand and SKIPPED by the script (ids: {_shown}).")
+        print(f"  Make sure they are really in the channel; remove a line from {os.path.basename(config.settings.manual_uploads_file)} to have the script send it.")
+    partial = progress.load_partial()
+    pending_replies = progress.load_pending_replies()
+    source_ids = progress.collect_source_ids(files)
+    total = len(source_ids)
+    reaction_map = reaction_archive.load_json_reactions(files, source_ids)
+
+    print(f"Export files: {len(files)}   Already processed: {len(id_map)}   File(s) contain: {total} messages")
+    print(f"{len(pending_replies)} deferred replies are queued.")
+
+    client = TelegramClient(config.settings.session_name, config.settings.api_id, config.settings.api_hash)
+    await client.start(bot_token=config.settings.bot_token)
+    print("Logged in officially as a bot.")
+
+    try:
+        channel = await client.get_entity(config.settings.channel_peer)
+    except Exception as e:
+        print(f"Channel error: {e}")
+        await client.disconnect()
+        return False
+
+    if not cli.confirm_target(
+            channel, max(0, total - len(set(id_map) | manual_done)), len(files), config.get_settings()):
+        print("Aborted by user.")
+        await client.disconnect()
+        return True
+
+    stats = {"sent": 0, "skipped": 0, "failed": 0, "forwarded": 0, "reaction_notes": 0}
+    ctx = {
+        "last_sender": "",
+        "current_export_date": None,
+        "stop": False,
+        "source_ids": source_ids,
+        "processed_source_ids": set(),
+        "reaction_map": reaction_map,
+        "reply_map": {},
+        "audit": [],
+        "manual_done": manual_done,
+        "halt": [],
+        "oversize_report": [],
+        "last_dest_id": None,
+    }
+
+    for path in files:
+        if await process_file(client, channel, path, id_map, partial, pending_replies, stats, ctx):
+            break
+
+    if not ctx["stop"] and pending_replies:
+        while pending_replies and not ctx["stop"]:
+            before_pending = len(pending_replies)
+            before_completed = len(ctx["processed_source_ids"])
+            pending_ctx = dict(ctx)
+            pending_ctx["last_sender"] = ""
+            pending_ctx["stop"] = False
+            for path in files:
+                if await process_file(client, channel, path, id_map, partial, pending_replies,
+                                      stats, pending_ctx, only_pending=True):
+                    ctx["stop"] = True
+                    break
+            ctx["processed_source_ids"].update(pending_ctx["processed_source_ids"])
+            if len(pending_replies) >= before_pending and len(ctx["processed_source_ids"]) <= before_completed:
+                break
+
+    if ctx["halt"]:
+        progress.save_pending_replies(pending_replies)
+        print(f"Stopped at message id={ctx['halt'][0]}: sent={stats['sent']} this run, progress saved.")
+        print("Follow the instructions above, then run the script again to resume.")
+        await client.disconnect()
+        return True
+
+    if not reaction_map:
+        print("No reaction metadata was found. Telegram Desktop HTML exports generally do not expose full reaction data.")
+        print("To archive available reactions, place the matching Telegram JSON export (result.json or messages.json, with reaction fields) directly in the export folder.")
+
+    note_map = progress.load_reaction_note_map()
+    if not config.settings.dry_run:
+        reaction_archive.persist_reaction_source_metadata(reaction_map)
+        await replylinks.verify_all_reply_links(client, channel, ctx["reply_map"], id_map, ctx["audit"])
+        progress.write_reply_audit(ctx["audit"])
+        if not ctx["stop"]:
+            await reaction_archive.restore_reaction_archive_notes(client, channel, id_map, reaction_map, note_map, stats)
+
+    if config.settings.dry_run and ctx["oversize_report"]:
+        print()
+        print(f"{len(ctx['oversize_report'])} message(s) have files over {bigfiles.format_mb(bigfiles.max_upload_bytes())} "
+              f"(ids: {', '.join(ctx['oversize_report'])}). A real run stops at the first one.")
+
+    print()
+    print("═" * 60)
+    print(f"Done.  sent={stats['sent']}   skipped={stats['skipped']}   failed={stats['failed']}   "
+          f"native_forwards={stats['forwarded']}   reaction_notes={stats.get('reaction_notes', 0)}")
+    print(f"Reply audit: {config.settings.reply_audit_file}")
+    if pending_replies:
+        print(f"Deferred replies still waiting for a target mapping: {len(pending_replies)} (saved in {config.settings.pending_replies_file})")
+    if stats["failed"]:
+        print(f"Failed IDs are logged in {config.settings.failed_file}")
+    print("═" * 60)
+    await client.disconnect()
+    return True
