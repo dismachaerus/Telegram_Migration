@@ -37,6 +37,10 @@ def parse_export_date(s):
         "%d.%m.%Y %H:%M",
         "%Y-%m-%d %H:%M:%S",
         "%Y-%m-%d %H:%M",
+        "%d %B %Y",
+        "%d %b %Y",
+        "%B %d, %Y",
+        "%b %d, %Y",
     ):
         try:
             return datetime.strptime(s, fmt)
@@ -149,6 +153,64 @@ def _extract_reply_source_id(msg_div):
         return None
     match = re.search(r"#go_to_message(\d+)", a.get("href") or "")
     return match.group(1) if match else None
+
+
+def extract_date_separator(msg_div):
+    """Return the calendar date from Telegram Desktop's negative-ID date divider.
+
+    Telegram Desktop writes date dividers as ``message service`` elements with
+    negative IDs (for example ``message-1``). Actual service events retain their
+    positive message IDs, so they can be distinguished and migrated separately.
+    """
+    classes = css_classes(msg_div)
+    raw_id = msg_div.get("id", "")
+    if "message" not in classes or "service" not in classes:
+        return None
+    if not re.fullmatch(r"message-\d+", raw_id):
+        return None
+    body = find_first(msg_div, "body")
+    label = inner_text(body if body is not None else msg_div)
+    return parse_export_date(label)
+
+
+def extract_service_event_data(msg_div, current_date=None):
+    """Extract a real Telegram service event from a Desktop HTML export.
+
+    Negative ``message-N`` records are date separators, not Telegram events;
+    callers should process them with :func:`extract_date_separator` instead.
+    """
+    classes = css_classes(msg_div)
+    if "message" not in classes or "service" not in classes:
+        return None
+
+    raw_id = msg_div.get("id", "")
+    match = re.fullmatch(r"message(\d+)", raw_id)
+    if not match:
+        return None
+
+    body = find_first(msg_div, "body")
+    body_text, body_entities = parse_rich_text(body if body is not None else msg_div)
+    body_text = body_text.strip()
+    if not body_text:
+        return None
+
+    return {
+        "msg_id": match.group(1),
+        "joined": False,
+        "timestamp": current_date,
+        "timestamp_date_only": current_date is not None,
+        "service_event": True,
+        "sender": "",
+        "forward_header": "",
+        "forward_source": None,
+        "reply_src_id": None,
+        "reply_preview": "",
+        "body_text": body_text,
+        "body_entities": body_entities,
+        "media": [],
+        "media_note": "",
+        "reactions": [],
+    }
 
 
 def extract_message_data(msg_div):
