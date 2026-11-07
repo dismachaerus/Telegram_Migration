@@ -8,7 +8,7 @@ A Python tool for reconstructing a Telegram conversation in a destination channe
 
 - Streams Telegram Desktop HTML exports instead of loading every page into memory at once.
 - Reconstructs supported rich-text formatting (including italics, bold, underline, strike, code, links, spoilers, and blockquotes) using Telegram message entities.
-- Preserves sender names and original timestamps as archival text where available; original accounts are not impersonated.
+- Displays each original sender as a bold heading, followed by an italic, human-readable timestamp and the message body; original accounts are not impersonated.
 - Reconstructs Telegram Desktop service events (such as joins, removals, pins and group changes) as clearly labelled archival entries. HTML exports provide the calendar date for these events, but not always the exact clock time.
 - Handles common exported media: photos, documents, videos, GIFs, voice messages, round videos, and sticker files.
 - Maps source message IDs to destination IDs to restore reply links where possible; audits available reply links.
@@ -171,7 +171,7 @@ The code is a small package instead of one long script:
 ## Known limitations
 
 - Service events are reconstructed as ordinary labelled text messages, not genuine Telegram service messages; the bot cannot create native join/leave/pin system events. HTML exports usually provide the date divider but not the exact service-event clock time.
-- The destination messages are not identical to the original Telegram records. The destination bot is the technical sender; original sender names and timestamps are represented as archival text unless a native forward is possible. Telegram's separate native history-import API is user-account-only and is not used by this bot-based project.
+- The destination messages are not identical to the original Telegram records. The destination bot is the technical sender; original sender names are bold archival labels and timestamps are italic archival labels unless a native forward is possible. Telegram's separate native history-import API is user-account-only and is not used by this bot-based project.
 - The source HTML and media folder must contain the required data. A missing attachment cannot be recreated by this program.
 - If Telegram rejects formatting entities, the script can fall back to plain text for that message; check `migration_formatting_dropped.jsonl`.
 - Reaction archives are informational text notes, not native historical reactions. A bot may add its own single reaction to a message, but cannot recreate other users' original votes or historical counts.
