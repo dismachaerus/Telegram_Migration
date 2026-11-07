@@ -55,6 +55,11 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(s.base_dir, os.path.abspath("/data/export"))
         self.assertTrue(s.dry_run)
         self.assertFalse(s.skip_confirmation)
+        self.assertTrue(s.preserve_service_messages)
+
+    def test_service_message_setting_can_be_disabled_from_environment(self):
+        s = Settings.from_env({**GOOD_ENV, "TELEGRAM_PRESERVE_SERVICE_MESSAGES": "false"})
+        self.assertFalse(s.preserve_service_messages)
 
     def test_channel_peer_may_be_a_username(self):
         self.assertEqual(Settings.from_env({**GOOD_ENV, "TELEGRAM_CHANNEL_PEER": "@my_channel"}).channel_peer, "@my_channel")
@@ -166,6 +171,13 @@ class CommandLineTests(unittest.TestCase):
         self.assertTrue(s.skip_confirmation)
         self.assertEqual((s.channel_peer, s.max_upload_mb, s.batch_limit, s.send_delay_seconds), ("@dest", 50.0, 5, 0.0))
         self.assertEqual(s.base_dir, os.path.abspath("/tmp/exp"))
+
+    def test_no_service_messages_flag_overrides_environment(self):
+        seen = {}
+        with patch.object(runner, "run", lambda settings: seen.setdefault("settings", settings)):
+            code, _, _ = self.run_cli(["--no-service-messages"], GOOD_ENV)
+        self.assertEqual(code, 0)
+        self.assertFalse(seen["settings"].preserve_service_messages)
 
     def test_dry_run_is_the_default(self):
         seen = {}
