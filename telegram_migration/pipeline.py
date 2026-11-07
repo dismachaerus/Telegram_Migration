@@ -9,7 +9,8 @@ from telethon import TelegramClient
 
 from . import bigfiles, cli, config, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
 from .htmlutil import css_classes
-from .textutil import compose_message, split_with_entities, strip_with_entities
+from .textutil import (compose_message, compose_message_header,
+                       split_with_entities, strip_with_entities)
 from .constants import NO_CAPTION_KINDS, STICKER_KINDS
 
 
@@ -170,13 +171,13 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
 
         timestamp = data["timestamp"]
         if data.get("service_event"):
-            # HTML service-event blocks do not carry their own clock time. The
-            # preceding negative-ID date divider gives us the day, not a time.
-            watermark = (f"[{timestamp.strftime('%Y-%m-%d')}]\n", []) if timestamp else ("", [])
-            sender = ("[Telegram service event]\n", [])
+            # HTML service-event blocks inherit only the day from the preceding
+            # negative-ID date divider; they do not carry an individual clock time.
+            header = compose_message_header(
+                timestamp, "Telegram service event", date_only=True
+            )
         else:
-            watermark = (f"[{timestamp.strftime('%Y-%m-%d %H:%M')}]\n", []) if timestamp else ("", [])
-            sender = (f"{data['sender']}:\n", []) if data["sender"] else ("", [])
+            header = compose_message_header(timestamp, data["sender"])
         forward = (data["forward_header"], [])
 
         reply_to, reply_fallback, deferred = _resolve_reply(
@@ -186,7 +187,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             return
 
         text, entities = compose_message(
-            watermark, sender, forward, data["body_text"], data["body_entities"],
+            header, ("", []), forward, data["body_text"], data["body_entities"],
             extra_before_body=reply_fallback,
         )
         text, entities = strip_with_entities(text, entities)
@@ -201,7 +202,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             bigfiles.halt_for_oversize(source_id, data, text, oversize, id_map, ctx)
             return
 
-        annotation_text, annotation_entities = compose_message(watermark, sender, ("", []), "", [])
+        annotation_text, annotation_entities = compose_message(header, ("", []), ("", []), "", [])
         annotation_text, annotation_entities = strip_with_entities(annotation_text, annotation_entities)
         annotation = [(annotation_text, annotation_entities)] if annotation_text.strip() else None
 
