@@ -106,6 +106,7 @@ class Settings:
     max_flood_waits: int = 10
     send_delay_seconds: float = 2.5
     preserve_sender_names: bool = True
+    preserve_service_messages: bool = True
     preserve_reactions_as_annotations: bool = True
     json_reaction_file_candidates: Tuple[str, ...] = ("result.json", "messages.json")
     max_json_fallback_mb: int = 512
@@ -119,7 +120,7 @@ class Settings:
     # (1024) rather than MAX_CAPTION_LIMIT (2048, Premium user accounts only).
     caption_limit: int = BOT_CAPTION_LIMIT
     # Try a native forward first when the export links the original message; a native
-    # forward cannot carry our timestamp/sender line, so forward_annotate sends it as a reply.
+    # forward cannot carry our formatted sender/timestamp header, so forward_annotate sends it as a reply.
     native_forward: bool = True
     forward_annotate: bool = True
 
@@ -209,6 +210,9 @@ class Settings:
             values["session_name"] = source["TELEGRAM_SESSION_NAME"]
         values["dry_run"] = _truthy(source.get("TELEGRAM_DRY_RUN"), True)
         values["skip_confirmation"] = _truthy(source.get("TELEGRAM_SKIP_CONFIRMATION"), False)
+        values["preserve_service_messages"] = _truthy(
+            source.get("TELEGRAM_PRESERVE_SERVICE_MESSAGES"), True
+        )
 
         raw = (source.get("TELEGRAM_MAX_UPLOAD_MB") or "").strip().casefold()
         if raw:

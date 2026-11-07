@@ -3,6 +3,8 @@
 import copy
 import re
 
+from telethon.tl import types as tl
+
 
 def u16len(s):
     """Length in UTF-16 code units (Telegram's unit for entity offsets)."""
@@ -59,6 +61,59 @@ def _shift(e, shift):
     e2 = copy.copy(e)
     e2.offset = e.offset + shift
     return e2
+
+
+_MONTH_NAMES = (
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+)
+
+
+def format_archive_timestamp(timestamp, date_only=False):
+    """Format an exported timestamp for the readable Telegram archive header.
+
+    Month names are deliberately locale-independent so the same export gets
+    the same display on Windows, Linux, and Google Colab.
+    """
+    if timestamp is None:
+        return ""
+    day = f"{timestamp.day} {_MONTH_NAMES[timestamp.month - 1]} {timestamp.year}"
+    if date_only:
+        return day
+    return f"{day} · {timestamp:%H:%M}"
+
+
+def compose_message_header(timestamp, sender, date_only=False):
+    """Build a readable sender/date header with Telegram formatting entities.
+
+    The sender is bold and the timestamp italic. Both offsets and lengths use
+    UTF-16 code units, matching Telegram's entity format. The returned header
+    ends with a blank line so the message body starts as a separate paragraph.
+    """
+    text = ""
+    entities = []
+
+    label = sanitize_text(str(sender or "")).replace("\n", " ").strip()
+    if label:
+        start = u16len(text)
+        text += label
+        length = u16len(label)
+        if length:
+            entities.append(tl.MessageEntityBold(offset=start, length=length))
+        text += "\n"
+
+    stamp = format_archive_timestamp(timestamp, date_only=date_only)
+    if stamp:
+        start = u16len(text)
+        text += stamp
+        length = u16len(stamp)
+        if length:
+            entities.append(tl.MessageEntityItalic(offset=start, length=length))
+        text += "\n\n"
+    elif label:
+        text += "\n"
+
+    return text, entities
 
 
 def compose_message(watermark, sender, forward, body_text, body_entities, extra_before_body=None):

@@ -83,6 +83,23 @@ class TextAndEntityTests(unittest.TestCase):
         self.assertEqual((result[0].offset, result[0].length), (0, 2))
         self.assertEqual((result[1].offset, result[1].length), (1, 2))
 
+    def test_archive_header_formats_sender_and_timestamp_with_utf16_entities(self):
+        timestamp = datetime(2025, 3, 15, 11, 39)
+        header, entities = textutil.compose_message_header(timestamp, "esprít 😀")
+        self.assertEqual(header, "esprít 😀\n15 March 2025 · 11:39\n\n")
+        self.assertEqual(
+            [(type(entity).__name__, entity.offset, entity.length) for entity in entities],
+            [("MessageEntityBold", 0, 9), ("MessageEntityItalic", 10, 21)],
+        )
+
+    def test_archive_header_supports_date_only_service_events(self):
+        header, entities = textutil.compose_message_header(
+            datetime(2025, 3, 15), "Telegram service event", date_only=True
+        )
+        self.assertEqual(header, "Telegram service event\n15 March 2025\n\n")
+        self.assertEqual([type(entity).__name__ for entity in entities],
+                         ["MessageEntityBold", "MessageEntityItalic"])
+
     def test_compose_message_shifts_body_entity_after_prefix(self):
         body_entity = tl.MessageEntityItalic(offset=0, length=4)
         text, entities = textutil.compose_message(
@@ -168,20 +185,39 @@ class ExportParsingTests(unittest.TestCase):
         self.assertEqual(data["reply_src_id"], "122")
         self.assertTrue(any(isinstance(e, tl.MessageEntityItalic) for e in data["body_entities"]))
 
-    def test_extract_message_data_skips_service_records(self):
-        elem = etree.fromstring('<div class="message service" id="message-123"><div>joined</div></div>')
-        self.assertIsNone(htmlexport.extract_message_data(elem))
+    def test_extract_message_data_skips_service_records_but_service_parser_keeps_real_events(self):
+        event = etree.fromstring(
+            '<div class="message service" id="message123">'
+            '<div class="body details">Alice invited Bob</div></div>'
+        )
+        with patch.object(config.get_settings(), "preserve_service_messages", True):
+            data = htmlexport.extract_service_event_data(event, datetime(2026, 10, 24))
+        self.assertIsNone(htmlexport.extract_message_data(event))
+        self.assertEqual(data["msg_id"], "123")
+        self.assertTrue(data["service_event"])
+        self.assertEqual(data["body_text"], "Alice invited Bob")
+        self.assertEqual(data["timestamp"], datetime(2026, 10, 24))
+        self.assertTrue(data["timestamp_date_only"])
+
+    def test_negative_service_message_id_is_a_date_separator_not_an_event(self):
+        elem = etree.fromstring(
+            '<div class="message service" id="message-123">'
+            '<div class="body details">24 October 2026</div></div>'
+        )
+        self.assertEqual(htmlexport.extract_date_separator(elem), datetime(2026, 10, 24))
+        self.assertIsNone(htmlexport.extract_service_event_data(elem, datetime(2026, 10, 24)))
 
     def test_extract_message_data_rejects_bad_message_id(self):
         elem = etree.fromstring('<div class="message default" id="messageabc"><div class="text">hi</div></div>')
         self.assertIsNone(htmlexport.extract_message_data(elem))
 
-    def test_collect_source_ids_ignores_service_message_ids(self):
+    def test_collect_source_ids_ignores_negative_date_dividers_but_keeps_real_service_ids(self):
         with tempfile.TemporaryDirectory() as temp:
             page = Path(temp) / "messages.html"
             page.write_text(
-                '<div id="message1"></div><div id="message-2"></div>'
-                '<div id=\'message30\'></div>', encoding="utf-8"
+                '<div class="message" id="message1"></div>'
+                '<div class="message service" id="message-2"></div>'
+                '<div class="message service" id=\'message30\'></div>', encoding="utf-8"
             )
             self.assertEqual(progress.collect_source_ids([str(page)]), {"1", "30"})
 
