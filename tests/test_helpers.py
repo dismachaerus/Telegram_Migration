@@ -168,20 +168,39 @@ class ExportParsingTests(unittest.TestCase):
         self.assertEqual(data["reply_src_id"], "122")
         self.assertTrue(any(isinstance(e, tl.MessageEntityItalic) for e in data["body_entities"]))
 
-    def test_extract_message_data_skips_service_records(self):
-        elem = etree.fromstring('<div class="message service" id="message-123"><div>joined</div></div>')
-        self.assertIsNone(htmlexport.extract_message_data(elem))
+    def test_extract_message_data_skips_service_records_but_service_parser_keeps_real_events(self):
+        event = etree.fromstring(
+            '<div class="message service" id="message123">'
+            '<div class="body details">Alice invited Bob</div></div>'
+        )
+        with patch.object(config.get_settings(), "preserve_service_messages", True):
+            data = htmlexport.extract_service_event_data(event, datetime(2026, 10, 24))
+        self.assertIsNone(htmlexport.extract_message_data(event))
+        self.assertEqual(data["msg_id"], "123")
+        self.assertTrue(data["service_event"])
+        self.assertEqual(data["body_text"], "Alice invited Bob")
+        self.assertEqual(data["timestamp"], datetime(2026, 10, 24))
+        self.assertTrue(data["timestamp_date_only"])
+
+    def test_negative_service_message_id_is_a_date_separator_not_an_event(self):
+        elem = etree.fromstring(
+            '<div class="message service" id="message-123">'
+            '<div class="body details">24 October 2026</div></div>'
+        )
+        self.assertEqual(htmlexport.extract_date_separator(elem), datetime(2026, 10, 24))
+        self.assertIsNone(htmlexport.extract_service_event_data(elem, datetime(2026, 10, 24)))
 
     def test_extract_message_data_rejects_bad_message_id(self):
         elem = etree.fromstring('<div class="message default" id="messageabc"><div class="text">hi</div></div>')
         self.assertIsNone(htmlexport.extract_message_data(elem))
 
-    def test_collect_source_ids_ignores_service_message_ids(self):
+    def test_collect_source_ids_ignores_negative_date_dividers_but_keeps_real_service_ids(self):
         with tempfile.TemporaryDirectory() as temp:
             page = Path(temp) / "messages.html"
             page.write_text(
-                '<div id="message1"></div><div id="message-2"></div>'
-                '<div id=\'message30\'></div>', encoding="utf-8"
+                '<div class="message" id="message1"></div>'
+                '<div class="message service" id="message-2"></div>'
+                '<div class="message service" id=\'message30\'></div>', encoding="utf-8"
             )
             self.assertEqual(progress.collect_source_ids([str(page)]), {"1", "30"})
 
