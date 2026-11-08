@@ -185,6 +185,89 @@ class ExportParsingTests(unittest.TestCase):
         self.assertEqual(data["reply_src_id"], "122")
         self.assertTrue(any(isinstance(e, tl.MessageEntityItalic) for e in data["body_entities"]))
 
+    def test_extract_message_data_preserves_text_when_referenced_photo_is_missing(self):
+        html = '''<div class="message default clearfix" id="message124">
+          <div class="body">
+            <div class="pull_right date details" title="24.10.2026 12:34:56 UTC+03:00">12:34</div>
+            <div class="from_name">Alice</div>
+            <div class="text">caption survives</div>
+            <div class="media_wrap clearfix">
+              <a class="photo_wrap" href="photos/missing.jpg">
+                <img class="photo" src="photos/missing_thumb.jpg"/>
+              </a>
+            </div>
+          </div>
+        </div>'''
+        elem = etree.fromstring(html)
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(config.get_settings(), "base_dir", temp):
+                data = htmlexport.extract_message_data(elem)
+        self.assertEqual(data["media"], [])
+        self.assertEqual(
+            data["body_text"],
+            "caption survives\n\n[Media not found: photos/missing.jpg]",
+        )
+
+    def test_missing_photo_without_caption_becomes_a_text_message(self):
+        html = '''<div class="message default clearfix" id="message125">
+          <div class="body">
+            <div class="from_name">Alice</div>
+            <div class="media_wrap clearfix">
+              <a class="photo_wrap" href="photos/only-photo.jpg">
+                <img class="photo" src="photos/only-photo_thumb.jpg"/>
+              </a>
+            </div>
+          </div>
+        </div>'''
+        elem = etree.fromstring(html)
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(config.get_settings(), "base_dir", temp):
+                data = htmlexport.extract_message_data(elem)
+        self.assertEqual(data["media"], [])
+        self.assertEqual(data["body_text"], "[Media not found: photos/only-photo.jpg]")
+
+    def test_missing_full_photo_does_not_fall_back_to_existing_thumbnail(self):
+        with tempfile.TemporaryDirectory() as temp:
+            photos = Path(temp) / "photos"
+            photos.mkdir()
+            (photos / "missing_thumb.jpg").write_bytes(b"thumbnail")
+            elem = etree.fromstring(
+                '<div class="message" id="message1"><div class="media_wrap">'
+                '<a class="photo_wrap" href="photos/missing.jpg">'
+                '<img class="photo" src="photos/missing_thumb.jpg"/></a>'
+                '</div></div>'
+            )
+            with patch.object(config.get_settings(), "base_dir", temp):
+                media = exportmedia.find_media(elem)
+                missing = exportmedia.find_missing_media(elem)
+            self.assertEqual(media, [])
+            self.assertEqual(missing, ["photos/missing.jpg"])
+
+    def test_message_with_existing_and_missing_attachments_keeps_both_outcomes(self):
+        html = '''<div class="message default clearfix" id="message126">
+          <div class="body">
+            <div class="from_name">Alice</div>
+            <div class="text">two attachments</div>
+            <div class="media_wrap clearfix">
+              <a class="photo_wrap" href="photos/available.jpg"><img src="photos/available_thumb.jpg"/></a>
+              <a class="photo_wrap" href="photos/missing.jpg"><img src="photos/missing_thumb.jpg"/></a>
+            </div>
+          </div>
+        </div>'''
+        elem = etree.fromstring(html)
+        with tempfile.TemporaryDirectory() as temp:
+            photos = Path(temp) / "photos"
+            photos.mkdir()
+            (photos / "available.jpg").write_bytes(b"image")
+            with patch.object(config.get_settings(), "base_dir", temp):
+                data = htmlexport.extract_message_data(elem)
+        self.assertEqual(len(data["media"]), 1)
+        self.assertTrue(data["media"][0][0].endswith("available.jpg"))
+        self.assertEqual(
+            data["body_text"],
+            "two attachments\n\n[Media not found: photos/missing.jpg]",
+        )
+
     def test_extract_message_data_skips_service_records_but_service_parser_keeps_real_events(self):
         event = etree.fromstring(
             '<div class="message service" id="message123">'
