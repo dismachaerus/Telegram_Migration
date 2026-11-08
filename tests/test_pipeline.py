@@ -150,7 +150,7 @@ class PipelineTests(unittest.TestCase):
         client, _, _ = self.run_once()
         self.assertEqual(client.texts(), [])
 
-    def test_reconstructed_text_forward_sends_quoted_attribution_then_reply_payload(self):
+    def test_reconstructed_text_forward_keeps_attribution_and_payload_in_one_message(self):
         forwarded = (
             '<div class="message default clearfix" id="message136">'
             '<div class="body">'
@@ -172,39 +172,35 @@ class PipelineTests(unittest.TestCase):
         client, _, _ = self.run_once()
 
         calls = client.kinds("send_message")
-        self.assertEqual(len(calls), 2)
-        attribution, payload = calls
-        self.assertIn("Forwarded from HLI8IOS", attribution[1])
-        self.assertIn("8 November 2026 · 07:09:09", attribution[1])
-        self.assertNotIn("hello", attribution[1])
-        self.assertEqual(payload[1], "hello")
-        self.assertEqual(payload[2]["reply_to"], 1001)
-
-        attribution_entities = attribution[2]["formatting_entities"]
-        quote = next(e for e in attribution_entities
-                     if type(e).__name__ == "MessageEntityBlockquote")
-        quote_text = attribution[1][quote.offset:quote.offset + quote.length]
+        self.assertEqual(len(calls), 1)
+        sent = calls[0]
         self.assertEqual(
-            quote_text,
-            "Forwarded from HLI8IOS\n8 November 2026 · 07:09:09",
+            sent[1],
+            "jbvjhvjhvjh\n8 November 2026 · 07:09\n\n"
+            "Forwarded from HLI8IOS\n8 November 2026 · 07:09:09\n\nhello",
         )
-        source_bold = next(e for e in attribution_entities
-                           if type(e).__name__ == "MessageEntityBold"
-                           and attribution[1][e.offset:e.offset + e.length] == "HLI8IOS")
-        self.assertEqual(attribution[1][source_bold.offset:source_bold.offset + source_bold.length],
-                         "HLI8IOS")
-        source_date_italic = next(e for e in attribution_entities
-                                  if type(e).__name__ == "MessageEntityItalic"
-                                  and "07:09:09" in attribution[1][e.offset:e.offset + e.length])
-        self.assertIn("8 November 2026 · 07:09:09",
-                      attribution[1][source_date_italic.offset:
-                                     source_date_italic.offset + source_date_italic.length])
-        self.assertNotIn("MessageEntityBlockquote",
-                         [type(e).__name__ for e in (payload[2].get("formatting_entities") or [])])
-        with config.use_settings(self.settings()):
-            self.assertEqual(progress.load_id_map(), {"136": 1002})
+        self.assertIsNone(sent[2]["reply_to"])
 
-    def test_reconstructed_forward_keeps_body_formatting_in_reply_payload(self):
+        entities = sent[2]["formatting_entities"]
+        quote = next(e for e in entities if type(e).__name__ == "MessageEntityBlockquote")
+        quote_text = sent[1][quote.offset:quote.offset + quote.length]
+        self.assertEqual(quote_text, "Forwarded from HLI8IOS\n8 November 2026 · 07:09:09")
+        self.assertLess(quote.offset + quote.length, len(sent[1]))
+        source_bold = next(e for e in entities
+                           if type(e).__name__ == "MessageEntityBold"
+                           and sent[1][e.offset:e.offset + e.length] == "HLI8IOS")
+        self.assertEqual(sent[1][source_bold.offset:source_bold.offset + source_bold.length],
+                         "HLI8IOS")
+        source_date_italic = next(e for e in entities
+                                  if type(e).__name__ == "MessageEntityItalic"
+                                  and "07:09:09" in sent[1][e.offset:e.offset + e.length])
+        self.assertIn("8 November 2026 · 07:09:09",
+                      sent[1][source_date_italic.offset:
+                              source_date_italic.offset + source_date_italic.length])
+        with config.use_settings(self.settings()):
+            self.assertEqual(progress.load_id_map(), {"136": 1001})
+
+    def test_reconstructed_forward_keeps_body_formatting_below_attribution_bar(self):
         forwarded = (
             '<div class="message default clearfix" id="message138">'
             '<div class="body">'
@@ -219,26 +215,26 @@ class PipelineTests(unittest.TestCase):
         fakes.write_export(self.folder.name, [forwarded])
         client, _, _ = self.run_once()
         calls = client.kinds("send_message")
-        self.assertEqual(len(calls), 2)
-        attribution, payload = calls
-        self.assertEqual(payload[1], "hello world")
-        self.assertEqual(payload[2]["reply_to"], 1001)
-        payload_entities = payload[2]["formatting_entities"]
-        names = [type(entity).__name__ for entity in payload_entities]
+        self.assertEqual(len(calls), 1)
+        sent = calls[0]
+        self.assertIn("Forwarded from HLI8IOS", sent[1])
+        self.assertTrue(sent[1].endswith("hello world"))
+        entities = sent[2]["formatting_entities"]
+        names = [type(entity).__name__ for entity in entities]
         self.assertIn("MessageEntityBold", names)
         self.assertIn("MessageEntityItalic", names)
-        self.assertNotIn("MessageEntityBlockquote", names)
-        italic = next(e for e in payload_entities
-                      if type(e).__name__ == "MessageEntityItalic")
-        self.assertEqual(payload[1][italic.offset:italic.offset + italic.length], "world")
-        quote = next(e for e in attribution[2]["formatting_entities"]
-                     if type(e).__name__ == "MessageEntityBlockquote")
-        self.assertEqual(
-            attribution[1][quote.offset:quote.offset + quote.length],
-            "Forwarded from HLI8IOS",
-        )
+        quote = next(e for e in entities if type(e).__name__ == "MessageEntityBlockquote")
+        quote_text = sent[1][quote.offset:quote.offset + quote.length]
+        self.assertEqual(quote_text, "Forwarded from HLI8IOS")
+        self.assertNotIn("hello", quote_text)
+        bold = next(e for e in entities if type(e).__name__ == "MessageEntityBold"
+                    and sent[1][e.offset:e.offset + e.length] == "hello")
+        italic = next(e for e in entities if type(e).__name__ == "MessageEntityItalic"
+                      and sent[1][e.offset:e.offset + e.length] == "world")
+        self.assertEqual(sent[1][bold.offset:bold.offset + bold.length], "hello")
+        self.assertEqual(sent[1][italic.offset:italic.offset + italic.length], "world")
 
-    def test_reconstructed_forward_media_sends_quoted_attribution_before_media(self):
+    def test_reconstructed_forward_media_keeps_attribution_in_same_media_caption(self):
         media_path = "video_files/a6579a95-f3fd-497d-9b88-46592c1a878e_wm.mp4"
         fakes.write_file(self.folder.name, media_path)
         forwarded = (
@@ -263,30 +259,25 @@ class PipelineTests(unittest.TestCase):
         fakes.write_export(self.folder.name, [forwarded])
         client, _, _ = self.run_once()
 
-        delivery_calls = [
-            call for call in client.calls if call[0] in ("send_message", "send_file")
-        ]
-        self.assertEqual([call[0] for call in delivery_calls], ["send_message", "send_file"])
-        preface = delivery_calls[0]
-        quote = next(e for e in preface[2]["formatting_entities"]
-                     if type(e).__name__ == "MessageEntityBlockquote")
-        quote_text = preface[1][quote.offset:quote.offset + quote.length]
-        self.assertEqual(
-            quote_text,
-            "Forwarded from HLI8IOS\n5 November 2026 · 19:35:11",
-        )
-        italic = next(e for e in preface[2]["formatting_entities"]
-                      if type(e).__name__ == "MessageEntityItalic"
-                      and "19:35:11" in preface[1][e.offset:e.offset + e.length])
+        self.assertEqual(client.kinds("send_message"), [])
+        media_calls = client.kinds("send_file")
+        self.assertEqual(len(media_calls), 1)
+        sent_files, kwargs = media_calls[0][1], media_calls[0][2]
+        self.assertEqual(sent_files, os.path.join(self.folder.name, media_path))
+        self.assertIn("Forwarded from HLI8IOS", kwargs["caption"])
+        self.assertIn("5 November 2026 · 19:35:11", kwargs["caption"])
+        entities = kwargs["formatting_entities"]
+        quote = next(e for e in entities if type(e).__name__ == "MessageEntityBlockquote")
+        quote_text = kwargs["caption"][quote.offset:quote.offset + quote.length]
+        self.assertEqual(quote_text, "Forwarded from HLI8IOS\n5 November 2026 · 19:35:11")
+        italic = next(e for e in entities if type(e).__name__ == "MessageEntityItalic"
+                      and "19:35:11" in kwargs["caption"][e.offset:e.offset + e.length])
         self.assertIn("5 November 2026 · 19:35:11",
-                      preface[1][italic.offset:italic.offset + italic.length])
-        media_kwargs = delivery_calls[1][2]
-        self.assertEqual(media_kwargs["reply_to"], 1001)
-        self.assertEqual(media_kwargs["caption"], "")
+                      kwargs["caption"][italic.offset:italic.offset + italic.length])
         with config.use_settings(self.settings()):
-            self.assertEqual(progress.load_id_map(), {"151": 1002})
+            self.assertEqual(progress.load_id_map(), {"151": 1001})
 
-    def test_reconstructed_forward_with_text_and_media_keeps_text_on_media_reply(self):
+    def test_reconstructed_forward_text_and_media_share_one_caption(self):
         media_path = "video_files/forward-with-caption.mp4"
         fakes.write_file(self.folder.name, media_path)
         forwarded = (
@@ -305,13 +296,23 @@ class PipelineTests(unittest.TestCase):
         )
         fakes.write_export(self.folder.name, [forwarded])
         client, _, _ = self.run_once()
-        calls = [call for call in client.calls if call[0] in ("send_message", "send_file")]
-        self.assertEqual([call[0] for call in calls], ["send_message", "send_file"])
-        attribution, media_call = calls
-        self.assertEqual(media_call[2]["reply_to"], 1001)
-        self.assertEqual(media_call[2]["caption"], "original caption")
-        caption_entities = media_call[2]["formatting_entities"]
-        self.assertIn("MessageEntityItalic", [type(e).__name__ for e in caption_entities])
+        self.assertEqual(client.kinds("send_message"), [])
+        calls = client.kinds("send_file")
+        self.assertEqual(len(calls), 1)
+        caption = calls[0][2]["caption"]
+        self.assertTrue(caption.endswith("original caption"))
+        self.assertIn("Forwarded from HLI8IOS", caption)
+        entities = calls[0][2]["formatting_entities"]
+        names = [type(entity).__name__ for entity in entities]
+        self.assertIn("MessageEntityBlockquote", names)
+        self.assertIn("MessageEntityItalic", names)
+        quote = next(e for e in entities if type(e).__name__ == "MessageEntityBlockquote")
+        quote_text = caption[quote.offset:quote.offset + quote.length]
+        self.assertEqual(quote_text, "Forwarded from HLI8IOS\n5 November 2026 · 19:35:11")
+        italic_caption = next(e for e in entities if type(e).__name__ == "MessageEntityItalic"
+                              and caption[e.offset:e.offset + e.length] == "original caption")
+        self.assertEqual(caption[italic_caption.offset:italic_caption.offset + italic_caption.length],
+                         "original caption")
 
     def test_native_forward_with_media_bypasses_reconstructed_quote_prefix(self):
         media_path = "video_files/native-forward.mp4"
