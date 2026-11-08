@@ -6,11 +6,12 @@ import sys
 
 from lxml import etree
 from telethon import TelegramClient
+from telethon.tl import types as tl
 
 from . import bigfiles, cli, config, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
 from .htmlutil import css_classes
-from .textutil import (compose_message, compose_message_header,
-                       split_with_entities, strip_with_entities)
+from .textutil import (compose_message, compose_message_header, split_with_entities,
+                       strip_with_entities, u16len)
 from .constants import NO_CAPTION_KINDS, STICKER_KINDS
 
 
@@ -178,7 +179,37 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             )
         else:
             header = compose_message_header(timestamp, data["sender"])
-        forward = (data["forward_header"], [])
+        forward_header = data["forward_header"]
+        forward_entities = []
+        forward_name = data.get("forward_name") or ""
+        if forward_name and forward_header:
+            # Keep the literal Telegram wording, but emphasize the source name
+            # just like the sender name in our normal migration header.
+            source_start = u16len("Forwarded from ")
+            source_length = u16len(forward_name)
+            if source_length:
+                forward_entities.append(tl.MessageEntityBold(
+                    offset=source_start, length=source_length
+                ))
+        forward = (forward_header, forward_entities)
+
+        body_text = data["body_text"]
+        body_entities = list(data["body_entities"])
+        if data.get("is_forwarded") and body_text:
+            # Reconstructed forwards visually mimic Telegram's native quote
+            # treatment. Native forwards themselves are sent by sending.py and
+            # never use this reconstructed text/entity representation.
+            blockquote_length = u16len(body_text)
+            if blockquote_length:
+                try:
+                    blockquote = tl.MessageEntityBlockquote(
+                        offset=0, length=blockquote_length, collapsed=False
+                    )
+                except TypeError:  # compatibility with Telethon versions without `collapsed`
+                    blockquote = tl.MessageEntityBlockquote(
+                        offset=0, length=blockquote_length
+                    )
+                body_entities.append(blockquote)
 
         reply_to, reply_fallback, deferred = _resolve_reply(
             data, source_id, id_map, pending_replies, ctx
@@ -187,7 +218,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             return
 
         text, entities = compose_message(
-            header, ("", []), forward, data["body_text"], data["body_entities"],
+            header, ("", []), forward, body_text, body_entities,
             extra_before_body=reply_fallback,
         )
         text, entities = strip_with_entities(text, entities)
