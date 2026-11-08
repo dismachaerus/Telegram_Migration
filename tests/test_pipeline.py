@@ -109,7 +109,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(
             client.texts(),
             [
-                "⛯⛯\\n1 July 2026 · 21:33\\n\\n"
+                "⛯⛯\n1 July 2026 · 21:33\n\n"
                 "[Empty message in source export; no text or media were included]"
             ],
         )
