@@ -70,18 +70,9 @@ def _print_dry_run(source_id, data, text, entities, first_limit, reply_to,
 
 async def _send_migrated_message(client, channel, data, source_id, text, entities,
                                  first_limit, reply_to, annotation, partial,
-                                 pending_replies, id_map, stats, ctx, kind_summary, when,
-                                 forward_attribution=None):
+                                 pending_replies, id_map, stats, ctx, kind_summary, when):
     entities = await sending.resolve_mentions(client, entities)
     chunks = split_with_entities(text, entities, first_limit, config.settings.text_limit)
-    attribution_chunks = None
-    if forward_attribution is not None:
-        attribution_text, attribution_entities = forward_attribution
-        attribution_entities = await sending.resolve_mentions(client, attribution_entities)
-        attribution_chunks = split_with_entities(
-            attribution_text, attribution_entities,
-            config.settings.text_limit, config.settings.text_limit,
-        )
     state = {
         "src": source_id,
         "force_reconstruction": bool(data["reply_src_id"]),
@@ -91,7 +82,6 @@ async def _send_migrated_message(client, channel, data, source_id, text, entitie
 
     new_id = await sending.send_one(
         client, channel, data, chunks, reply_to, state, annotation, source_id,
-        forward_attribution_chunks=attribution_chunks,
     )
     if new_id:
         id_map[source_id] = int(new_id)
@@ -197,7 +187,6 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         body_text = data["body_text"]
         body_entities = list(data["body_entities"])
         is_forwarded = bool(data.get("is_forwarded"))
-        forward_attribution = None
         if is_forwarded:
             forward_name = data.get("forward_name") or ""
             label = f"Forwarded from {forward_name}" if forward_name else "Forwarded message"
@@ -225,8 +214,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
                 ))
 
             # The left quote bar belongs only to the forwarding attribution.
-            # The original forwarded text/media is sent as a separate reply to
-            # this attribution message, matching Telegram's visual hierarchy.
+            # The forwarded text/media remains in this same message, below it.
             try:
                 blockquote = tl.MessageEntityBlockquote(
                     offset=0, length=u16len(attribution_text), collapsed=False
@@ -244,20 +232,17 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             return
 
         if is_forwarded:
-            # Compose the normal archive header and any unresolved-reply note
-            # into the attribution message. The forwarded payload remains
-            # separate and is sent as a reply to this message.
-            attribution_text, attribution_entities = compose_message(
-                header, ("", []), (attribution_text, attribution_entities),
-                "", [], extra_before_body=reply_fallback,
+            # Keep sender/date header, quoted forward attribution, and the
+            # forwarded text in one destination message (or media caption).
+            # The blockquote entity covers only "Forwarded from" and the
+            # original source timestamp; payload text follows outside the bar.
+            attribution_part = (attribution_text + "\n\n", attribution_entities)
+            text, entities = compose_message(
+                header, ("", []), attribution_part, body_text, body_entities,
+                extra_before_body=reply_fallback,
             )
-            attribution_text, attribution_entities = strip_with_entities(
-                attribution_text, attribution_entities
-            )
-            forward_attribution = (attribution_text, attribution_entities)
-            text, entities = body_text, body_entities
-            preview_text = attribution_text + ("\n↳ " + body_text if body_text else "")
-            preview_entities = []
+            text, entities = strip_with_entities(text, entities)
+            preview_text, preview_entities = text, entities
         else:
             text, entities = compose_message(
                 header, ("", []), ("", []), body_text, body_entities,
@@ -301,7 +286,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         await _send_migrated_message(
             client, channel, data, source_id, text, entities, first_limit,
             reply_to, annotation, partial, pending_replies, id_map, stats,
-            ctx, kind_summary, when, forward_attribution=forward_attribution,
+            ctx, kind_summary, when,
         )
         mark_completed = True
         await asyncio.sleep(config.settings.send_delay_seconds)
