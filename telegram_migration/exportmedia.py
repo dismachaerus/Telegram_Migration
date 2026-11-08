@@ -1,6 +1,6 @@
 """Find and classify the media files of an exported message."""
 
-import os
+import os.
 from urllib.parse import unquote, urlsplit
 
 from . import config
