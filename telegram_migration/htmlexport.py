@@ -52,17 +52,69 @@ def parse_export_date(s):
         return None
 
 
+def _forwarded_body(msg_div):
+    """Return Telegram Desktop's forwarded-message body, not its avatar.
+
+    Desktop exports commonly place a ``forwarded userpic_wrap`` before the
+    actual ``forwarded body``. Selecting the first element with the
+    ``forwarded`` class therefore finds only the avatar and loses attribution.
+    Prefer the explicit body class, with a guarded fallback for older export
+    variants that omit it.
+    """
+    forwarded_elements = []
+    for el in msg_div.iter():
+        if not isinstance(el.tag, str):
+            continue
+        classes = css_classes(el)
+        if "forwarded" not in classes:
+            continue
+        if "body" in classes:
+            return el
+        forwarded_elements.append(el)
+
+    for el in forwarded_elements:
+        classes = css_classes(el)
+        if "userpic_wrap" in classes:
+            continue
+        if find_first(el, "from_name") is not None or find_first(el, "text") is not None:
+            return el
+    return None
+
+
 def _forward_name(fwd_div):
     if fwd_div is None:
         return ""
-    a = next(fwd_div.iter("a"), None)
+    from_name = find_first(fwd_div, "from_name")
+    a = next(from_name.iter("a"), None) if from_name is not None else None
     if a is not None and inner_text(a):
         return inner_text(a)
-    return text_without(find_first(fwd_div, "from_name"), "date")
+    return text_without(from_name, "date")
+
+
+def _forward_date(fwd_div):
+    """Return the original forwarded-message timestamp, if exported."""
+    if fwd_div is None:
+        return ""
+    for el in fwd_div.iter():
+        if not isinstance(el.tag, str) or "date" not in css_classes(el):
+            continue
+        raw = (el.get("title") or "").strip()
+        visible = inner_text(el).strip()
+        for candidate in (raw, visible):
+            if not candidate:
+                continue
+            # Telegram's title can include a trailing UTC offset. The visible
+            # export timestamp is in the chat's local time, so retain that
+            # timestamp while removing only the timezone annotation. Validate
+            # it so non-date spans in older/minimal fixtures aren't mislabeled.
+            candidate = _DATE_SUFFIX.sub("", candidate).strip()
+            if parse_export_date(candidate) is not None:
+                return candidate
+    return ""
 
 
 def extract_forward_source(msg_div):
-    fwd_div = find_first(msg_div, "forwarded")
+    fwd_div = _forwarded_body(msg_div)
     if fwd_div is None:
         return None
 
@@ -243,12 +295,18 @@ def extract_message_data(msg_div):
                 sender = text_without(child, "date")
                 break
 
-    fwd_div = find_first(msg_div, "forwarded")
+    fwd_div = _forwarded_body(msg_div)
     forward_header = ""
     if fwd_div is not None:
         name = _forward_name(fwd_div)
+        original_date = _forward_date(fwd_div)
+        header_lines = []
         if name:
-            forward_header = f"Forwarded from {name}\n\n"
+            header_lines.append(f"Forwarded from {name}")
+        if original_date:
+            header_lines.append(f"Original message: {original_date}")
+        if header_lines:
+            forward_header = "\n".join(header_lines) + "\n\n"
     fwd_src = extract_forward_source(msg_div) if config.settings.native_forward else None
 
     reply_div = find_first(msg_div, "reply_to")
