@@ -259,7 +259,13 @@ def extract_message_data(msg_div):
     body_text, body_entities = parse_rich_text(text_div)
 
     media = exportmedia.find_media(msg_div)
-    note = "" if media else exportmedia.media_note(msg_div)
+    missing_media = exportmedia.find_missing_media(msg_div)
+    if missing_media:
+        # Keep the message even when one or more referenced attachments are
+        # absent. If other attachments exist, they are still uploaded normally.
+        note = "\n".join(f"[Media not found: {reference}]" for reference in missing_media)
+    else:
+        note = "" if media else exportmedia.media_note(msg_div)
     if note:
         body_text = (body_text + "\n\n" if body_text else "") + note
 
