@@ -87,6 +87,39 @@ class PipelineTests(unittest.TestCase):
         with config.use_settings(self.settings()):
             self.assertEqual(progress.load_id_map(), {"1": 1001})
 
+    def test_empty_export_message_is_preserved_without_inventing_forward_attribution(self):
+        # This matches the blank message shell in the user's Telegram Desktop
+        # export: the sender and export timestamp survive, but there is no
+        # forwarded body, original author, original timestamp, text, or media.
+        empty_message = (
+            '<div class="message default clearfix" id="message81">'
+            '<div class="pull_left userpic_wrap">'
+            '<div class="userpic userpic8"><div class="initials">⛯</div></div>'
+            '</div>'
+            '<div class="body">'
+            '<div class="pull_right date details" '
+            'title="01.07.2026 21:33:19 UTC+02:00">21:33</div>'
+            '<div class="from_name">⛯⛯</div>'
+            '</div>'
+            '</div>'
+        )
+        fakes.write_export(self.folder.name, [empty_message])
+        client, output, _ = self.run_once()
+
+        self.assertEqual(
+            client.texts(),
+            [
+                "⛯⛯\n1 July 2026 · 21:33\n\n"
+                "[Empty message in source export; no text or media were included]"
+            ],
+        )
+        self.assertNotIn("Forwarded from", client.texts()[0])
+        self.assertIn("sent=1", output)
+        self.assertIn("skipped=0", output)
+        self.assertIn("failed=0", output)
+        with config.use_settings(self.settings()):
+            self.assertEqual(progress.load_id_map(), {"81": 1001})
+
     def test_service_events_are_migrated_as_dated_archival_entries(self):
         fakes.write_export(self.folder.name, [
             '<div class="message service" id="message-1">'
