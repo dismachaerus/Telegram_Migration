@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from . import config, exportmedia
 from .htmlutil import css_classes, find_first, inner_text, text_without
 from .richtext import parse_rich_text
+from .textutil import sanitize_text
 from .constants import HTML_FILE_PATTERN
 
 
@@ -89,28 +90,6 @@ def _forward_name(fwd_div):
     if a is not None and inner_text(a):
         return inner_text(a)
     return text_without(from_name, "date")
-
-
-def _forward_date(fwd_div):
-    """Return the original forwarded-message timestamp, if exported."""
-    if fwd_div is None:
-        return ""
-    for el in fwd_div.iter():
-        if not isinstance(el.tag, str) or "date" not in css_classes(el):
-            continue
-        raw = (el.get("title") or "").strip()
-        visible = inner_text(el).strip()
-        for candidate in (raw, visible):
-            if not candidate:
-                continue
-            # Telegram's title can include a trailing UTC offset. The visible
-            # export timestamp is in the chat's local time, so retain that
-            # timestamp while removing only the timezone annotation. Validate
-            # it so non-date spans in older/minimal fixtures aren't mislabeled.
-            candidate = _DATE_SUFFIX.sub("", candidate).strip()
-            if parse_export_date(candidate) is not None:
-                return candidate
-    return ""
 
 
 def extract_forward_source(msg_div):
@@ -296,17 +275,15 @@ def extract_message_data(msg_div):
                 break
 
     fwd_div = _forwarded_body(msg_div)
-    forward_header = ""
-    if fwd_div is not None:
-        name = _forward_name(fwd_div)
-        original_date = _forward_date(fwd_div)
-        header_lines = []
-        if name:
-            header_lines.append(f"Forwarded from {name}")
-        if original_date:
-            header_lines.append(f"Original message: {original_date}")
-        if header_lines:
-            forward_header = "\n".join(header_lines) + "\n\n"
+    forward_name = (
+        sanitize_text(_forward_name(fwd_div)).replace("\n", " ").strip()
+        if fwd_div is not None else ""
+    )
+    # Reconstructed forwards use the original Telegram attribution wording.
+    # Their contents are blockquoted by the pipeline. The outer migrated
+    # message already has its own timestamp, so do not duplicate the
+    # timestamp found inside Telegram Desktop's forwarded header.
+    forward_header = f"Forwarded from {forward_name}\n" if forward_name else ""
     fwd_src = extract_forward_source(msg_div) if config.settings.native_forward else None
 
     reply_div = find_first(msg_div, "reply_to")
@@ -333,6 +310,8 @@ def extract_message_data(msg_div):
         "timestamp": timestamp,
         "sender": sender,
         "forward_header": forward_header,
+        "forward_name": forward_name,
+        "is_forwarded": fwd_div is not None,
         "forward_source": fwd_src,
         "reply_src_id": reply_src_id,
         "reply_preview": preview,
