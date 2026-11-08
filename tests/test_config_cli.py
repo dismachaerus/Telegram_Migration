@@ -241,6 +241,39 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(telethon_loaded, "False")
         self.assertRegex(version, r"^\d+\.\d+\.\d+")
 
+    def test_cli_loads_dotenv_from_current_working_directory_without_env_file(self):
+        """The installed console entry point reads .env from the launch directory."""
+        with tempfile.TemporaryDirectory() as working_dir:
+            Path(working_dir, ".env").write_text(
+                "\n".join((
+                    "TELEGRAM_API_ID=424242",
+                    "TELEGRAM_API_HASH=abcdef",
+                    "TELEGRAM_BOT_TOKEN=1:token",
+                    "TELEGRAM_CHANNEL_PEER=-1001234567890",
+                )),
+                encoding="utf-8",
+            )
+            child_env = {
+                key: value for key, value in os.environ.items()
+                if not key.startswith("TELEGRAM_")
+            }
+            child_env["PYTHONPATH"] = str(ROOT)
+            code = (
+                "import sys, types; "
+                "fake_runner = types.ModuleType('telegram_migration.runner'); "
+                "fake_runner.run = lambda settings: "
+                "(print('LOADED_CHANNEL=' + str(settings.channel_peer)) or True); "
+                "sys.modules['telegram_migration.runner'] = fake_runner; "
+                "from telegram_migration.cli import main; "
+                "raise SystemExit(main([]))"
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", code],
+                capture_output=True, text=True, cwd=working_dir, env=child_env, timeout=60,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("LOADED_CHANNEL=-1001234567890", result.stdout)
+
     def test_python_dash_m_help_works(self):
         result = self.python("-m", "telegram_migration", "--help")
         self.assertEqual(result.returncode, 0, result.stderr)

@@ -46,7 +46,13 @@ python -m pip install git+https://github.com/ifaac/Telegram_Migration
 
 For development (run from the repository root, no install needed) use `python -m pip install -r requirements.txt`.
 
-`static-ffmpeg` is an optional helper for automatic FFmpeg/ffprobe setup when a video sticker needs metadata (`python -m pip install ".[media]"`). The program attempts a lazy install only if it is needed and no working system binaries are available.
+`static-ffmpeg` is an optional helper for automatic FFmpeg/ffprobe setup when a video sticker needs metadata:  
+
+```bash
+python -m pip install ".[media]"
+```
+
+The program attempts a lazy install only if it is needed and no working system binaries are available.
 
 ## Configure
 
@@ -104,13 +110,19 @@ The program mounts Google Drive automatically when the export directory is under
 
 ## Run safely
 
-**Dry-run is enabled by default.** Start by running:
+**Dry-run is enabled by default.** From the directory containing `.env`, run either command:
 
 ```bash
 python -m telegram_migration
 ```
 
-(`telegram-migration` does the same once the package is installed.) Review the reported source file count, destination channel title/ID, and dry-run summary. No messages are sent in a dry run.
+or, after installing the package:
+
+```bash
+telegram-migration
+```
+
+Both commands load `.env` from the current working directory by default. Use `--env-file PATH` only when the configuration file is elsewhere. Review the reported source file count, destination channel title/ID, and dry-run summary. No messages are sent in a dry run.
 
 When you are satisfied with the preview, either set `TELEGRAM_DRY_RUN=false` in `.env` or pass `--send`:
 
