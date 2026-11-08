@@ -8,7 +8,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from telegram_migration import bigfiles, config, mediatools, pipeline, progress
+from telegram_migration import bigfiles, config, htmlexport, mediatools, pipeline, progress
+from lxml import html
 from telegram_migration.config import Settings
 
 import fakes
@@ -153,6 +154,52 @@ class PipelineTests(unittest.TestCase):
         fakes.write_export(self.folder.name, [fakes.message(1, fakes.forwarded("News Channel", "forwarded text"))])
         client, _, _ = self.run_once()
         self.assertIn("Forwarded from News Channel\n\nforwarded text", client.texts()[0])
+
+    def test_real_telegram_forward_layout_preserves_source_and_original_date(self):
+        # Match Telegram Desktop's real structure: an avatar carrying the
+        # "forwarded" class appears before the separate forwarded body.
+        forwarded = (
+            '<div class="message default clearfix" id="message136">'
+            '<div class="body">'
+            '<div class="pull_right date details" '
+            'title="08.11.2026 07:09:41 UTC+02:00">07:09</div>'
+            '<div class="from_name">jbvjhvjhvjh</div>'
+            '<div class="pull_left forwarded userpic_wrap">'
+            '<div class="userpic userpic7"><div class="initials">H</div></div>'
+            '</div>'
+            '<div class="forwarded body">'
+            '<div class="from_name">HLI8IOS '
+            '<span class="date details" '
+            'title="08.11.2026 07:09:09 UTC+02:00">'
+            '08.11.2026 07:09:09</span></div>'
+            '<div class="text">hello</div>'
+            '</div></div></div>'
+        )
+        fakes.write_export(self.folder.name, [forwarded])
+        client, _, _ = self.run_once()
+        migrated = client.texts()[0]
+        self.assertIn("Forwarded from HLI8IOS", migrated)
+        self.assertIn("Original message: 08.11.2026 07:09:09", migrated)
+        self.assertTrue(migrated.endswith("hello"), migrated)
+
+    def test_real_telegram_forward_body_link_is_used_for_native_source(self):
+        forwarded = html.fromstring(
+            '<div class="message default clearfix" id="message137">'
+            '<div class="body">'
+            '<div class="from_name">jbvjhvjhvjh</div>'
+            '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
+            '<div class="forwarded body">'
+            '<div class="from_name"><a href="https://t.me/NewsChannel/4321">News Channel</a>'
+            '<span class="date details" title="08.11.2026 07:09:09 UTC+02:00">'
+            '08.11.2026 07:09:09</span></div>'
+            '<div class="text">forwarded text</div>'
+            '</div></div></div>'
+        )
+        with config.use_settings(self.settings()):
+            data = htmlexport.extract_message_data(forwarded)
+        self.assertEqual(data["forward_source"], ("NewsChannel", 4321))
+        self.assertIn("Forwarded from News Channel", data["forward_header"])
+        self.assertIn("Original message: 08.11.2026 07:09:09", data["forward_header"])
 
     def test_reply_to_a_later_message_is_deferred_then_linked(self):
         fakes.write_export(self.folder.name, [
