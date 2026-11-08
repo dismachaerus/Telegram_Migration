@@ -102,6 +102,8 @@ When the preview looks right, run the cell again with `dry_run=False`.
 
 The program mounts Google Drive automatically when the export directory is under `/content/drive/` and Drive is not mounted yet.
 
+## Run safely
+
 **Dry-run is enabled by default.** From the directory containing `.env`, run either command:
 
 ```bash
