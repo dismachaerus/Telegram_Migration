@@ -6,11 +6,12 @@ import sys
 
 from lxml import etree
 from telethon import TelegramClient
+from telethon.tl import types as tl
 
 from . import bigfiles, cli, config, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
 from .htmlutil import css_classes
-from .textutil import (compose_message, compose_message_header,
-                       split_with_entities, strip_with_entities)
+from .textutil import (compose_message, compose_message_header, format_archive_timestamp,
+                       split_with_entities, strip_with_entities, u16len)
 from .constants import NO_CAPTION_KINDS, STICKER_KINDS
 
 
@@ -72,12 +73,15 @@ async def _send_migrated_message(client, channel, data, source_id, text, entitie
                                  pending_replies, id_map, stats, ctx, kind_summary, when):
     entities = await sending.resolve_mentions(client, entities)
     chunks = split_with_entities(text, entities, first_limit, config.settings.text_limit)
-    state = {"src": source_id, "force_reconstruction": bool(data["reply_src_id"])}
+    state = {
+        "src": source_id,
+        "force_reconstruction": bool(data["reply_src_id"]),
+    }
     if source_id in partial:
         state.update(partial[source_id])
 
     new_id = await sending.send_one(
-        client, channel, data, chunks, reply_to, state, annotation, source_id
+        client, channel, data, chunks, reply_to, state, annotation, source_id,
     )
     if new_id:
         id_map[source_id] = int(new_id)
@@ -159,7 +163,9 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             ctx["stop"] = True
             return
 
-        has_content = bool(data["body_text"].strip() or data["media"])
+        has_content = bool(
+            data["body_text"].strip() or data["media"] or data.get("is_forwarded")
+        )
         if not has_content:
             stats["skipped"] += 1
             was_pending = source_id in pending_replies
@@ -178,7 +184,46 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             )
         else:
             header = compose_message_header(timestamp, data["sender"])
-        forward = (data["forward_header"], [])
+        body_text = data["body_text"]
+        body_entities = list(data["body_entities"])
+        is_forwarded = bool(data.get("is_forwarded"))
+        if is_forwarded:
+            forward_name = data.get("forward_name") or ""
+            label = f"Forwarded from {forward_name}" if forward_name else "Forwarded message"
+            attribution_text = label
+            attribution_entities = []
+
+            if forward_name:
+                source_start = u16len("Forwarded from ")
+                source_length = u16len(forward_name)
+                if source_length:
+                    attribution_entities.append(tl.MessageEntityBold(
+                        offset=source_start, length=source_length
+                    ))
+
+            forward_timestamp = data.get("forward_timestamp")
+            if forward_timestamp is not None:
+                forward_date = format_archive_timestamp(forward_timestamp, date_only=True)
+                if data.get("forward_timestamp_has_time"):
+                    time_format = "%H:%M:%S" if data.get("forward_timestamp_has_seconds") else "%H:%M"
+                    forward_date += f" · {forward_timestamp:{time_format}}"
+                date_start = u16len(attribution_text + "\n")
+                attribution_text += "\n" + forward_date
+                attribution_entities.append(tl.MessageEntityItalic(
+                    offset=date_start, length=u16len(forward_date)
+                ))
+
+            # The left quote bar belongs only to the forwarding attribution.
+            # The forwarded text/media remains in this same message, below it.
+            try:
+                blockquote = tl.MessageEntityBlockquote(
+                    offset=0, length=u16len(attribution_text), collapsed=False
+                )
+            except TypeError:  # compatibility with Telethon versions without `collapsed`
+                blockquote = tl.MessageEntityBlockquote(
+                    offset=0, length=u16len(attribution_text)
+                )
+            attribution_entities.append(blockquote)
 
         reply_to, reply_fallback, deferred = _resolve_reply(
             data, source_id, id_map, pending_replies, ctx
@@ -186,11 +231,25 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         if deferred:
             return
 
-        text, entities = compose_message(
-            header, ("", []), forward, data["body_text"], data["body_entities"],
-            extra_before_body=reply_fallback,
-        )
-        text, entities = strip_with_entities(text, entities)
+        if is_forwarded:
+            # Keep sender/date header, quoted forward attribution, and the
+            # forwarded text in one destination message (or media caption).
+            # The blockquote entity covers only "Forwarded from" and the
+            # original source timestamp; payload text follows outside the bar.
+            attribution_part = (attribution_text + "\n\n", attribution_entities)
+            text, entities = compose_message(
+                header, ("", []), attribution_part, body_text, body_entities,
+                extra_before_body=reply_fallback,
+            )
+            text, entities = strip_with_entities(text, entities)
+            preview_text, preview_entities = text, entities
+        else:
+            text, entities = compose_message(
+                header, ("", []), ("", []), body_text, body_entities,
+                extra_before_body=reply_fallback,
+            )
+            text, entities = strip_with_entities(text, entities)
+            preview_text, preview_entities = text, entities
 
         oversize = bigfiles.find_oversize_media(data["media"])
         if oversize:
@@ -218,7 +277,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
 
         if config.settings.dry_run:
             _print_dry_run(
-                source_id, data, text, entities, first_limit, reply_to,
+                source_id, data, preview_text, preview_entities, first_limit, reply_to,
                 kind_summary, stats, pending_replies,
             )
             mark_completed = True

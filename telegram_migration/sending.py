@@ -273,6 +273,7 @@ async def _do_send(client, channel, chunks, media, reply_to, forward_source,
     )
     if forwarded_id is not None:
         return forwarded_id
+
     if len(media) > 1:
         return await _send_multiple_media(
             client, channel, chunks, media, reply_to, state, source_id

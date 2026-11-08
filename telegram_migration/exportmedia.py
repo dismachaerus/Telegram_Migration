@@ -1,7 +1,7 @@
 """Find and classify the media files of an exported message."""
 
 import os
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 from . import config
 from .htmlutil import css_classes, find_first
@@ -89,45 +89,107 @@ def _resolve_media_path(relative):
     return None
 
 
-def find_media(msg):
-    results, seen = [], set()
-    # The sticker_wrap class is sometimes on the link inside media_wrap rather
-    # than on the wrapper itself, so _classify also checks anchor/image classes.
+def _media_wrappers(msg):
+    """Yield the export's media wrappers in the same order used by classification."""
     for wrap_class in ("media_wrap", "sticker_wrap", "roundvideo_file_wrap"):
         wrap = find_first(msg, wrap_class)
-        if wrap is None:
-            continue
-        # One line per text node, so GIF/Animation labels can be matched as whole lines.
+        if wrap is not None:
+            yield wrap_class, wrap
+
+
+def _is_local_media_reference(reference):
+    """Return whether an export reference looks like a local exported file path."""
+    reference = str(reference or "").strip()
+    if not reference or reference.startswith(("#", "//")):
+        return False
+    parsed = urlsplit(reference)
+    return not parsed.scheme and not parsed.netloc and bool(parsed.path)
+
+
+def _reference_key(reference):
+    """Normalize a media reference for duplicate detection without resolving it."""
+    return os.path.normcase(os.path.normpath(unquote(str(reference)).replace("\\", "/")))
+
+
+def find_media(msg):
+    """Return existing exported media files, preferring each anchor's full file over its thumbnail.
+
+    If an anchor points to a missing file, its image ``src`` is usually only a
+    thumbnail. Do not silently substitute that thumbnail for the original.
+    Missing references are reported separately by :func:`find_missing_media`.
+    """
+    results, seen = [], set()
+    for wrap_class, wrap in _media_wrappers(msg):
+        # Telegram Desktop's anchor href is the full exported media. An img src
+        # nested inside it is normally only a thumbnail, so use img src as a
+        # fallback only when the wrapper has no local file anchors at all.
+        anchors = [
+            a for a in wrap.iter("a")
+            if _is_local_media_reference(a.get("href"))
+        ]
+        references = [(a.get("href"), a) for a in anchors]
+        if not references:
+            references = [
+                (img.get("src"), img)
+                for img in wrap.iter("img")
+                if _is_local_media_reference(img.get("src"))
+            ]
+
         export_label = "\n".join(t.strip() for t in wrap.itertext() if t and t.strip())
-        found_in_wrapper = False
-        for a in wrap.iter("a"):
-            href = a.get("href")
-            if not href:
+        for reference, source_element in references:
+            path = _resolve_media_path(reference)
+            if not path or path in seen:
                 continue
-            path = _resolve_media_path(href)
-            if path and path not in seen:
-                seen.add(path)
+            seen.add(path)
+            if source_element.tag == "a":
                 child_image_classes = [
-                    cls for img in a.iter("img") for cls in css_classes(img)
+                    cls for img in source_element.iter("img") for cls in css_classes(img)
                 ]
-                results.append((path, _classify(
-                    href, wrap_class, path,
-                    css_classes(wrap) + css_classes(a) + child_image_classes,
-                    export_label,
-                )))
-                found_in_wrapper = True
-        if not found_in_wrapper:
-            for img in wrap.iter("img"):
-                src = img.get("src")
-                if not src:
-                    continue
-                path = _resolve_media_path(src)
-                if path and path not in seen:
-                    seen.add(path)
-                    results.append((path, _classify(
-                        src, wrap_class, path, css_classes(wrap) + css_classes(img), export_label
-                    )))
+            else:
+                child_image_classes = css_classes(source_element)
+            results.append((path, _classify(
+                reference, wrap_class, path,
+                css_classes(wrap) + css_classes(source_element) + child_image_classes,
+                export_label,
+            )))
     return results
+
+
+def find_missing_media(msg):
+    """Return local media references present in the HTML but absent from the export folder.
+
+    Anchor hrefs take precedence over nested image src values because those src
+    values are commonly reduced-size thumbnails. For wrappers without local
+    anchors (notably stickers), img src is treated as the media reference.
+    """
+    missing, seen = [], set()
+    for _wrap_class, wrap in _media_wrappers(msg):
+        anchors = [
+            a for a in wrap.iter("a")
+            if _is_local_media_reference(a.get("href"))
+        ]
+        if anchors:
+            references = [a.get("href") for a in anchors]
+        else:
+            references = [
+                img.get("src") for img in wrap.iter("img")
+                if _is_local_media_reference(img.get("src"))
+            ]
+
+        for reference in references:
+            if _resolve_media_path(reference) is not None:
+                continue
+            key = _reference_key(reference)
+            if key in seen:
+                continue
+            seen.add(key)
+            # Keep the export-relative reference in the archive note; never
+            # expose an absolute filesystem path in the migrated message.
+            label = unquote(str(reference)).replace("\\", "/")
+            while label.startswith("./"):
+                label = label[2:]
+            missing.append(label or os.path.basename(str(reference)))
+    return missing
 
 
 def media_note(msg_div):

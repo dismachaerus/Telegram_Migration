@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from . import config, exportmedia
 from .htmlutil import css_classes, find_first, inner_text, text_without
 from .richtext import parse_rich_text
+from .textutil import sanitize_text
 from .constants import HTML_FILE_PATTERN
 
 
@@ -52,17 +53,75 @@ def parse_export_date(s):
         return None
 
 
+def _forwarded_body(msg_div):
+    """Return Telegram Desktop's forwarded-message body, not its avatar.
+
+    Desktop exports commonly place a ``forwarded userpic_wrap`` before the
+    actual ``forwarded body``. Selecting the first element with the
+    ``forwarded`` class therefore finds only the avatar and loses attribution.
+    Prefer the explicit body class, with a guarded fallback for older export
+    variants that omit it.
+    """
+    forwarded_elements = []
+    for el in msg_div.iter():
+        if not isinstance(el.tag, str):
+            continue
+        classes = css_classes(el)
+        if "forwarded" not in classes:
+            continue
+        if "body" in classes:
+            return el
+        forwarded_elements.append(el)
+
+    for el in forwarded_elements:
+        classes = css_classes(el)
+        if "userpic_wrap" in classes:
+            continue
+        if find_first(el, "from_name") is not None or find_first(el, "text") is not None:
+            return el
+    return None
+
+
 def _forward_name(fwd_div):
     if fwd_div is None:
         return ""
-    a = next(fwd_div.iter("a"), None)
+    from_name = find_first(fwd_div, "from_name")
+    a = next(from_name.iter("a"), None) if from_name is not None else None
     if a is not None and inner_text(a):
         return inner_text(a)
-    return text_without(find_first(fwd_div, "from_name"), "date")
+    return text_without(from_name, "date")
+
+
+def _forward_timestamp(fwd_div):
+    """Return the original forwarded-message timestamp from Desktop HTML.
+
+    Telegram Desktop places this in a ``date details`` span nested inside
+    the forwarded author's ``from_name`` element. Some export variants have
+    a useful ``title`` attribute while others only expose visible text.
+    """
+    if fwd_div is None:
+        return None, False, False
+    from_name = find_first(fwd_div, "from_name")
+    if from_name is None:
+        return None, False, False
+    for el in from_name.iter():
+        if not isinstance(el.tag, str) or "date" not in css_classes(el):
+            continue
+        raw = (el.get("title") or "").strip()
+        visible = inner_text(el).strip()
+        parsed = parse_export_date(raw) if raw else None
+        if parsed is None and visible:
+            raw = visible
+            parsed = parse_export_date(visible)
+        if parsed is not None:
+            has_time = bool(re.search(r"\b\d{1,2}:\d{2}(?::\d{2})?\b", raw))
+            has_seconds = bool(re.search(r"\b\d{1,2}:\d{2}:\d{2}\b", raw))
+            return parsed, has_time, has_seconds
+    return None, False, False
 
 
 def extract_forward_source(msg_div):
-    fwd_div = find_first(msg_div, "forwarded")
+    fwd_div = _forwarded_body(msg_div)
     if fwd_div is None:
         return None
 
@@ -243,12 +302,16 @@ def extract_message_data(msg_div):
                 sender = text_without(child, "date")
                 break
 
-    fwd_div = find_first(msg_div, "forwarded")
-    forward_header = ""
-    if fwd_div is not None:
-        name = _forward_name(fwd_div)
-        if name:
-            forward_header = f"Forwarded from {name}\n\n"
+    fwd_div = _forwarded_body(msg_div)
+    forward_name = (
+        sanitize_text(_forward_name(fwd_div)).replace("\n", " ").strip()
+        if fwd_div is not None else ""
+    )
+    (forward_timestamp, forward_timestamp_has_time,
+     forward_timestamp_has_seconds) = _forward_timestamp(fwd_div)
+    # The source and original timestamp are rendered in a quoted attribution
+    # header in the same reconstructed message/caption as the forwarded payload.
+    forward_header = f"Forwarded from {forward_name}\n" if forward_name else ""
     fwd_src = extract_forward_source(msg_div) if config.settings.native_forward else None
 
     reply_div = find_first(msg_div, "reply_to")
@@ -259,7 +322,13 @@ def extract_message_data(msg_div):
     body_text, body_entities = parse_rich_text(text_div)
 
     media = exportmedia.find_media(msg_div)
-    note = "" if media else exportmedia.media_note(msg_div)
+    missing_media = exportmedia.find_missing_media(msg_div)
+    if missing_media:
+        # Keep the message even when one or more referenced attachments are
+        # absent. If other attachments exist, they are still uploaded normally.
+        note = "\n".join(f"[Media not found: {reference}]" for reference in missing_media)
+    else:
+        note = "" if media else exportmedia.media_note(msg_div)
     if note:
         body_text = (body_text + "\n\n" if body_text else "") + note
 
@@ -269,6 +338,11 @@ def extract_message_data(msg_div):
         "timestamp": timestamp,
         "sender": sender,
         "forward_header": forward_header,
+        "forward_name": forward_name,
+        "forward_timestamp": forward_timestamp,
+        "forward_timestamp_has_time": forward_timestamp_has_time,
+        "forward_timestamp_has_seconds": forward_timestamp_has_seconds,
+        "is_forwarded": fwd_div is not None,
         "forward_source": fwd_src,
         "reply_src_id": reply_src_id,
         "reply_preview": preview,
