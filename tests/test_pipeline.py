@@ -150,10 +150,16 @@ class PipelineTests(unittest.TestCase):
         client, _, _ = self.run_once()
         self.assertEqual(client.texts(), [])
 
-    def test_forwarded_message_keeps_a_textual_header(self):
+    def test_forwarded_message_uses_bold_source_and_blockquoted_body(self):
         fakes.write_export(self.folder.name, [fakes.message(1, fakes.forwarded("News Channel", "forwarded text"))])
         client, _, _ = self.run_once()
-        self.assertIn("Forwarded from News Channel\n\nforwarded text", client.texts()[0])
+        migrated = client.texts()[0]
+        self.assertIn("Forwarded from News Channel\nforwarded text", migrated)
+        self.assertNotIn("Original message:", migrated)
+        entities = client.kinds("send_message")[0][2]["formatting_entities"]
+        entity_types = [type(entity).__name__ for entity in entities]
+        self.assertIn("MessageEntityBold", entity_types)
+        self.assertIn("MessageEntityBlockquote", entity_types)
 
     def test_real_telegram_forward_layout_preserves_source_and_original_date(self):
         # Match Telegram Desktop's real structure: an avatar carrying the
@@ -179,8 +185,57 @@ class PipelineTests(unittest.TestCase):
         client, _, _ = self.run_once()
         migrated = client.texts()[0]
         self.assertIn("Forwarded from HLI8IOS", migrated)
-        self.assertIn("Original message: 08.11.2026 07:09:09", migrated)
+        self.assertNotIn("Original message:", migrated)
+        self.assertNotIn("07:09:09", migrated)
         self.assertTrue(migrated.endswith("hello"), migrated)
+        send_call = client.kinds("send_message")[0]
+        entities = send_call[2]["formatting_entities"]
+        entity_types = [type(entity).__name__ for entity in entities]
+        self.assertIn("MessageEntityBold", entity_types)
+        self.assertIn("MessageEntityBlockquote", entity_types)
+        text_value = send_call[1]
+        name_entity = next(
+            e for e in entities
+            if type(e).__name__ == "MessageEntityBold"
+            and text_value[e.offset:e.offset + e.length] == "HLI8IOS"
+        )
+        self.assertEqual(text_value[name_entity.offset:name_entity.offset + name_entity.length], "HLI8IOS")
+        quote_entity = next(e for e in entities if type(e).__name__ == "MessageEntityBlockquote")
+        self.assertEqual(text_value[quote_entity.offset:quote_entity.offset + quote_entity.length], "hello")
+
+    def test_reconstructed_forward_keeps_body_formatting_inside_blockquote(self):
+        forwarded = (
+            '<div class="message default clearfix" id="message138">'
+            '<div class="body">'
+            '<div class="pull_right date details" title="08.11.2026 07:09:41 UTC+02:00">07:09</div>'
+            '<div class="from_name">jbvjhvjhvjh</div>'
+            '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
+            '<div class="forwarded body">'
+            '<div class="from_name">HLI8IOS</div>'
+            '<div class="text"><strong>hello</strong> <em>world</em></div>'
+            '</div></div></div>'
+        )
+        fakes.write_export(self.folder.name, [forwarded])
+        client, _, _ = self.run_once()
+        send_call = client.kinds("send_message")[0]
+        text_value = send_call[1]
+        entities = send_call[2]["formatting_entities"]
+        names = [type(entity).__name__ for entity in entities]
+        self.assertIn("MessageEntityBold", names)
+        self.assertIn("MessageEntityItalic", names)
+        self.assertIn("MessageEntityBlockquote", names)
+        quote = next(e for e in entities if type(e).__name__ == "MessageEntityBlockquote")
+        self.assertEqual(
+            text_value[quote.offset:quote.offset + quote.length], "hello world"
+        )
+        italic = next(
+            e for e in entities
+            if type(e).__name__ == "MessageEntityItalic"
+            and text_value[e.offset:e.offset + e.length] == "world"
+        )
+        self.assertEqual(
+            text_value[italic.offset:italic.offset + italic.length], "world"
+        )
 
     def test_real_telegram_forward_body_link_is_used_for_native_source(self):
         forwarded = html.fromstring(
@@ -198,8 +253,45 @@ class PipelineTests(unittest.TestCase):
         with config.use_settings(self.settings()):
             data = htmlexport.extract_message_data(forwarded)
         self.assertEqual(data["forward_source"], ("NewsChannel", 4321))
-        self.assertIn("Forwarded from News Channel", data["forward_header"])
-        self.assertIn("Original message: 08.11.2026 07:09:09", data["forward_header"])
+        self.assertEqual(data["forward_name"], "News Channel")
+        self.assertTrue(data["is_forwarded"])
+        self.assertEqual(data["forward_header"], "Forwarded from News Channel\n")
+        self.assertNotIn("07:09:09", data["forward_header"])
+
+    def test_native_forward_path_remains_native_and_does_not_use_reconstruction_quote(self):
+        forwarded = (
+            '<div class="message default clearfix" id="message139">'
+            '<div class="body">'
+            '<div class="pull_right date details" title="08.11.2026 07:09:41 UTC+02:00">07:09</div>'
+            '<div class="from_name">Alice</div>'
+            '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
+            '<div class="forwarded body">'
+            '<div class="from_name"><a href="https://t.me/NewsChannel/4321">News Channel</a></div>'
+            '<div class="text">forwarded text</div>'
+            '</div></div></div>'
+        )
+        fakes.write_export(self.folder.name, [forwarded])
+        native_calls = []
+
+        async def native_forward(_client, _channel, peer_hint, source_msg_id):
+            native_calls.append((peer_hint, source_msg_id))
+            return 777
+
+        with patch.object(pipeline.sending, "_try_native_forward", new=native_forward):
+            client, output, _ = self.run_once()
+
+        self.assertEqual(native_calls, [("NewsChannel", 4321)])
+        # Native forwarding sends the source message itself; the only text
+        # message is the normal archive header annotated as a reply.
+        self.assertEqual(client.texts(), ["Alice\n8 November 2026 · 07:09"])
+        send_call = client.kinds("send_message")[0]
+        self.assertEqual(send_call[2]["reply_to"], 777)
+        self.assertNotIn("Forwarded from", send_call[1])
+        self.assertNotIn(
+            "MessageEntityBlockquote",
+            [type(entity).__name__ for entity in send_call[2]["formatting_entities"]],
+        )
+        self.assertIn("native_forwards=1", output)
 
     def test_reply_to_a_later_message_is_deferred_then_linked(self):
         fakes.write_export(self.folder.name, [
