@@ -46,7 +46,13 @@ python -m pip install git+https://github.com/ifaac/Telegram_Migration
 
 For development (run from the repository root, no install needed) use `python -m pip install -r requirements.txt`.
 
-`static-ffmpeg` is an optional helper for automatic FFmpeg/ffprobe setup when a video sticker needs metadata (`python -m pip install ".[media]"`). The program attempts a lazy install only if it is needed and no working system binaries are available.
+`static-ffmpeg` is an optional helper for automatic FFmpeg/ffprobe setup when a video sticker needs metadata:  
+
+```bash
+python -m pip install ".[media]"
+```
+
+The program attempts a lazy install only if it is needed and no working system binaries are available.
 
 ## Configure
 
