@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+from pathlib import Path
 from contextvars import ContextVar
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -65,7 +66,10 @@ def _load_dotenv(env_file: Optional[str]) -> None:
     except ImportError:
         print("Warning: python-dotenv is not installed; .env files will be ignored.")
         return
-    load_dotenv(env_file) if env_file else load_dotenv()
+    # The installed console script lives in site-packages, not beside the user's export.
+    # Resolve the default .env from the directory where the command was launched.
+    dotenv_path = Path(env_file).expanduser() if env_file else Path.cwd() / ".env"
+    load_dotenv(dotenv_path=dotenv_path)
 
 
 @dataclass

@@ -53,9 +53,11 @@ python -m unittest discover -s tests -v
 
 ## Configure
 
-1. Copy `.env.example` to `.env`.
+1. Copy `.env.example` to `.env` in the folder from which you will launch the command.
 2. Replace the example API hash, bot token, and destination peer with your own values.
 3. Put your exported Telegram HTML pages and media folders in the directory specified by `TELEGRAM_EXPORT_DIR`.
+
+The `telegram-migration` command loads `.env` from its current working directory by default. Run it from the folder containing `.env`, or use `--env-file PATH` to select a different file.
 
 Example `.env`:
 
@@ -107,13 +109,19 @@ The program mounts Google Drive automatically when the export directory is under
 
 ## Run safely
 
-**Dry-run is enabled by default.** Start by running:
+**Dry-run is enabled by default.** From the directory containing `.env`, run either command:
 
 ```bash
 python -m telegram_migration
 ```
 
-(`telegram-migration` does the same once the package is installed.) Review the reported source file count, destination channel title/ID, and dry-run summary. No messages are sent in a dry run.
+or, after installing the package:
+
+```bash
+telegram-migration
+```
+
+Both commands load `.env` from the current working directory by default. Use `--env-file PATH` only when the configuration file is elsewhere. Review the reported source file count, destination channel title/ID, and dry-run summary. No messages are sent in a dry run.
 
 When you are satisfied with the preview, either set `TELEGRAM_DRY_RUN=false` in `.env` or pass `--send`:
 

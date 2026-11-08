@@ -5,6 +5,12 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      wheel_build_number:
+        description: "Build number for an additional wheel of an existing version"
+        required: true
+        type: string
+        default: "1"
 
 jobs:
   build:
@@ -15,9 +21,25 @@ jobs:
         with:
           python-version: '3.x'
       - name: Build distributions
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WHEEL_BUILD_NUMBER: ${{ inputs.wheel_build_number }}
         run: |
+          set -euo pipefail
           python -m pip install --upgrade build
-          python -m build
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if ! [[ "$WHEEL_BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+              echo "wheel_build_number must be numeric (for example: 1)." >&2
+              exit 1
+            fi
+            python -c "from telegram_migration._version import __version__; assert __version__ == '0.1.3', f'Expected v0.1.3 source, got {__version__}'"
+            python -m build --wheel \
+              -C--build-option=bdist_wheel \
+              -C--build-option=--build-number \
+              -C--build-option="$WHEEL_BUILD_NUMBER"
+          else
+            python -m build
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: dist
