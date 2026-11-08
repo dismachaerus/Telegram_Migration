@@ -309,9 +309,8 @@ def extract_message_data(msg_div):
     )
     (forward_timestamp, forward_timestamp_has_time,
      forward_timestamp_has_seconds) = _forward_timestamp(fwd_div)
-    # The source and its original timestamp are rendered in a dedicated
-    # quoted attribution message by the pipeline. The forwarded payload is
-    # then sent as a reply to that attribution message.
+    # The source and original timestamp are rendered in a quoted attribution
+    # header in the same reconstructed message/caption as the forwarded payload.
     forward_header = f"Forwarded from {forward_name}\n" if forward_name else ""
     fwd_src = extract_forward_source(msg_div) if config.settings.native_forward else None
 
