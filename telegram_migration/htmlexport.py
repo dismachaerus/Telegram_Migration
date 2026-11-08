@@ -92,6 +92,34 @@ def _forward_name(fwd_div):
     return text_without(from_name, "date")
 
 
+def _forward_timestamp(fwd_div):
+    """Return the original forwarded-message timestamp from Desktop HTML.
+
+    Telegram Desktop places this in a ``date details`` span nested inside
+    the forwarded author's ``from_name`` element. Some export variants have
+    a useful ``title`` attribute while others only expose visible text.
+    """
+    if fwd_div is None:
+        return None, False, False
+    from_name = find_first(fwd_div, "from_name")
+    if from_name is None:
+        return None, False, False
+    for el in from_name.iter():
+        if not isinstance(el.tag, str) or "date" not in css_classes(el):
+            continue
+        raw = (el.get("title") or "").strip()
+        visible = inner_text(el).strip()
+        parsed = parse_export_date(raw) if raw else None
+        if parsed is None and visible:
+            raw = visible
+            parsed = parse_export_date(visible)
+        if parsed is not None:
+            has_time = bool(re.search(r"\b\d{1,2}:\d{2}(?::\d{2})?\b", raw))
+            has_seconds = bool(re.search(r"\b\d{1,2}:\d{2}:\d{2}\b", raw))
+            return parsed, has_time, has_seconds
+    return None, False, False
+
+
 def extract_forward_source(msg_div):
     fwd_div = _forwarded_body(msg_div)
     if fwd_div is None:
@@ -279,10 +307,11 @@ def extract_message_data(msg_div):
         sanitize_text(_forward_name(fwd_div)).replace("\n", " ").strip()
         if fwd_div is not None else ""
     )
-    # Reconstructed forwards use the original Telegram attribution wording.
-    # Their contents are blockquoted by the pipeline. The outer migrated
-    # message already has its own timestamp, so do not duplicate the
-    # timestamp found inside Telegram Desktop's forwarded header.
+    (forward_timestamp, forward_timestamp_has_time,
+     forward_timestamp_has_seconds) = _forward_timestamp(fwd_div)
+    # The source and its original timestamp are rendered in a dedicated
+    # quoted attribution message by the pipeline. The forwarded payload is
+    # then sent as a reply to that attribution message.
     forward_header = f"Forwarded from {forward_name}\n" if forward_name else ""
     fwd_src = extract_forward_source(msg_div) if config.settings.native_forward else None
 
@@ -311,6 +340,9 @@ def extract_message_data(msg_div):
         "sender": sender,
         "forward_header": forward_header,
         "forward_name": forward_name,
+        "forward_timestamp": forward_timestamp,
+        "forward_timestamp_has_time": forward_timestamp_has_time,
+        "forward_timestamp_has_seconds": forward_timestamp_has_seconds,
         "is_forwarded": fwd_div is not None,
         "forward_source": fwd_src,
         "reply_src_id": reply_src_id,
