@@ -267,12 +267,36 @@ async def _send_single_media(client, channel, chunks, media, reply_to, state, so
 
 
 async def _do_send(client, channel, chunks, media, reply_to, forward_source,
-                   state, annotation, source_id=None):
+                   state, annotation, source_id=None, forward_attribution_chunks=None):
     forwarded_id = await _send_native_forward(
         client, channel, forward_source, reply_to, state, annotation, source_id
     )
     if forwarded_id is not None:
         return forwarded_id
+
+    if forward_attribution_chunks:
+        # A reconstructed forward is represented by two linked messages:
+        # 1) the sender/timestamp header plus a blockquoted source attribution;
+        # 2) the original text or media, posted as a reply to that attribution.
+        attribution_id = state.get("forward_attribution_id")
+        if attribution_id is None:
+            attribution_id = await _send_text_chunks(
+                client, channel, forward_attribution_chunks, reply_to, state,
+                "forward_attribution_prog", source_id,
+            )
+            state["forward_attribution_id"] = attribution_id
+            progress.save_state(state["src"], state)
+
+        attribution_progress = state.get("forward_attribution_prog", {})
+        attribution_last_id = (
+            attribution_progress.get("last") or attribution_id
+        )
+        if not media and not any(text.strip() for text, _entities in chunks):
+            # An export can contain a forwarded attribution without a visible
+            # payload. Preserve the attribution itself as the migrated entry.
+            return attribution_id
+        reply_to = attribution_last_id
+
     if len(media) > 1:
         return await _send_multiple_media(
             client, channel, chunks, media, reply_to, state, source_id
@@ -288,14 +312,15 @@ async def _do_send(client, channel, chunks, media, reply_to, forward_source,
     )
 
 
-async def send_one(client, channel, data, chunks, reply_to, state, annotation, source_id):
+async def send_one(client, channel, data, chunks, reply_to, state, annotation, source_id,
+                   forward_attribution_chunks=None):
     attempt, floods = 0, 0
     while True:
         try:
             return await _do_send(
                 client, channel, chunks, data["media"], reply_to,
                 data["forward_source"], state, annotation,
-                source_id,
+                source_id, forward_attribution_chunks=forward_attribution_chunks,
             )
         except FloodWaitError as fw:
             floods += 1
