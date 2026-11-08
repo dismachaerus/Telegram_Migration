@@ -68,6 +68,24 @@ class PipelineTests(unittest.TestCase):
         with config.use_settings(self.settings()):
             self.assertEqual(progress.load_id_map(), {"1": 1001})
 
+    def test_missing_media_only_message_is_sent_as_placeholder_not_skipped(self):
+        fakes.write_export(self.folder.name, [
+            fakes.message(1, '<div class="media_wrap clearfix">'
+                             '<a class="photo_wrap" href="photos/gone.jpg">'
+                             '<img class="photo" src="photos/gone_thumb.jpg"/>'
+                             '</a></div>'),
+        ])
+        client, output, _ = self.run_once()
+        self.assertEqual(
+            client.texts(),
+            ["Alice\n12 March 2023 · 10:01\n\n[Media not found: photos/gone.jpg]"],
+        )
+        self.assertIn("sent=1", output)
+        self.assertIn("skipped=0", output)
+        self.assertEqual(client.kinds("send_file"), [])
+        with config.use_settings(self.settings()):
+            self.assertEqual(progress.load_id_map(), {"1": 1001})
+
     def test_service_events_are_migrated_as_dated_archival_entries(self):
         fakes.write_export(self.folder.name, [
             '<div class="message service" id="message-1">'
