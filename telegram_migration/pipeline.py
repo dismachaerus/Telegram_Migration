@@ -10,8 +10,8 @@ from telethon.tl import types as tl
 
 from . import bigfiles, cli, config, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
 from .htmlutil import css_classes
-from .textutil import (compose_message, compose_message_header, split_with_entities,
-                       strip_with_entities, u16len)
+from .textutil import (compose_message, compose_message_header, format_archive_timestamp,
+                       split_with_entities, strip_with_entities, u16len)
 from .constants import NO_CAPTION_KINDS, STICKER_KINDS
 
 
@@ -70,15 +70,28 @@ def _print_dry_run(source_id, data, text, entities, first_limit, reply_to,
 
 async def _send_migrated_message(client, channel, data, source_id, text, entities,
                                  first_limit, reply_to, annotation, partial,
-                                 pending_replies, id_map, stats, ctx, kind_summary, when):
+                                 pending_replies, id_map, stats, ctx, kind_summary, when,
+                                 forward_attribution=None):
     entities = await sending.resolve_mentions(client, entities)
     chunks = split_with_entities(text, entities, first_limit, config.settings.text_limit)
-    state = {"src": source_id, "force_reconstruction": bool(data["reply_src_id"])}
+    attribution_chunks = None
+    if forward_attribution is not None:
+        attribution_text, attribution_entities = forward_attribution
+        attribution_entities = await sending.resolve_mentions(client, attribution_entities)
+        attribution_chunks = split_with_entities(
+            attribution_text, attribution_entities,
+            config.settings.text_limit, config.settings.text_limit,
+        )
+    state = {
+        "src": source_id,
+        "force_reconstruction": bool(data["reply_src_id"]),
+    }
     if source_id in partial:
         state.update(partial[source_id])
 
     new_id = await sending.send_one(
-        client, channel, data, chunks, reply_to, state, annotation, source_id
+        client, channel, data, chunks, reply_to, state, annotation, source_id,
+        forward_attribution_chunks=attribution_chunks,
     )
     if new_id:
         id_map[source_id] = int(new_id)
@@ -160,7 +173,9 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             ctx["stop"] = True
             return
 
-        has_content = bool(data["body_text"].strip() or data["media"])
+        has_content = bool(
+            data["body_text"].strip() or data["media"] or data.get("is_forwarded")
+        )
         if not has_content:
             stats["skipped"] += 1
             was_pending = source_id in pending_replies
@@ -179,37 +194,48 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             )
         else:
             header = compose_message_header(timestamp, data["sender"])
-        forward_header = data["forward_header"]
-        forward_entities = []
-        forward_name = data.get("forward_name") or ""
-        if forward_name and forward_header:
-            # Keep the literal Telegram wording, but emphasize the source name
-            # just like the sender name in our normal migration header.
-            source_start = u16len("Forwarded from ")
-            source_length = u16len(forward_name)
-            if source_length:
-                forward_entities.append(tl.MessageEntityBold(
-                    offset=source_start, length=source_length
-                ))
-        forward = (forward_header, forward_entities)
-
         body_text = data["body_text"]
         body_entities = list(data["body_entities"])
-        if data.get("is_forwarded") and body_text:
-            # Reconstructed forwards visually mimic Telegram's native quote
-            # treatment. Native forwards themselves are sent by sending.py and
-            # never use this reconstructed text/entity representation.
-            blockquote_length = u16len(body_text)
-            if blockquote_length:
-                try:
-                    blockquote = tl.MessageEntityBlockquote(
-                        offset=0, length=blockquote_length, collapsed=False
-                    )
-                except TypeError:  # compatibility with Telethon versions without `collapsed`
-                    blockquote = tl.MessageEntityBlockquote(
-                        offset=0, length=blockquote_length
-                    )
-                body_entities.append(blockquote)
+        is_forwarded = bool(data.get("is_forwarded"))
+        forward_attribution = None
+        if is_forwarded:
+            forward_name = data.get("forward_name") or ""
+            label = f"Forwarded from {forward_name}" if forward_name else "Forwarded message"
+            attribution_text = label
+            attribution_entities = []
+
+            if forward_name:
+                source_start = u16len("Forwarded from ")
+                source_length = u16len(forward_name)
+                if source_length:
+                    attribution_entities.append(tl.MessageEntityBold(
+                        offset=source_start, length=source_length
+                    ))
+
+            forward_timestamp = data.get("forward_timestamp")
+            if forward_timestamp is not None:
+                forward_date = format_archive_timestamp(forward_timestamp, date_only=True)
+                if data.get("forward_timestamp_has_time"):
+                    time_format = "%H:%M:%S" if data.get("forward_timestamp_has_seconds") else "%H:%M"
+                    forward_date += f" · {forward_timestamp:{time_format}}"
+                date_start = u16len(attribution_text + "\n")
+                attribution_text += "\n" + forward_date
+                attribution_entities.append(tl.MessageEntityItalic(
+                    offset=date_start, length=u16len(forward_date)
+                ))
+
+            # The left quote bar belongs only to the forwarding attribution.
+            # The original forwarded text/media is sent as a separate reply to
+            # this attribution message, matching Telegram's visual hierarchy.
+            try:
+                blockquote = tl.MessageEntityBlockquote(
+                    offset=0, length=u16len(attribution_text), collapsed=False
+                )
+            except TypeError:  # compatibility with Telethon versions without `collapsed`
+                blockquote = tl.MessageEntityBlockquote(
+                    offset=0, length=u16len(attribution_text)
+                )
+            attribution_entities.append(blockquote)
 
         reply_to, reply_fallback, deferred = _resolve_reply(
             data, source_id, id_map, pending_replies, ctx
@@ -217,11 +243,28 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         if deferred:
             return
 
-        text, entities = compose_message(
-            header, ("", []), forward, body_text, body_entities,
-            extra_before_body=reply_fallback,
-        )
-        text, entities = strip_with_entities(text, entities)
+        if is_forwarded:
+            # Compose the normal archive header and any unresolved-reply note
+            # into the attribution message. The forwarded payload remains
+            # separate and is sent as a reply to this message.
+            attribution_text, attribution_entities = compose_message(
+                header, ("", []), (attribution_text, attribution_entities),
+                "", [], extra_before_body=reply_fallback,
+            )
+            attribution_text, attribution_entities = strip_with_entities(
+                attribution_text, attribution_entities
+            )
+            forward_attribution = (attribution_text, attribution_entities)
+            text, entities = body_text, body_entities
+            preview_text = attribution_text + ("\n↳ " + body_text if body_text else "")
+            preview_entities = []
+        else:
+            text, entities = compose_message(
+                header, ("", []), ("", []), body_text, body_entities,
+                extra_before_body=reply_fallback,
+            )
+            text, entities = strip_with_entities(text, entities)
+            preview_text, preview_entities = text, entities
 
         oversize = bigfiles.find_oversize_media(data["media"])
         if oversize:
@@ -249,7 +292,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
 
         if config.settings.dry_run:
             _print_dry_run(
-                source_id, data, text, entities, first_limit, reply_to,
+                source_id, data, preview_text, preview_entities, first_limit, reply_to,
                 kind_summary, stats, pending_replies,
             )
             mark_completed = True
@@ -258,7 +301,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         await _send_migrated_message(
             client, channel, data, source_id, text, entities, first_limit,
             reply_to, annotation, partial, pending_replies, id_map, stats,
-            ctx, kind_summary, when,
+            ctx, kind_summary, when, forward_attribution=forward_attribution,
         )
         mark_completed = True
         await asyncio.sleep(config.settings.send_delay_seconds)
