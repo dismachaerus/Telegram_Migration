@@ -66,16 +66,26 @@ def _classify(rel, wrap_class, full, anchor_classes=(), export_label=""):
         return "voice"
     if ext == ".gif":
         return "gif"
-    if "video_files" in lower_rel or ext in (".mp4", ".mov", ".m4v", ".avi"):
+    video_extensions = {
+        ".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".mpeg",
+        ".mpg", ".3gp", ".wmv", ".flv", ".m2ts", ".mts",
+    }
+    if "video_files" in lower_rel or ext in video_extensions:
         return "gif" if _is_gif(full, anchor_classes, export_label) else "video"
-    # Telegram Desktop distinguishes actual photos by their photos/ export path
-    # and/or photo-specific markup. Do not infer "photo" solely from .jpg/.png:
-    # those extensions can also be ordinary files whose document form matters.
+
+    # Desktop HTML sometimes places genuine photo media under files/ and
+    # marks the link as media_file, even when the source post displayed it as
+    # an ordinary Telegram photo. Treat common raster-image formats as photos
+    # regardless of the export directory; non-image attachments remain docs.
+    image_extensions = {
+        ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff",
+        ".heic", ".heif", ".avif",
+    }
     photo_markup = any(
         c in {"photo", "photo_wrap", "photo_file_wrap"} or c.startswith("photo_")
         for c in classes
     )
-    if "photos/" in lower_rel or photo_markup:
+    if "photos/" in lower_rel or photo_markup or ext in image_extensions:
         return "photo"
     return "document"
 
