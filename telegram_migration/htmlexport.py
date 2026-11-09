@@ -461,6 +461,7 @@ def infer_media_groups(files):
                 if not _album_candidate(data, effective_sender):
                     flush()
                 else:
+                    data["sender"] = effective_sender
                     data["_album_sender"] = effective_sender or data.get("forward_name", "")
                     if not pending:
                         pending = [data]
