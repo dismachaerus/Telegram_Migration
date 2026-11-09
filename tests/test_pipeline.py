@@ -607,7 +607,7 @@ class PipelineTests(unittest.TestCase):
             mapped = progress.load_id_map()
         self.assertEqual(set(mapped), {str(i) for i in range(319, 331)})
         self.assertEqual(len({mapped[str(i)] for i in range(320, 330)}), 10)
-        self.assertIn("inferred album 320–329", output)
+        self.assertIn("album 320–329", output)
         self.assertIn("sent=12", output)
 
     def test_inferred_album_rejects_runs_longer_than_ten_items(self):
