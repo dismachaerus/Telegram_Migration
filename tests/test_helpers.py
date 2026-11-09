@@ -256,6 +256,31 @@ class InlineCustomEmojiTests(unittest.TestCase):
             self.assertEqual((entity.offset, entity.length, entity.document_id),
                              (2, 5, 987654321))
 
+    def test_oversize_inline_custom_emoji_is_left_as_fallback_text(self):
+        class NoUploadClient:
+            async def get_me(self):
+                raise AssertionError("must not contact Telegram for an oversized asset")
+
+            async def upload_file(self, *args, **kwargs):
+                raise AssertionError("oversized inline emoji must not be uploaded")
+
+        with tempfile.TemporaryDirectory() as temp:
+            sticker = Path(temp) / "stickers" / "large.webp"
+            sticker.parent.mkdir()
+            sticker.write_bytes(b"sticker payload larger than the test limit")
+            page = Path(temp) / "messages.html"
+            page.write_text(
+                '<html><body><div class="message" id="message1">'
+                '<div class="text"><a href="stickers/large.webp">🌸</a></div>'
+                '</div></body></html>',
+                encoding="utf-8",
+            )
+            with config.use_settings(config.get_settings().replace(base_dir=temp, max_upload_mb=0.000001)):
+                mapping = asyncio.run(
+                    customemoji.prepare_inline_custom_emojis(NoUploadClient(), [str(page)])
+                )
+            self.assertEqual(mapping, {})
+
     def test_video_custom_emoji_uses_video_sticker_attributes(self):
         asset = {
             "path": "/tmp/custom-emoji.webm",
