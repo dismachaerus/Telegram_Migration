@@ -489,6 +489,6 @@ def inherit_forwarded_sender(data, context):
         context["last_forward_name"] = data["forward_name"]
     elif data.get("joined") and context.get("last_forward_name"):
         data["forward_name"] = context["last_forward_name"]
-        data["forward_header"] = f"Forwarded from {data['forward_name']}\\n"
+        data["forward_header"] = f"Forwarded from {data['forward_name']}\n"
     else:
         context["last_forward_name"] = ""
