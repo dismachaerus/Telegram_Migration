@@ -129,7 +129,7 @@ def _album_candidate(data, effective_sender):
     Desktop HTML. Continuation markers and timestamps are evaluated between
     adjacent candidates in _album_records_compatible().
     """
-    if len(data.get("media") or []) != 1 or data.get("inline_stickers"):
+    if len(data.get("media") or []) != 1:
         return False
     if data.get("reply_src_id") or data.get("reactions") or data.get("media_note"):
         return False
@@ -203,7 +203,7 @@ def _album_records_compatible(left, right):
 
     return exportmedia.album_compatible(left["media"] + right["media"])
 
-def infer_media_groups(files):
+def infer_media_groups(files, inline_emoji_ids=None):
     """Infer likely media groups from consecutive media records in Desktop HTML.
 
     Desktop HTML does not retain Telegram's grouped_id. Album starts may lack
@@ -250,6 +250,10 @@ def infer_media_groups(files):
                 if data is None:
                     flush()
                     continue
+
+                if inline_emoji_ids:
+                    from .customemoji import apply_custom_emoji_entities
+                    apply_custom_emoji_entities(data, inline_emoji_ids)
 
                 if data.get("sender"):
                     last_sender = data["sender"]
