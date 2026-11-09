@@ -210,8 +210,11 @@ def infer_media_groups(files):
     the "joined" class, so single-media records are held as possible starts.
     Ordinary continuations still require the joined marker and close export
     timestamps; forwarded continuations can instead use close original
-    forward timestamps from the same source author. Groups larger than
-    Telegram's ten-item limit are rejected as a whole rather than split.
+    forward timestamps from the same source author. If one standalone
+    non-joined candidate is followed by ten compatible joined candidates,
+    the ten-item continuation is inferred as its own album, respecting
+    Telegram's hard album limit without relying on source-specific IDs. Other
+    ambiguous runs longer than ten are rejected rather than guessed.
     """
     from lxml import etree
 
@@ -263,7 +266,21 @@ def infer_media_groups(files):
                         pending = [data]
                     elif _album_records_compatible(pending[-1], data):
                         pending.append(data)
-                        if len(pending) > 10:
+                        if (
+                            len(pending) == 11
+                            and not pending[0].get("joined")
+                            and all(member.get("joined") for member in pending[1:])
+                        ):
+                            # A non-joined media message followed by ten joined
+                            # media records cannot be one Telegram album: albums
+                            # have at most ten items. Keep the leading message
+                            # independent and infer the maximum-size album from
+                            # the joined continuation run. This is based on
+                            # export structure, not message IDs or file names.
+                            album_run = pending[1:]
+                            groups[album_run[0]["msg_id"]] = album_run[:]
+                            pending = []
+                        elif len(pending) > 10:
                             overflow = True
                     else:
                         flush()
