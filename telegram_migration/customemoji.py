@@ -89,6 +89,7 @@ def collect_inline_custom_emojis(files):
                         path = sticker["path"]
                         key = _asset_key(path, kind, alt)
                         reference_count += 1
+                        alias = reference_key(path, kind, alt)
                         if key not in assets:
                             ext = os.path.splitext(path)[1].casefold()
                             assets[key] = {
@@ -97,7 +98,10 @@ def collect_inline_custom_emojis(files):
                                 "kind": kind,
                                 "alt": alt,
                                 "filename": f"tmx_{key}{ext}",
+                                "reference_keys": [alias],
                             }
+                        elif alias not in assets[key]["reference_keys"]:
+                            assets[key]["reference_keys"].append(alias)
                 elem.clear()
                 while elem.getprevious() is not None:
                     del elem.getparent()[0]
@@ -395,8 +399,9 @@ async def prepare_inline_custom_emojis(client, files, *, dry_run=False):
 
     _save_cache(cache)
     reference_ids = {
-        reference_key(asset["path"], asset["kind"], asset["alt"]): result_ids[asset["key"]]
+        alias: result_ids[asset["key"]]
         for asset in assets if asset["key"] in result_ids
+        for alias in asset["reference_keys"]
     }
     print(
         f"  Prepared {len(result_ids)}/{len(assets)} inline custom emoji assets "
