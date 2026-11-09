@@ -356,9 +356,12 @@ def extract_message_data(msg_div):
 
 
 def _album_candidate(data, effective_sender):
-    """Whether one joined HTML record is eligible for conservative album inference."""
-    if not data.get("joined"):
-        return False
+    """Whether one HTML record can start or continue a conservative album inference.
+
+    The first member of an album is often not marked "joined" in Telegram
+    Desktop HTML. Continuation markers and timestamps are evaluated between
+    adjacent candidates in _album_records_compatible().
+    """
     if len(data.get("media") or []) != 1:
         return False
     if data.get("reply_src_id") or data.get("reactions") or data.get("media_note"):
@@ -378,9 +381,14 @@ def _album_candidate(data, effective_sender):
 
 
 def _album_records_compatible(left, right):
-    """Check that two adjacent records share the same plausible media-group context."""
-    if not right.get("joined"):
-        return False
+    """Check whether adjacent records share a plausible album context.
+
+    For forwarded records, the original forwarded timestamps are stronger
+    evidence than the timestamps at which the export owner re-posted them.
+    They can differ by several seconds even when the original items belong to
+    one album. For ordinary records, retain the stricter Desktop joined marker
+    and two-second outer-timestamp rule.
+    """
     if left.get("_album_sender") != right.get("_album_sender"):
         return False
     if left.get("is_forwarded") != right.get("is_forwarded"):
@@ -393,17 +401,26 @@ def _album_records_compatible(left, right):
     left_time, right_time = left.get("timestamp"), right.get("timestamp")
     if left_time is None or right_time is None:
         return False
-    gap = (right_time - left_time).total_seconds()
-    if gap < 0 or gap > 2:
+    outer_gap = (right_time - left_time).total_seconds()
+    if outer_gap < 0:
         return False
 
     left_forward_time = left.get("forward_timestamp")
     right_forward_time = right.get("forward_timestamp")
     if (left_forward_time is None) != (right_forward_time is None):
         return False
+
     if left_forward_time is not None:
+        # Both records are forwarded from the same author (checked above).
+        # Their original timestamps, not the later re-forward timestamps,
+        # determine whether they plausibly belonged to the same source album.
         forward_gap = (right_forward_time - left_forward_time).total_seconds()
         if forward_gap < 0 or forward_gap > 2:
+            return False
+    else:
+        # Without original source timestamps, rely on Telegram Desktop's
+        # continuation marker and the close outer timestamps.
+        if not right.get("joined") or outer_gap > 2:
             return False
 
     return exportmedia.album_compatible(left["media"] + right["media"])
