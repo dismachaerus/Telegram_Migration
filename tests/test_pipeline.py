@@ -183,6 +183,46 @@ class PipelineTests(unittest.TestCase):
         client, _, _ = self.run_once()
         self.assertEqual(client.texts(), [])
 
+    def test_joined_forward_continuations_inherit_the_original_forwarded_sender(self):
+        messages = [
+            (
+                '<div class="message default clearfix" id="message247">'
+                '<div class="body">'
+                '<div class="pull_right date details" title="01.07.2026 21:42:46 UTC+02:00">21:42</div>'
+                '<div class="from_name">⛯⛯</div>'
+                '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
+                '<div class="forwarded body">'
+                '<div class="from_name">Valerie Demian'
+                '<span class="date details" title="10.05.2026 17:00:58 UTC+02:00">'
+                '10.05.2026 17:00:58</span></div>'
+                '<div class="text">Может написать тому челу спросить за ту ученицу?</div>'
+                '</div></div></div>'
+            ),
+        ]
+        for message_id, clock, payload in [
+            (248, "21:42:47", "Хотя мне так лень"),
+            (249, "21:42:47", "Портить день еще себе ток"),
+            (250, "21:42:48", "Ненавижу таких мужчин , что бывших преследуют"),
+        ]:
+            messages.append(
+                f'<div class="message default clearfix joined" id="message{message_id}">'
+                '<div class="body">'
+                f'<div class="pull_right date details" title="01.07.2026 {clock} UTC+02:00">{clock}</div>'
+                '<div class="forwarded body">'
+                f'<div class="text">{payload}</div>'
+                '</div></div></div>'
+            )
+        fakes.write_export(self.folder.name, messages)
+        client, _, _ = self.run_once()
+
+        sent = client.kinds("send_message")
+        self.assertEqual(len(sent), 4)
+        for call in sent:
+            self.assertIn("Forwarded from Valerie Demian", call[1])
+        self.assertTrue(sent[1][1].endswith("Хотя мне так лень"))
+        self.assertTrue(sent[2][1].endswith("Портить день еще себе ток"))
+        self.assertTrue(sent[3][1].endswith("Ненавижу таких мужчин , что бывших преследуют"))
+
     def test_reconstructed_text_forward_keeps_attribution_and_payload_in_one_message(self):
         forwarded = (
             '<div class="message default clearfix" id="message136">'
