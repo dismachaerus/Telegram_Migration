@@ -21,6 +21,7 @@ async def process_file(client, channel, path, id_map, partial, pending_replies, 
     # A new HTML page starts a new export slice. Do not carry a date from the
     # previous file if this page has no divider or is malformed.
     ctx["current_export_date"] = None
+    ctx["last_forward_name"] = ""
     with open(path, "rb") as export_file:
         context = etree.iterparse(export_file, events=("end",), tag="div", html=True, encoding="utf-8")
         for _event, elem in context:
@@ -179,6 +180,8 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             elif data.get("joined") and ctx.get("last_forward_name"):
                 data["forward_name"] = ctx["last_forward_name"]
                 data["forward_header"] = f"Forwarded from {data['forward_name']}\\n"
+            else:
+                ctx["last_forward_name"] = ""
         else:
             ctx["last_forward_name"] = ""
 
