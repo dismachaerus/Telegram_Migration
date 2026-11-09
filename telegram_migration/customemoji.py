@@ -149,7 +149,7 @@ def _save_cache(document_ids):
 
 def _pack_short_name(keys, bot_username):
     digest = hashlib.sha256("\n".join(sorted(keys)).encode("ascii")).hexdigest()[:12]
-    username = re.sub(r"[^a-z0-9_]", "", str(bot_username).casefold())
+    username = re.sub(r"_+", "_", re.sub(r"[^a-z0-9_]", "", str(bot_username).casefold()))
     if not username:
         raise RuntimeError("The Telegram bot needs a username to own a custom-emoji sticker set.")
     short_name = f"tgmig_{digest}_by_{username}"
@@ -253,7 +253,7 @@ def _is_missing_sticker_set(exc):
 
 def _is_short_name_occupied(exc):
     message = f"{type(exc).__name__}: {exc}".casefold()
-    return "pack_short_name_occupied" in message or "short name is occupied" in message
+    return any(token in message for token in ("pack_short_name_occupied", "packshortnameoccupied", "short name is occupied", "shortnameoccupied"))
 
 
 async def _get_sticker_set(client, short_name):
@@ -426,13 +426,6 @@ def apply_custom_emoji_entities(data, document_ids):
         except (OSError, KeyError):
             continue
         document_id = document_ids.get(key)
-        if document_id is None:
-            # Compute the content key when called with freshly extracted data.
-            try:
-                key = _asset_key(sticker["path"], sticker["kind"], sticker["alt"])
-            except (OSError, KeyError):
-                continue
-            document_id = document_ids.get(key)
         if document_id is None:
             continue
         offset = int(sticker["offset"])
