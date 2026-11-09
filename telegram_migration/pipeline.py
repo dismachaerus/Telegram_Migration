@@ -423,17 +423,9 @@ async def _run_migration():
         await client.disconnect()
         return True
 
-    inline_emoji_ids = {}
-    if config.settings.dry_run:
-        await customemoji.prepare_inline_custom_emojis(client, files, dry_run=True)
-    else:
-        try:
-            inline_emoji_ids = await customemoji.prepare_inline_custom_emojis(client, files)
-        except Exception as exc:
-            print(
-                "  warning: could not prepare inline custom emojis "
-                f"({type(exc).__name__}: {exc}); fallback emoji text will be preserved"
-            )
+    inline_emoji_ids = await customemoji.prepare_inline_custom_emojis_for_run(
+        client, files, dry_run=config.settings.dry_run
+    )
 
     stats = {"sent": 0, "skipped": 0, "failed": 0, "forwarded": 0, "reaction_notes": 0}
     ctx = {
