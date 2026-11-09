@@ -314,14 +314,37 @@ class ExportParsingTests(unittest.TestCase):
 
 
 class MediaTests(unittest.TestCase):
-    def test_image_and_video_files_are_classified_as_visual_media(self):
-        self.assertEqual(exportmedia._classify("files/scan.png", "media_wrap", "/tmp/scan.png", (), ""), "photo")
-        self.assertEqual(exportmedia._classify("files/photo.jpg", "media_wrap", "/tmp/photo.jpg", ("media_file",), ""), "photo")
-        self.assertEqual(exportmedia._classify("files/clip.mkv", "media_wrap", "/tmp/clip.mkv", (), ""), "video")
-        self.assertEqual(exportmedia._classify("files/clip.webm", "media_wrap", "/tmp/clip.webm", (), ""), "video")
-        self.assertEqual(exportmedia._classify("files/report.pdf", "media_wrap", "/tmp/report.pdf", (), ""), "document")
+    def test_media_classification_prefers_explicit_export_markup(self):
+        # A generic media_file anchor means the source attachment was sent as
+        # a file; a raster extension alone must not turn it into a photo.
+        self.assertEqual(exportmedia._classify("files/photo.jpg", "media_wrap", "/tmp/photo.jpg", ("media_file",), ""), "document")
+        self.assertEqual(exportmedia._classify("files/clip.mp4", "media_wrap", "/tmp/clip.mp4", ("media_file",), ""), "document")
+        # Explicit photo/video/audio markup and export directories take priority.
+        self.assertEqual(exportmedia._classify("files/photo.jpg", "media_wrap", "/tmp/photo.jpg", ("photo_wrap",), ""), "photo")
         self.assertEqual(exportmedia._classify("photos/photo.jpg", "media_wrap", "/tmp/photo.jpg", (), ""), "photo")
+        self.assertEqual(exportmedia._classify("video_files/clip.mkv", "media_wrap", "/tmp/clip.mkv", (), ""), "video")
+        self.assertEqual(exportmedia._classify("video_files/clip.webm", "media_wrap", "/tmp/clip.webm", (), ""), "video")
+        self.assertEqual(exportmedia._classify("files/scan.png", "media_wrap", "/tmp/scan.png", (), ""), "photo")
+        self.assertEqual(exportmedia._classify("files/report.pdf", "media_wrap", "/tmp/report.pdf", (), ""), "document")
         self.assertEqual(exportmedia._classify("image.png", "media_wrap", "/tmp/image.png", ("photo",), ""), "photo")
+
+    def test_webm_marked_as_sticker_is_not_sent_as_ordinary_video(self):
+        self.assertEqual(
+            exportmedia._classify(
+                "video_files/exported-sticker.webm", "media_wrap",
+                "/tmp/exported-sticker.webm", ("media_photo",), "Sticker\\n🧐",
+            ),
+            "sticker_video",
+        )
+
+    def test_audio_export_markup_is_not_classified_as_a_document(self):
+        self.assertEqual(
+            exportmedia._classify(
+                "files/voice-track.mp3", "media_wrap",
+                "/tmp/voice-track.mp3", ("media_audio_file",), "voice-track.mp3\\n00:30",
+            ),
+            "audio",
+        )
 
     def test_sticker_subtypes_are_classified_by_extension(self):
         self.assertEqual(exportmedia._classify("stickers/a.webp", "media_wrap", "/tmp/a.webp"), "sticker_static")
