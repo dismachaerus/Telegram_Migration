@@ -568,5 +568,66 @@ class PipelineTests(unittest.TestCase):
         self.assertIs(result, False)
 
 
+    def test_ten_consecutive_joined_documents_are_sent_as_one_album(self):
+        preceding = "photos/before.jpg"
+        fakes.write_file(self.folder.name, preceding)
+        records = [
+            fakes.message(319, fakes.photo(preceding), sender="Alice", minute=1)
+        ]
+        expected_files = []
+        for source_id in range(320, 330):
+            relative = f"files/document-{source_id}.png"
+            fakes.write_file(self.folder.name, relative)
+            expected_files.append(os.path.join(self.folder.name, relative))
+            attachment = (
+                '<div class="media_wrap clearfix">'
+                f'<a class="media clearfix pull_left block_link media_file" href="{relative}">'
+                f'<div class="title bold">document-{source_id}.png</div>'
+                '</a></div>'
+            )
+            records.append(
+                fakes.message(source_id, attachment, sender="", classes="joined", minute=2)
+            )
+        records.append(fakes.message(330, fakes.text("after the album"), sender="Alice", minute=3))
+        fakes.write_export(self.folder.name, records)
+
+        client, output, _ = self.run_once()
+
+        media_calls = client.kinds("send_file")
+        self.assertEqual(len(media_calls), 2)
+        self.assertEqual(media_calls[0][1], os.path.join(self.folder.name, preceding))
+        album_files, album_kwargs = media_calls[1][1], media_calls[1][2]
+        self.assertEqual(album_files, expected_files)
+        self.assertTrue(album_kwargs["force_document"])
+        self.assertEqual(len(album_kwargs["caption"]), 10)
+        self.assertTrue(all("Alice" in caption for caption in album_kwargs["caption"]))
+        self.assertFalse(any("inferred" in caption.casefold() for caption in album_kwargs["caption"]))
+
+        with config.use_settings(self.settings()):
+            mapped = progress.load_id_map()
+        self.assertEqual(set(mapped), {str(i) for i in range(319, 331)})
+        self.assertEqual(len({mapped[str(i)] for i in range(320, 330)}), 10)
+        self.assertIn("inferred album 320–329", output)
+        self.assertIn("sent=12", output)
+
+    def test_inferred_album_rejects_runs_longer_than_ten_items(self):
+        records = [fakes.message(1, fakes.text("sender"), sender="Alice", minute=1)]
+        for source_id in range(2, 14):
+            relative = f"files/document-{source_id}.png"
+            fakes.write_file(self.folder.name, relative)
+            attachment = (
+                '<div class="media_wrap clearfix">'
+                f'<a class="media clearfix pull_left block_link media_file" href="{relative}">'
+                '</a></div>'
+            )
+            records.append(
+                fakes.message(source_id, attachment, sender="", classes="joined", minute=2)
+            )
+        fakes.write_export(self.folder.name, records)
+        with config.use_settings(self.settings()):
+            groups = htmlexport.infer_media_groups([self.path("messages.html")])
+        self.assertEqual(groups, {})
+
+
 if __name__ == "__main__":
     unittest.main()
