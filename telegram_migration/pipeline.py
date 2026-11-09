@@ -114,7 +114,7 @@ async def _send_migrated_message(client, channel, data, source_id, text, entitie
         if was_pending:
             progress.save_pending_replies(pending_replies)
         print(f"  [{stats['sent']:>4}] id={source_id:<6} → {new_id:<7}  ({kind_summary})  {when}")
-        return
+        return int(new_id)
 
     stats["failed"] += 1
     if data["reply_src_id"]:
@@ -334,11 +334,23 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             mark_completed = True
             return
 
-        await _send_migrated_message(
+        destination_id = await _send_migrated_message(
             client, channel, data, source_id, text, entities, first_limit,
             reply_to, annotation, partial, pending_replies, id_map, stats,
             ctx, kind_summary, when,
         )
+        if destination_id is None:
+            if data.get("_inferred_album"):
+                # An inferred album is one source unit: its captions and all
+                # media must remain together. Stop here so no later source
+                # messages are migrated past a failed group; a fresh run will
+                # reconstruct and retry the same album from the unchanged map.
+                ctx["stop"] = True
+                print(
+                    f"  Stopped at failed inferred album beginning with id={source_id}. "
+                    "Later messages were left untouched; restart to retry this album."
+                )
+            return
         mark_completed = True
         await asyncio.sleep(config.settings.send_delay_seconds)
     except Exception as exc:
@@ -346,7 +358,12 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         print(f"    failed {mid}: {type(exc).__name__}: {exc}")
         progress.log_failure(mid, f"{type(exc).__name__}: {exc}")
         stats["failed"] += 1
-        mark_completed = True
+        if "data" in locals() and data and data.get("_inferred_album"):
+            ctx["stop"] = True
+            print(
+                f"  Stopped at failed inferred album beginning with id={source_id}. "
+                "Later messages were left untouched; restart to retry this album."
+            )
     finally:
         if source_id and mark_completed:
             ctx["processed_source_ids"].add(source_id)
