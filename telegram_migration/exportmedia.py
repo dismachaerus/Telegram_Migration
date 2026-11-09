@@ -24,6 +24,15 @@ def _label_says_gif(label):
     return False
 
 
+def _label_says_sticker(label):
+    """Recognize Telegram Desktop's explicit standalone Sticker media label."""
+    for line in str(label or "").splitlines():
+        value = line.strip().casefold()
+        if value == "sticker" or value.startswith(("sticker |", "sticker,", "sticker:")):
+            return True
+    return False
+
+
 def _is_gif(path, anchor_classes=(), export_label=""):
     """Identify GIFs only from explicit export metadata or a .gif filename.
 
@@ -40,17 +49,18 @@ def _is_gif(path, anchor_classes=(), export_label=""):
 
 
 def _classify(rel, wrap_class, full, anchor_classes=(), export_label=""):
-    """Classify export media using both wrapper/anchor markup and file extension."""
+    """Classify media by explicit Desktop markup first, extension only as fallback."""
     rel = rel.replace("\\", "/")
     lower_rel = rel.casefold()
     classes = {str(c).casefold() for c in anchor_classes}
+    ext = os.path.splitext(lower_rel)[1]
+
     is_sticker = (
         wrap_class == "sticker_wrap"
         or "sticker_wrap" in classes
         or "stickers/" in lower_rel
+        or _label_says_sticker(export_label)
     )
-    ext = os.path.splitext(lower_rel)[1]
-
     if is_sticker:
         if ext in (".webp", ".png"):
             return "sticker_static"
@@ -64,28 +74,51 @@ def _classify(rel, wrap_class, full, anchor_classes=(), export_label=""):
         return "round_video"
     if "voice_messages" in lower_rel:
         return "voice"
-    if ext == ".gif":
-        return "gif"
+
+    # Explicit media wrappers and labels distinguish audio/stickers from
+    # generic files. An MP3 marked media_audio_file is an audio track, not
+    # an arbitrary document attachment.
+    if "audio_files/" in lower_rel or "media_audio_file" in classes:
+        return "audio"
+
     video_extensions = {
         ".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".mpeg",
         ".mpg", ".3gp", ".wmv", ".flv", ".m2ts", ".mts",
     }
-    if "video_files" in lower_rel or ext in video_extensions:
+    explicit_video = "video_files/" in lower_rel or wrap_class == "video_file_wrap"
+    if explicit_video:
         return "gif" if _is_gif(full, anchor_classes, export_label) else "video"
 
-    # Desktop HTML sometimes places genuine photo media under files/ and
-    # marks the link as media_file, even when the source post displayed it as
-    # an ordinary Telegram photo. Treat common raster-image formats as photos
-    # regardless of the export directory; non-image attachments remain docs.
+    photo_markup = any(
+        c in {"photo", "photo_wrap", "photo_file_wrap", "media_photo"}
+        or c.startswith("photo_")
+        for c in classes
+    )
+    if "photos/" in lower_rel or photo_markup:
+        return "photo"
+
+    # Telegram Desktop uses media_file for attachments deliberately sent as
+    # files. Preserve that presentation even when the filename ends in an
+    # image/video extension. Photo/video/audio-specific markup above wins.
+    if "media_file" in classes:
+        return "document"
+
+    if ext == ".gif":
+        return "gif"
+    if ext in video_extensions:
+        return "gif" if _is_gif(full, anchor_classes, export_label) else "video"
+
+    audio_extensions = {
+        ".mp3", ".m4a", ".aac", ".flac", ".wav", ".ogg", ".opus", ".wma",
+    }
+    if ext in audio_extensions:
+        return "audio"
+
     image_extensions = {
         ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff",
         ".heic", ".heif", ".avif",
     }
-    photo_markup = any(
-        c in {"photo", "photo_wrap", "photo_file_wrap"} or c.startswith("photo_")
-        for c in classes
-    )
-    if "photos/" in lower_rel or photo_markup or ext in image_extensions:
+    if ext in image_extensions:
         return "photo"
     return "document"
 
