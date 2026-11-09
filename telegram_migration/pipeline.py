@@ -103,7 +103,7 @@ async def _send_migrated_message(client, channel, data, source_id, text, entitie
                 if was_pending:
                     progress.save_pending_replies(pending_replies)
             print(
-                f"  [{stats['sent']:>4}] inferred album "
+                f"  [{stats['sent']:>4}] album "
                 f"{source_ids[0]}–{source_ids[-1]} → {primary_id} "
                 f"({len(source_ids)} media items)  {when}"
             )
@@ -214,6 +214,15 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         inferred_group = ctx.get("inferred_groups", {}).get(source_id)
         if inferred_group and len(inferred_group) >= 2:
             member_ids = [str(member["msg_id"]) for member in inferred_group]
+            saved_album_ids = partial.get(source_id, {}).get("album_message_ids")
+            if saved_album_ids and len(saved_album_ids) == len(member_ids):
+                # Recover the complete source-to-destination mapping if the
+                # process stopped after the album upload was checkpointed but
+                # before every ID-map line was appended.
+                for member_id, destination_id in zip(member_ids, saved_album_ids):
+                    if member_id not in id_map:
+                        id_map[member_id] = int(destination_id)
+                        progress.append_id_map(member_id, destination_id)
             already_mapped = [
                 member_id for member_id in member_ids
                 if member_id in id_map or member_id in ctx["manual_done"]
@@ -274,7 +283,8 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             mark_completed = True
             return
 
-        if stats["sent"] + stats["failed"] >= config.settings.batch_limit:
+        batch_cost = len(data.get("_album_source_ids", [])) or 1
+        if stats["sent"] + stats["failed"] + batch_cost > config.settings.batch_limit:
             print(f"Batch limit reached ({config.settings.batch_limit}). Restart to continue.")
             ctx["stop"] = True
             return
@@ -399,7 +409,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         if config.settings.dry_run:
             if data.get("_inferred_album"):
                 print(
-                    f"  [dry] inferred album ids={','.join(data['_album_source_ids'])} "
+                    f"  [dry] album ids={','.join(data['_album_source_ids'])} "
                     f"({len(data['media'])} media items)"
                 )
                 stats["sent"] += len(data["_album_source_ids"])
