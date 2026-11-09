@@ -314,8 +314,12 @@ class ExportParsingTests(unittest.TestCase):
 
 
 class MediaTests(unittest.TestCase):
-    def test_photo_and_document_classification_distinguishes_path_from_extension(self):
-        self.assertEqual(exportmedia._classify("files/scan.png", "media_wrap", "/tmp/scan.png", (), ""), "document")
+    def test_image_and_video_files_are_classified_as_visual_media(self):
+        self.assertEqual(exportmedia._classify("files/scan.png", "media_wrap", "/tmp/scan.png", (), ""), "photo")
+        self.assertEqual(exportmedia._classify("files/photo.jpg", "media_wrap", "/tmp/photo.jpg", ("media_file",), ""), "photo")
+        self.assertEqual(exportmedia._classify("files/clip.mkv", "media_wrap", "/tmp/clip.mkv", (), ""), "video")
+        self.assertEqual(exportmedia._classify("files/clip.webm", "media_wrap", "/tmp/clip.webm", (), ""), "video")
+        self.assertEqual(exportmedia._classify("files/report.pdf", "media_wrap", "/tmp/report.pdf", (), ""), "document")
         self.assertEqual(exportmedia._classify("photos/photo.jpg", "media_wrap", "/tmp/photo.jpg", (), ""), "photo")
         self.assertEqual(exportmedia._classify("image.png", "media_wrap", "/tmp/image.png", ("photo",), ""), "photo")
 
