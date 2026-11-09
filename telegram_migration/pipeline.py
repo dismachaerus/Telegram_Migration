@@ -334,22 +334,13 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             mark_completed = True
             return
 
-        destination_id = await _send_migrated_message(
+        if not await _send_migrated_message(
             client, channel, data, source_id, text, entities, first_limit,
             reply_to, annotation, partial, pending_replies, id_map, stats,
             ctx, kind_summary, when,
-        )
-        if destination_id is None:
+        ):
             if data.get("_inferred_album"):
-                # An inferred album is one source unit: its captions and all
-                # media must remain together. Stop here so no later source
-                # messages are migrated past a failed group; a fresh run will
-                # reconstruct and retry the same album from the unchanged map.
-                ctx["stop"] = True
-                print(
-                    f"  Stopped at failed inferred album beginning with id={source_id}. "
-                    "Later messages were left untouched; restart to retry this album."
-                )
+                album.stop_after_failed_album(ctx, source_id)
             return
         mark_completed = True
         await asyncio.sleep(config.settings.send_delay_seconds)
@@ -359,11 +350,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         progress.log_failure(mid, f"{type(exc).__name__}: {exc}")
         stats["failed"] += 1
         if "data" in locals() and data and data.get("_inferred_album"):
-            ctx["stop"] = True
-            print(
-                f"  Stopped at failed inferred album beginning with id={source_id}. "
-                "Later messages were left untouched; restart to retry this album."
-            )
+            album.stop_after_failed_album(ctx, source_id)
     finally:
         if source_id and mark_completed:
             ctx["processed_source_ids"].add(source_id)
