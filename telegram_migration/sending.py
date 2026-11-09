@@ -116,37 +116,64 @@ async def _send_native_forward(client, channel, forward_source, reply_to, state,
     return None
 
 
-async def _send_album(client, channel, chunks, media, reply_to, state, source_id):
+async def _send_album(client, channel, chunks, media, reply_to, state, source_id,
+                      *, force_document=False, captions=None, caption_entities=None,
+                      return_all=False):
+    if "album_message_ids" in state:
+        saved_ids = list(state["album_message_ids"])
+        return saved_ids if return_all else saved_ids[0]
     if "album_id" in state:
-        return state["album_id"]
+        saved_ids = state.get("album_message_ids") or [state["album_id"]]
+        return saved_ids if return_all else state["album_id"]
+
     first_text, first_ents = chunks[0]
     files = [path for path, _kind in media]
-    captions = [first_text] + [""] * (len(files) - 1)
-    safe_first_ents = clean_invalid_entities(first_text, first_ents)
-    album_kwargs = {"caption": captions, "reply_to": reply_to, "parse_mode": None}
-    if safe_first_ents:
-        # Telethon accepts a flat entity list and normalizes it to a
-        # one-element list-of-lists, then pairs entity lists with captions.
-        # The flat form associates every entity with caption 1 only, and
-        # the empty captions then mismatch and trigger the bounds check.
-        # Pass one list per caption, in the same order as `captions`:
-        # entities on the first caption, empty lists on the rest. Empty
-        # lists (not None) keep the "list of lists" shape consistent —
-        # a mixed [list, None] value can be misread as a flat entity list
-        # by the version check that decides which branch to take.
-        album_kwargs["formatting_entities"] = (
-            [safe_first_ents] + [[] for _ in range(len(files) - 1)]
+    if captions is None:
+        captions = [first_text] + [""] * (len(files) - 1)
+    else:
+        captions = list(captions)
+    if len(captions) != len(files):
+        raise RuntimeError(
+            f"Album caption count {len(captions)} does not match media count {len(files)}"
         )
+
+    if caption_entities is None:
+        caption_entities = [first_ents] + [[] for _ in range(len(files) - 1)]
+    else:
+        caption_entities = list(caption_entities)
+    if len(caption_entities) != len(files):
+        raise RuntimeError(
+            f"Album entity-row count {len(caption_entities)} does not match media count {len(files)}"
+        )
+
+    safe_entity_rows = [
+        clean_invalid_entities(caption, entities)
+        for caption, entities in zip(captions, caption_entities)
+    ]
+    album_kwargs = {"caption": captions, "reply_to": reply_to, "parse_mode": None}
+    if force_document:
+        album_kwargs["force_document"] = True
+    if any(safe_entity_rows):
+        # Telethon expects one entity list per caption. Empty lists (rather than
+        # None) preserve the list-of-lists shape for captions without entities.
+        album_kwargs["formatting_entities"] = safe_entity_rows
+
     msgs = await formatfallback.with_formatting_fallback(
         lambda **kw: uploads.send_file(client, channel, files, **kw),
-        album_kwargs, first_text, safe_first_ents, source_id,
+        album_kwargs, captions[0], safe_entity_rows[0], source_id,
     )
     if not msgs:
         raise RuntimeError("Album upload returned no messages")
-    first_msg = msgs[0] if isinstance(msgs, (list, tuple)) else msgs
-    state["album_id"] = first_msg.id
+    message_list = list(msgs) if isinstance(msgs, (list, tuple)) else [msgs]
+    if len(message_list) != len(files):
+        raise RuntimeError(
+            f"Album upload returned {len(message_list)} message(s) for {len(files)} media item(s)"
+        )
+    message_ids = [int(message.id) for message in message_list]
+    state["album_id"] = message_ids[0]
+    state["album_message_ids"] = message_ids
     progress.save_state(state["src"], state)
-    return state["album_id"]
+    return message_ids if return_all else message_ids[0]
 
 
 async def _send_individual_media(client, channel, chunks, media, reply_to, state,
@@ -267,7 +294,16 @@ async def _send_single_media(client, channel, chunks, media, reply_to, state, so
 
 
 async def _do_send(client, channel, chunks, media, reply_to, forward_source,
-                   state, annotation, source_id=None):
+                   state, annotation, source_id=None, data=None):
+    if data and data.get("_inferred_album"):
+        return await _send_album(
+            client, channel, chunks, media, reply_to, state, source_id,
+            force_document=all(kind == "document" for _path, kind in media),
+            captions=data.get("_album_captions"),
+            caption_entities=data.get("_album_caption_entities"),
+            return_all=True,
+        )
+
     forwarded_id = await _send_native_forward(
         client, channel, forward_source, reply_to, state, annotation, source_id
     )
@@ -296,7 +332,7 @@ async def send_one(client, channel, data, chunks, reply_to, state, annotation, s
             return await _do_send(
                 client, channel, chunks, data["media"], reply_to,
                 data["forward_source"], state, annotation,
-                source_id,
+                source_id, data,
             )
         except FloodWaitError as fw:
             floods += 1
