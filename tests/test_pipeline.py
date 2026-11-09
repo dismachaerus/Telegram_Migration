@@ -610,6 +610,29 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("album 320–329", output)
         self.assertIn("sent=12", output)
 
+    def test_dry_run_counts_inferred_album_members_only_once(self):
+        records = [fakes.message(1, fakes.text("before"), sender="Alice", minute=1)]
+        for source_id in (2, 3):
+            relative = f"files/document-{source_id}.png"
+            fakes.write_file(self.folder.name, relative)
+            attachment = (
+                '<div class="media_wrap clearfix">'
+                f'<a class="media clearfix pull_left block_link media_file" href="{relative}">'
+                '</a></div>'
+            )
+            records.append(
+                fakes.message(source_id, attachment, sender="", classes="joined", minute=2)
+            )
+        records.append(fakes.message(4, fakes.text("after"), sender="Alice", minute=3))
+        fakes.write_export(self.folder.name, records)
+
+        client, output, _ = self.run_once(dry_run=True)
+
+        self.assertEqual(client.kinds("send_message"), [])
+        self.assertEqual(client.kinds("send_file"), [])
+        self.assertEqual(output.count("[dry] album ids=2,3"), 1)
+        self.assertIn("sent=4", output)
+
     def test_inferred_album_rejects_runs_longer_than_ten_items(self):
         records = [fakes.message(1, fakes.text("sender"), sender="Alice", minute=1)]
         for source_id in range(2, 14):
