@@ -677,6 +677,55 @@ class AsyncSendTests(unittest.TestCase):
                 self.assertEqual(ents[1], [])
         asyncio.run(scenario())
 
+    def test_inferred_album_splits_long_captions_and_resumes_overflow(self):
+        async def scenario():
+            with tempfile.TemporaryDirectory() as temp:
+                album_calls = []
+                tail_calls = []
+                fail_tail_once = [True]
+
+                async def send_file(channel, files, **kwargs):
+                    album_calls.append((files, kwargs))
+                    return [SimpleNamespace(id=501), SimpleNamespace(id=502)]
+
+                async def send_message(channel, text, **kwargs):
+                    tail_calls.append((text, kwargs))
+                    if fail_tail_once[0]:
+                        fail_tail_once[0] = False
+                        raise RuntimeError("temporary tail failure")
+                    return SimpleNamespace(id=601)
+
+                client = SimpleNamespace(send_file=send_file, send_message=send_message)
+                state = {"src": "77"}
+                data = {
+                    "msg_id": "77",
+                    "_inferred_album": True,
+                    "_album_captions": ["H" * 1100, "short caption"],
+                    "_album_caption_entities": [[], []],
+                }
+                media = [("photos/a.jpg", "photo"), ("photos/b.jpg", "photo")]
+                with patch.object(config.get_settings(), "partial_file",
+                                  str(Path(temp) / "partial.jsonl")):
+                    with self.assertRaisesRegex(RuntimeError, "temporary tail failure"):
+                        await sending._do_send(
+                            client, "channel", [("", [])], media, None, None,
+                            state, None, "77", data,
+                        )
+                    self.assertEqual(len(album_calls), 1)
+                    self.assertLessEqual(len(album_calls[0][1]["caption"][0]), 1024)
+                    self.assertEqual(state["album_caption_tail_counts"], [1, 0])
+
+                    result = await sending._do_send(
+                        client, "channel", [("", [])], media, None, None,
+                        state, None, "77", data,
+                    )
+                self.assertEqual(result, [501, 502])
+                self.assertEqual(len(album_calls), 1)
+                self.assertEqual(len(tail_calls), 2)
+                self.assertEqual(tail_calls[0][0], "H" * 76)
+                self.assertEqual(tail_calls[1][0], "H" * 76)
+        asyncio.run(scenario())
+
     def test_video_without_audio_probe_result_is_not_forced_to_silent_video(self):
         async def scenario():
             calls = []
