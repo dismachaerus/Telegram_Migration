@@ -643,13 +643,13 @@ class PipelineTests(unittest.TestCase):
         ]
         expected_files = []
         for source_id in range(320, 330):
-            relative = f"files/document-{source_id}.png"
+            relative = f"files/document-{source_id}.pdf"
             fakes.write_file(self.folder.name, relative)
             expected_files.append(os.path.join(self.folder.name, relative))
             attachment = (
                 '<div class="media_wrap clearfix">'
                 f'<a class="media clearfix pull_left block_link media_file" href="{relative}">'
-                f'<div class="title bold">document-{source_id}.png</div>'
+                f'<div class="title bold">document-{source_id}.pdf</div>'
                 '</a></div>'
             )
             records.append(
