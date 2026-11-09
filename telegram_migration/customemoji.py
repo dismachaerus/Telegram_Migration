@@ -415,6 +415,18 @@ async def prepare_inline_custom_emojis(client, files, *, dry_run=False):
     return reference_ids
 
 
+async def prepare_inline_custom_emojis_for_run(client, files, *, dry_run=False):
+    """Prepare custom emoji IDs safely; leave fallback glyphs when preparation fails."""
+    try:
+        return await prepare_inline_custom_emojis(client, files, dry_run=dry_run)
+    except Exception as exc:
+        print(
+            "  warning: could not prepare inline custom emojis "
+            f"({type(exc).__name__}: {exc}); fallback emoji text will be preserved"
+        )
+        return {}
+
+
 def apply_custom_emoji_entities(data, document_ids):
     """Attach MessageEntityCustomEmoji to fallback glyphs at their original offsets."""
     if not data or not document_ids:
