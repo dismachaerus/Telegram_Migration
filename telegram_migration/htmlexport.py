@@ -352,3 +352,130 @@ def extract_message_data(msg_div):
         "media_note": note,
         "reactions": _extract_html_reactions(msg_div),
     }
+
+
+
+def _album_candidate(data, effective_sender):
+    """Whether one joined HTML record is eligible for conservative album inference."""
+    if not data.get("joined"):
+        return False
+    if len(data.get("media") or []) != 1:
+        return False
+    if data.get("reply_src_id") or data.get("reactions") or data.get("media_note"):
+        return False
+    if data.get("forward_source") and data["forward_source"][0] != "__text__":
+        # A native-forward source ID identifies a real source message; leave it
+        # to the ordinary per-message forwarding path.
+        return False
+    path, kind = data["media"][0]
+    if kind not in ("photo", "video", "document"):
+        return False
+    if not effective_sender and not data.get("forward_name"):
+        return False
+    if data.get("is_forwarded") and not data.get("forward_name"):
+        return False
+    return bool(data.get("timestamp"))
+
+
+def _album_records_compatible(left, right):
+    """Check that two adjacent records share the same plausible media-group context."""
+    if not right.get("joined"):
+        return False
+    if left.get("_album_sender") != right.get("_album_sender"):
+        return False
+    if left.get("is_forwarded") != right.get("is_forwarded"):
+        return False
+    if left.get("forward_name", "") != right.get("forward_name", ""):
+        return False
+    if left.get("reply_src_id") or right.get("reply_src_id"):
+        return False
+
+    left_time, right_time = left.get("timestamp"), right.get("timestamp")
+    if left_time is None or right_time is None:
+        return False
+    gap = (right_time - left_time).total_seconds()
+    if gap < 0 or gap > 2:
+        return False
+
+    left_forward_time = left.get("forward_timestamp")
+    right_forward_time = right.get("forward_timestamp")
+    if (left_forward_time is None) != (right_forward_time is None):
+        return False
+    if left_forward_time is not None:
+        forward_gap = (right_forward_time - left_forward_time).total_seconds()
+        if forward_gap < 0 or forward_gap > 2:
+            return False
+
+    from . import exportmedia
+    return exportmedia.album_compatible(left["media"] + right["media"])
+
+
+def infer_media_groups(files):
+    """Infer likely media groups from consecutive joined records in Desktop HTML.
+
+    Desktop HTML does not retain Telegram's grouped_id, so this is deliberately
+    conservative. Every inferred member must be a joined, single-media record;
+    adjacent records must have the same sender/forward context, compatible media,
+    no reply edge, and timestamps no more than two seconds apart. Groups larger
+    than Telegram's ten-item limit are rejected as a whole rather than split.
+    """
+    from lxml import etree
+
+    groups = {}
+    for page in files:
+        pending = []
+        overflow = False
+        last_sender = ""
+
+        def flush():
+            nonlocal pending, overflow
+            if not overflow and 2 <= len(pending) <= 10:
+                groups[pending[0]["msg_id"]] = pending[:]
+            pending = []
+            overflow = False
+
+        with open(page, "rb") as export_file:
+            context = etree.iterparse(
+                export_file, events=("end",), tag="div", html=True, encoding="utf-8"
+            )
+            for _event, elem in context:
+                if "message" not in css_classes(elem):
+                    continue
+
+                classes = css_classes(elem)
+                if "service" in classes:
+                    flush()
+                    continue
+
+                data = extract_message_data(elem)
+                if data is None:
+                    flush()
+                    continue
+
+                if data.get("sender"):
+                    last_sender = data["sender"]
+                effective_sender = data.get("sender") or (
+                    last_sender if data.get("joined") else ""
+                )
+
+                if not _album_candidate(data, effective_sender):
+                    flush()
+                else:
+                    data["_album_sender"] = effective_sender or data.get("forward_name", "")
+                    if not pending:
+                        pending = [data]
+                    elif _album_records_compatible(pending[-1], data):
+                        pending.append(data)
+                        if len(pending) > 10:
+                            overflow = True
+                    else:
+                        flush()
+                        pending = [data]
+
+                elem.clear()
+                while elem.getprevious() is not None:
+                    del elem.getparent()[0]
+
+        flush()
+
+    return groups
