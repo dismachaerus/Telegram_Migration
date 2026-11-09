@@ -174,8 +174,9 @@ def _mime_and_attributes(asset):
             stickerset=tl.InputStickerSetEmpty(),
         ),
     ]
-    if kind == "sticker_static" and ext == ".webp":
-        return "image/webp", attributes, False
+    if kind == "sticker_static" and ext in (".webp", ".png"):
+        mime_type = "image/webp" if ext == ".webp" else "image/png"
+        return mime_type, attributes, False
     if kind == "sticker_animated" and ext == ".tgs":
         return "application/x-tgsticker", attributes, False
     if kind == "sticker_video" and ext == ".webm":
