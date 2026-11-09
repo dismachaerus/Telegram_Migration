@@ -2,6 +2,9 @@
 
 from telethon.tl import types as tl
 
+from . import exportmedia
+from .htmlutil import css_classes
+
 from .textutil import (
     compose_message,
     compose_message_header,
