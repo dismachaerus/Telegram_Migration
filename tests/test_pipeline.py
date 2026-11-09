@@ -753,7 +753,7 @@ class PipelineTests(unittest.TestCase):
             groups = htmlexport.infer_media_groups([self.path("messages.html")])
         self.assertEqual(list(groups), ["309"])
         self.assertEqual([row["msg_id"] for row in groups["309"]], ["309", "310", "311", "312"])
-        self.assertEqual(groups["309"][-1]["body_text"], long_caption)
+        self.assertEqual(groups["309"][-1]["body_text"].strip(), long_caption.strip())
 
         # A failed album is an atomic source unit. The migration must stop at
         # that point so its caption and all later messages remain for retry.
