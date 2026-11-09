@@ -201,7 +201,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             return
 
         has_content = bool(
-            data["body_text"].strip() or data["media"] or data.get("is_forwarded")
+            data["body_text"].strip() or data["media"] or data.get("inline_stickers") or data.get("is_forwarded")
         )
         if not has_content:
             data["body_text"] = (
@@ -288,7 +288,10 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             text, entities = strip_with_entities(text, entities)
             preview_text, preview_entities = text, entities
 
-        oversize = bigfiles.find_oversize_media(data["media"])
+        oversize_media = list(data["media"]) + [
+            (item["path"], item["kind"]) for item in data.get("inline_stickers", [])
+        ]
+        oversize = bigfiles.find_oversize_media(oversize_media)
         if oversize:
             if config.settings.dry_run:
                 bigfiles.print_oversize_dry_run(source_id, data, oversize)
@@ -303,13 +306,18 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         annotation = [(annotation_text, annotation_entities)] if annotation_text.strip() else None
 
         kinds = [kind for _path, kind in data["media"]]
+        inline_sticker_count = len(data.get("inline_stickers") or [])
         captionable = bool(kinds) and kinds[0] not in NO_CAPTION_KINDS
-        has_sticker = any(kind in STICKER_KINDS for kind in kinds)
+        has_sticker = (
+            any(kind in STICKER_KINDS for kind in kinds) or inline_sticker_count > 0
+        )
         first_limit = config.settings.text_limit if has_sticker else (
             config.settings.caption_limit if (captionable or len(kinds) > 1)
             else config.settings.text_limit
         )
         kind_summary = ",".join(kinds) or "text"
+        if inline_sticker_count:
+            kind_summary += f"+{inline_sticker_count} inline sticker(s)"
         when = timestamp.strftime("%Y-%m-%d %H:%M") if timestamp else "?"
 
         if config.settings.dry_run:
