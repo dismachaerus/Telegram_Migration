@@ -342,6 +342,11 @@ async def _prepare_pack(client, assets, pack_index, username, cache, result_ids)
                                 cache[existing_asset["key"]] = {
                                     "id": document_id, "pack": short_name
                                 }
+                        if asset["key"] not in result_ids:
+                            # Another process created the named pack first,
+                            # but did not include this exact file. Queue it for
+                            # the normal add-to-existing-set path below.
+                            missing.insert(0, asset)
                     else:
                         print(f"  warning: could not reopen custom-emoji pack {short_name}")
                 else:
