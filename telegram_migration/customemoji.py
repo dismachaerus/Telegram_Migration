@@ -10,6 +10,7 @@ entities at the original UTF-16 offsets.
 from __future__ import annotations
 
 import hashlib
+from functools import lru_cache
 import json
 import os
 import re
@@ -28,14 +29,29 @@ _CACHE_NAME = "migration_custom_emoji_ids.json"
 _PACK_SIZE = 200
 
 
-def _asset_key(path: str, kind: str, alt: str) -> str:
-    """Stable content key: equal sticker bytes, kind and fallback emoji reuse one ID."""
+@lru_cache(maxsize=4096)
+def _asset_key_cached(path: str, kind: str, alt: str, mtime_ns: int, size: int) -> str:
+    """Hash a file once per unchanged path/version during one migration run."""
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     identity = "\0".join((digest.hexdigest(), kind, os.path.splitext(path)[1].casefold(), alt))
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def _asset_key(path: str, kind: str, alt: str) -> str:
+    stat = os.stat(path)
+    return _asset_key_cached(
+        os.path.abspath(path), kind, alt,
+        getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000)),
+        stat.st_size,
+    )
+
+
+def reference_key(path: str, kind: str, alt: str) -> str:
+    """Fast per-export lookup key used after the content hashes are prepared."""
+    return "\0".join((os.path.normcase(os.path.abspath(path)), kind, alt))
 
 
 def collect_inline_custom_emojis(files):
@@ -311,10 +327,16 @@ async def _prepare_pack(client, assets, pack_index, username, cache, result_ids)
                     sticker_set = await _get_sticker_set(client, short_name)
                     if sticker_set is not None:
                         names = _document_names(sticker_set)
-                        document = names.get((asset["filename"], asset["alt"]))
-                        if document is not None:
-                            result_ids[asset["key"]] = int(document.id)
-                            cache[asset["key"]] = {"id": int(document.id), "pack": short_name}
+                        for existing_asset in assets:
+                            existing = names.get((
+                                existing_asset["filename"], existing_asset["alt"]
+                            ))
+                            if existing is not None:
+                                document_id = int(existing.id)
+                                result_ids[existing_asset["key"]] = document_id
+                                cache[existing_asset["key"]] = {
+                                    "id": document_id, "pack": short_name
+                                }
                     else:
                         print(f"  warning: could not reopen custom-emoji pack {short_name}")
                 else:
@@ -372,6 +394,10 @@ async def prepare_inline_custom_emojis(client, files, *, dry_run=False):
         await _prepare_pack(client, pack_assets, index + 1, username, cache, result_ids)
 
     _save_cache(cache)
+    reference_ids = {
+        reference_key(asset["path"], asset["kind"], asset["alt"]): result_ids[asset["key"]]
+        for asset in assets if asset["key"] in result_ids
+    }
     print(
         f"  Prepared {len(result_ids)}/{len(assets)} inline custom emoji assets "
         f"for {references} references in {pack_count} sticker set(s)."
@@ -381,7 +407,7 @@ async def prepare_inline_custom_emojis(client, files, *, dry_run=False):
             "  warning: some custom emojis could not be registered; "
             "their original fallback glyphs will be sent as plain emoji."
         )
-    return result_ids
+    return reference_ids
 
 
 def apply_custom_emoji_entities(data, document_ids):
@@ -395,8 +421,11 @@ def apply_custom_emoji_entities(data, document_ids):
     entities = list(data.get("body_entities") or [])
     added = 0
     for sticker in data.get("inline_stickers") or []:
-        key = sticker.get("key")
-        document_id = document_ids.get(key) if key else None
+        try:
+            key = reference_key(sticker["path"], sticker["kind"], sticker["alt"])
+        except (OSError, KeyError):
+            continue
+        document_id = document_ids.get(key)
         if document_id is None:
             # Compute the content key when called with freshly extracted data.
             try:
