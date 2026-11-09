@@ -364,10 +364,10 @@ def extract_message_data(msg_div):
 
 
 
-def infer_media_groups(files):
+def infer_media_groups(files, inline_emoji_ids=None):
     """Compatibility entry point for the album inference helper."""
     from .album import infer_media_groups as infer
-    return infer(files)
+    return infer(files, inline_emoji_ids)
 
 
 def inherit_forwarded_sender(data, context):
