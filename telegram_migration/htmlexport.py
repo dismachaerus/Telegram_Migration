@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 from . import config, exportmedia
 from .htmlutil import css_classes, find_first, inner_text, text_without
-from .richtext import parse_rich_text
+from .richtext import parse_rich_text, parse_rich_text_with_stickers
 from .textutil import sanitize_text
 from .constants import HTML_FILE_PATTERN
 
@@ -319,7 +319,9 @@ def extract_message_data(msg_div):
     reply_src_id = _extract_reply_source_id(msg_div)
 
     text_div = find_first(msg_div, "text")
-    body_text, body_entities = parse_rich_text(text_div)
+    body_text, body_entities, inline_stickers, missing_stickers = (
+        parse_rich_text_with_stickers(text_div)
+    )
 
     media = exportmedia.find_media(msg_div)
     missing_media = exportmedia.find_missing_media(msg_div)
@@ -329,6 +331,12 @@ def extract_message_data(msg_div):
         note = "\n".join(f"[Media not found: {reference}]" for reference in missing_media)
     else:
         note = "" if media else exportmedia.media_note(msg_div)
+    if missing_stickers:
+        sticker_note = "\n".join(
+            f"[Sticker file not found: {reference}]"
+            for reference in missing_stickers
+        )
+        note = (note + "\n" if note else "") + sticker_note
     if note:
         body_text = (body_text + "\n\n" if body_text else "") + note
 
@@ -349,6 +357,7 @@ def extract_message_data(msg_div):
         "body_text": body_text,
         "body_entities": body_entities,
         "media": media,
+        "inline_stickers": inline_stickers,
         "media_note": note,
         "reactions": _extract_html_reactions(msg_div),
     }
