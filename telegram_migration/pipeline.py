@@ -213,6 +213,17 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
 
         inferred_group = ctx.get("inferred_groups", {}).get(source_id)
         if inferred_group and len(inferred_group) >= 2:
+            member_ids = [str(member["msg_id"]) for member in inferred_group]
+            already_mapped = [
+                member_id for member_id in member_ids
+                if member_id in id_map or member_id in ctx["manual_done"]
+            ]
+            if already_mapped and len(already_mapped) != len(member_ids):
+                # A previous run may have sent some members individually.
+                # Never resend those records as part of a newly inferred album.
+                inferred_group = None
+
+        if inferred_group and len(inferred_group) >= 2:
             captions = []
             caption_entities = []
             all_media = []
