@@ -407,7 +407,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
                     pending_replies.pop(member_id, None)
             else:
                 _print_dry_run(
-                source_id, data, preview_text, preview_entities, first_limit, reply_to,
+                    source_id, data, preview_text, preview_entities, first_limit, reply_to,
                     kind_summary, stats, pending_replies,
                 )
             mark_completed = True
