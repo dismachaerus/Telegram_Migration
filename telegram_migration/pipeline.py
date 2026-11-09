@@ -134,6 +134,9 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         raw_elem_id = elem.get("id", "")
         if raw_elem_id.startswith("message") and raw_elem_id[7:].isdigit():
             source_id = raw_elem_id[7:]
+        if source_id and source_id in ctx["processed_source_ids"]:
+            mark_completed = True
+            return
         classes = css_classes(elem)
         if "service" in classes:
             # Telegram Desktop uses negative-ID service blocks as date dividers
@@ -190,7 +193,8 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             return
 
         batch_cost = len(data.get("_album_source_ids", [])) or 1
-        if stats["sent"] + stats["failed"] + batch_cost > config.settings.batch_limit:
+        batch_progress = stats["sent"] + stats["failed"]
+        if batch_progress and batch_progress + batch_cost > config.settings.batch_limit:
             print(f"Batch limit reached ({config.settings.batch_limit}). Restart to continue.")
             ctx["stop"] = True
             return
