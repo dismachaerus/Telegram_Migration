@@ -419,7 +419,7 @@ async def _run_migration():
         return True
 
     inline_emoji_ids = await customemoji.prepare_inline_custom_emojis_for_run(
-        client, files, dry_run=config.settings.dry_run
+        client, files, peer=channel, dry_run=config.settings.dry_run
     )
 
     stats = {"sent": 0, "skipped": 0, "failed": 0, "forwarded": 0, "reaction_notes": 0}
