@@ -406,7 +406,6 @@ def _album_records_compatible(left, right):
         if forward_gap < 0 or forward_gap > 2:
             return False
 
-    from . import exportmedia
     return exportmedia.album_compatible(left["media"] + right["media"])
 
 
