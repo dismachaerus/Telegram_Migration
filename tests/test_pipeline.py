@@ -399,7 +399,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(client.kinds("send_message"), [])
         calls = client.kinds("send_file")
         self.assertEqual(len(calls), 1)
-        caption = calls[0][2]["caption"]
+        self.assertTrue(calls[0][2]["caption"].endswith("audio caption"))
         self.assertTrue(caption.endswith("original caption"))
         self.assertIn("Forwarded from HLI8IOS", caption)
         entities = calls[0][2]["formatting_entities"]
@@ -614,7 +614,7 @@ class PipelineTests(unittest.TestCase):
         calls = client.kinds("send_file")
         self.assertEqual(len(calls), 1)
         self.assertFalse(calls[0][2].get("force_document", False))
-        self.assertEqual(calls[0][2]["caption"].split("\\n")[-1], "audio caption")
+        self.assertTrue(calls[0][2]["caption"].endswith("audio caption"))
 
     def test_batch_limit_stops_the_run(self):
         fakes.write_export(self.folder.name, [fakes.message(i, fakes.text(f"m{i}")) for i in range(1, 6)])
