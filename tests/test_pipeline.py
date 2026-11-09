@@ -667,7 +667,7 @@ class PipelineTests(unittest.TestCase):
             '</div>'
         )
         records = [
-            fakes.message(701, preceding_markup, sender="Alice", minute=1)
+            fakes.message(701, preceding_markup, sender="Alice", minute=2)
         ]
         expected_files = []
         for source_id in range(702, 712):
