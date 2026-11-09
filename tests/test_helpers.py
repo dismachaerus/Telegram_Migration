@@ -277,7 +277,10 @@ class InlineCustomEmojiTests(unittest.TestCase):
             )
             with config.use_settings(config.get_settings().replace(base_dir=temp, max_upload_mb=0.000001)):
                 mapping = asyncio.run(
-                    customemoji.prepare_inline_custom_emojis(NoUploadClient(), [str(page)])
+                    customemoji.prepare_inline_custom_emojis(
+                        NoUploadClient(), [str(page)],
+                        peer=tl.InputPeerChannel(channel_id=123, access_hash=456),
+                    )
                 )
             self.assertEqual(mapping, {})
 
@@ -322,11 +325,16 @@ class InlineCustomEmojiTests(unittest.TestCase):
                 self.documents = {}
                 self.pack = None
                 self.uploads = []
+                self.upload_peers = []
                 self.creates = 0
                 self.adds = 0
 
             async def get_me(self):
                 return SimpleNamespace(username=self.username)
+
+            async def get_input_entity(self, peer):
+                self.resolved_peer = peer
+                return peer
 
             async def upload_file(self, path, *, file_name=None):
                 self.uploads.append((path, file_name))
@@ -339,6 +347,7 @@ class InlineCustomEmojiTests(unittest.TestCase):
                         raise RuntimeError("STICKERSET_INVALID")
                     return self.pack
                 if name == "UploadMediaRequest":
+                    self.upload_peers.append(request.peer)
                     uploaded = request.media.file
                     self.next_document_id += 1
                     document = SimpleNamespace(
@@ -384,11 +393,12 @@ class InlineCustomEmojiTests(unittest.TestCase):
             page = Path(temp) / "messages.html"
             page.write_text("<html><body>" + html + "</body></html>", encoding="utf-8")
             client = FakeStickerClient()
+            upload_peer = tl.InputPeerChannel(channel_id=123, access_hash=456)
 
             with patch.object(config.get_settings(), "base_dir", temp):
                 assets, references = customemoji.collect_inline_custom_emojis([str(page)])
                 self.assertEqual((references, len(assets)), (3, 2))
-                mapping = asyncio.run(customemoji.prepare_inline_custom_emojis(client, [str(page)]))
+                mapping = asyncio.run(customemoji.prepare_inline_custom_emojis(client, [str(page)], peer=upload_peer))
                 self.assertEqual(len(mapping), 2)
                 first_id = mapping[customemoji.reference_key(
                     str(webp), "sticker_static", "🌸"
@@ -398,9 +408,10 @@ class InlineCustomEmojiTests(unittest.TestCase):
                 )]
                 self.assertNotEqual(first_id, second_id)
                 self.assertEqual((client.creates, client.adds, len(client.uploads)), (1, 1, 2))
+                self.assertEqual(client.upload_peers, [upload_peer, upload_peer])
 
                 # A second run finds the same bot-owned pack and reuses document IDs.
-                again = asyncio.run(customemoji.prepare_inline_custom_emojis(client, [str(page)]))
+                again = asyncio.run(customemoji.prepare_inline_custom_emojis(client, [str(page)], peer=upload_peer))
                 self.assertEqual(again, mapping)
                 self.assertEqual((client.creates, client.adds, len(client.uploads)), (1, 1, 2))
 
