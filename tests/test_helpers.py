@@ -19,7 +19,7 @@ from lxml import etree
 from telethon.tl import types as tl
 
 from telegram_migration import (
-    bigfiles, config, exportmedia, formatfallback, htmlexport, mediatools, progress,
+    bigfiles, config, customemoji, exportmedia, formatfallback, htmlexport, mediatools, progress,
     reaction_archive, richtext, sending, textutil, uploads,
 )
 
@@ -163,6 +163,188 @@ class TextAndEntityTests(unittest.TestCase):
 
     def test_parse_export_date_returns_none_for_invalid_input(self):
         self.assertIsNone(htmlexport.parse_export_date("not a date"))
+
+
+    def test_split_keeps_a_custom_emoji_entity_whole(self):
+        fallback = "👩‍💻"
+        text = "abc" + fallback + "xyz"
+        entity = tl.MessageEntityCustomEmoji(
+            offset=textutil.u16len("abc"),
+            length=textutil.u16len(fallback),
+            document_id=12345,
+        )
+        chunks = textutil.split_with_entities(text, [entity], first_limit=5, limit=5)
+        self.assertEqual("".join(piece for piece, _entities in chunks), text)
+        found = [
+            (piece, item)
+            for piece, entities in chunks
+            for item in entities
+            if isinstance(item, tl.MessageEntityCustomEmoji)
+        ]
+        self.assertEqual(len(found), 1)
+        piece, item = found[0]
+        self.assertEqual(
+            piece.encode("utf-16-le")[2 * item.offset:2 * (item.offset + item.length)].decode("utf-16-le"),
+            fallback,
+        )
+
+    def test_custom_emoji_longer_than_chunk_limit_is_kept_intact(self):
+        fallback = "👩‍💻"
+        entity = tl.MessageEntityCustomEmoji(
+            offset=0, length=textutil.u16len(fallback), document_id=12345
+        )
+        chunks = textutil.split_with_entities(fallback + "x", [entity], first_limit=4, limit=4)
+        self.assertEqual(chunks[0][0], fallback)
+        self.assertEqual(textutil.u16len(chunks[0][0]), 5)
+        self.assertEqual(len(chunks[0][1]), 1)
+
+
+class InlineCustomEmojiTests(unittest.TestCase):
+    def test_rich_text_keeps_fallback_and_extracts_custom_emoji_offset(self):
+        with tempfile.TemporaryDirectory() as temp:
+            sticker = Path(temp) / "stickers" / "flower.webp"
+            sticker.parent.mkdir()
+            sticker.write_bytes(b"static sticker bytes")
+            root = etree.fromstring(
+                '<div class="text">before '
+                '<a href="stickers/flower.webp">🌸</a> after</div>'
+            )
+            with patch.object(config.get_settings(), "base_dir", temp):
+                text, entities, stickers, missing = richtext.parse_rich_text_with_stickers(root)
+
+            self.assertEqual(text, "before 🌸 after")
+            self.assertEqual(entities, [])
+            self.assertEqual(missing, [])
+            self.assertEqual(len(stickers), 1)
+            self.assertEqual(stickers[0]["alt"], "🌸")
+            self.assertEqual(stickers[0]["offset"], textutil.u16len("before "))
+            self.assertEqual(stickers[0]["length"], textutil.u16len("🌸"))
+
+    def test_missing_inline_sticker_keeps_fallback_and_reports_reference(self):
+        root = etree.fromstring(
+            '<div class="text">before <a href="stickers/missing.tgs">🌸</a> after</div>'
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(config.get_settings(), "base_dir", temp):
+                text, _entities, stickers, missing = richtext.parse_rich_text_with_stickers(root)
+        self.assertEqual(text, "before 🌸 after")
+        self.assertEqual(stickers, [])
+        self.assertEqual(missing, ["stickers/missing.tgs"])
+
+    def test_custom_emoji_entity_uses_utf16_offset_and_original_document_id(self):
+        with tempfile.TemporaryDirectory() as temp:
+            sticker = Path(temp) / "stickers" / "developer.webp"
+            sticker.parent.mkdir()
+            sticker.write_bytes(b"static sticker bytes")
+            record = {
+                "path": str(sticker),
+                "kind": "sticker_static",
+                "alt": "👩‍💻",
+                "offset": textutil.u16len("A "),
+                "length": textutil.u16len("👩‍💻"),
+            }
+            data = {
+                "body_text": "A 👩‍💻 B",
+                "body_entities": [],
+                "inline_stickers": [record],
+            }
+            key = customemoji.reference_key(record["path"], record["kind"], record["alt"])
+            added = customemoji.apply_custom_emoji_entities(data, {key: 987654321})
+            self.assertEqual(added, 1)
+            entity = data["body_entities"][0]
+            self.assertIsInstance(entity, tl.MessageEntityCustomEmoji)
+            self.assertEqual((entity.offset, entity.length, entity.document_id),
+                             (2, 5, 987654321))
+
+    def test_inline_asset_collection_deduplicates_references_and_prepares_reusable_pack(self):
+        class FakeStickerClient:
+            def __init__(self):
+                self.username = "archive_migration_bot"
+                self.next_document_id = 7000
+                self.documents = {}
+                self.pack = None
+                self.uploads = []
+                self.creates = 0
+                self.adds = 0
+
+            async def get_me(self):
+                return SimpleNamespace(username=self.username)
+
+            async def upload_file(self, path, *, file_name=None):
+                self.uploads.append((path, file_name))
+                return SimpleNamespace(path=path, file_name=file_name)
+
+            async def __call__(self, request):
+                name = type(request).__name__
+                if name == "GetStickerSetRequest":
+                    if self.pack is None:
+                        raise RuntimeError("STICKERSET_INVALID")
+                    return self.pack
+                if name == "UploadMediaRequest":
+                    uploaded = request.media.file
+                    self.next_document_id += 1
+                    document = SimpleNamespace(
+                        id=self.next_document_id,
+                        access_hash=self.next_document_id * 10,
+                        file_reference=b"file-reference",
+                        attributes=request.media.attributes,
+                    )
+                    self.documents[uploaded.file_name] = document
+                    return SimpleNamespace(document=document)
+                if name == "CreateStickerSetRequest":
+                    self.creates += 1
+                    self.pack_name = request.short_name
+                    first = request.stickers[0].document
+                    document = next(
+                        item for item in self.documents.values() if item.id == first.id
+                    )
+                    self.pack = SimpleNamespace(documents=[document])
+                    return self.pack
+                if name == "AddStickerToSetRequest":
+                    self.adds += 1
+                    added = request.sticker.document
+                    document = next(
+                        item for item in self.documents.values() if item.id == added.id
+                    )
+                    self.pack.documents.append(document)
+                    return self.pack
+                raise AssertionError(f"Unexpected MTProto request: {name}")
+
+        with tempfile.TemporaryDirectory() as temp:
+            webp = Path(temp) / "stickers" / "flower.webp"
+            tgs = Path(temp) / "stickers" / "star.tgs"
+            webp.parent.mkdir()
+            webp.write_bytes(b"WEBP sticker")
+            tgs.write_bytes(b"TGS sticker")
+            html = (
+                '<div class="message default clearfix" id="message1"><div class="body">'
+                '<div class="text">A <a href="stickers/flower.webp">🌸</a> '
+                'B <a href="stickers/star.tgs">⭐</a> '
+                'C <a href="stickers/flower.webp">🌸</a></div>'
+                '</div></div>'
+            )
+            page = Path(temp) / "messages.html"
+            page.write_text("<html><body>" + html + "</body></html>", encoding="utf-8")
+            client = FakeStickerClient()
+
+            with patch.object(config.get_settings(), "base_dir", temp):
+                assets, references = customemoji.collect_inline_custom_emojis([str(page)])
+                self.assertEqual((references, len(assets)), (3, 2))
+                mapping = asyncio.run(customemoji.prepare_inline_custom_emojis(client, [str(page)]))
+                self.assertEqual(len(mapping), 2)
+                first_id = mapping[customemoji.reference_key(
+                    str(webp), "sticker_static", "🌸"
+                )]
+                second_id = mapping[customemoji.reference_key(
+                    str(tgs), "sticker_animated", "⭐"
+                )]
+                self.assertNotEqual(first_id, second_id)
+                self.assertEqual((client.creates, client.adds, len(client.uploads)), (1, 1, 2))
+
+                # A second run finds the same bot-owned pack and reuses document IDs.
+                again = asyncio.run(customemoji.prepare_inline_custom_emojis(client, [str(page)]))
+                self.assertEqual(again, mapping)
+                self.assertEqual((client.creates, client.adds, len(client.uploads)), (1, 1, 2))
 
 
 class ExportParsingTests(unittest.TestCase):
