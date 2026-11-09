@@ -157,6 +157,8 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
         captions = [parts[0][0] for parts in caption_chunks]
         caption_entities = [parts[0][1] for parts in caption_chunks]
         caption_tails = [parts[1:] for parts in caption_chunks]
+        state["album_caption_tail_counts"] = [len(parts) for parts in caption_tails]
+        progress.save_state(state["src"], state)
 
     safe_entity_rows = [
         clean_invalid_entities(caption, entities)
