@@ -596,6 +596,26 @@ class PipelineTests(unittest.TestCase):
         with config.use_settings(self.settings()):
             self.assertEqual(progress.load_id_map(), {"1": 777})
 
+    def test_mp3_with_audio_export_markup_is_sent_as_audio_not_forced_document(self):
+        relative = "files/voice-track.mp3"
+        fakes.write_file(self.folder.name, relative)
+        markup = (
+            '<div class="media_wrap clearfix">'
+            f'<a class="media clearfix pull_left block_link media_audio_file" href="{relative}">'
+            '<div class="title bold">voice-track.mp3</div>'
+            '<div class="status details">00:30</div>'
+            '</a></div>'
+        )
+        fakes.write_export(self.folder.name, [
+            fakes.message(801, fakes.text("audio caption") + markup, sender="Alice")
+        ])
+
+        client, _, _ = self.run_once()
+        calls = client.kinds("send_file")
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(calls[0][2].get("force_document", False))
+        self.assertEqual(calls[0][2]["caption"].split("\\n")[-1], "audio caption")
+
     def test_batch_limit_stops_the_run(self):
         fakes.write_export(self.folder.name, [fakes.message(i, fakes.text(f"m{i}")) for i in range(1, 6)])
         client, output, _ = self.run_once(batch_limit=2)
@@ -635,14 +655,22 @@ class PipelineTests(unittest.TestCase):
         self.assertIs(result, False)
 
 
-    def test_ten_consecutive_joined_documents_are_sent_as_one_album(self):
-        preceding = "photos/before.jpg"
+    def test_ten_joined_file_media_after_standalone_same_type_form_one_album(self):
+        # Synthetic IDs: the leading attachment is a separate non-joined
+        # message, followed by ten compatible joined records. The importer
+        # must not absorb item 701 into the maximum-size album 702–711.
+        preceding = "files/prelude.jpg"
         fakes.write_file(self.folder.name, preceding)
+        preceding_markup = (
+            '<div class="media_wrap clearfix">'
+            f'<a class="media clearfix pull_left block_link media_file" href="{preceding}"></a>'
+            '</div>'
+        )
         records = [
-            fakes.message(319, fakes.photo(preceding), sender="Alice", minute=1)
+            fakes.message(701, preceding_markup, sender="Alice", minute=1)
         ]
         expected_files = []
-        for source_id in range(320, 330):
+        for source_id in range(702, 712):
             relative = f"files/document-{source_id}.pdf"
             fakes.write_file(self.folder.name, relative)
             expected_files.append(os.path.join(self.folder.name, relative))
@@ -655,7 +683,7 @@ class PipelineTests(unittest.TestCase):
             records.append(
                 fakes.message(source_id, attachment, sender="", classes="joined", minute=2)
             )
-        records.append(fakes.message(330, fakes.text("after the album"), sender="Alice", minute=3))
+        records.append(fakes.message(712, fakes.text("after the album"), sender="Alice", minute=3))
         fakes.write_export(self.folder.name, records)
 
         client, output, _ = self.run_once()
@@ -663,6 +691,7 @@ class PipelineTests(unittest.TestCase):
         media_calls = client.kinds("send_file")
         self.assertEqual(len(media_calls), 2)
         self.assertEqual(media_calls[0][1], os.path.join(self.folder.name, preceding))
+        self.assertTrue(media_calls[0][2]["force_document"])
         album_files, album_kwargs = media_calls[1][1], media_calls[1][2]
         self.assertEqual(album_files, expected_files)
         self.assertTrue(album_kwargs["force_document"])
@@ -672,9 +701,9 @@ class PipelineTests(unittest.TestCase):
 
         with config.use_settings(self.settings()):
             mapped = progress.load_id_map()
-        self.assertEqual(set(mapped), {str(i) for i in range(319, 331)})
-        self.assertEqual(len({mapped[str(i)] for i in range(320, 330)}), 10)
-        self.assertIn("album 320–329", output)
+        self.assertEqual(set(mapped), {str(i) for i in range(701, 713)})
+        self.assertEqual(len({mapped[str(i)] for i in range(702, 712)}), 10)
+        self.assertIn("album 702–711", output)
         self.assertIn("sent=12", output)
 
     def test_dry_run_counts_inferred_album_members_only_once(self):
