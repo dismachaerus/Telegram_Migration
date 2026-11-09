@@ -18,8 +18,7 @@ from .constants import NO_CAPTION_KINDS, STICKER_KINDS
 async def process_file(client, channel, path, id_map, partial, pending_replies, stats, ctx,
                       only_pending=False):
     print(("Retrying deferred replies in " if only_pending else "Streaming ") + os.path.basename(path) + " ...")
-    # A new HTML page starts a new export slice. Do not carry a date from the
-    # previous file if this page has no divider or is malformed.
+    # Reset page-scoped export context before parsing this HTML file.
     ctx["current_export_date"] = None
     ctx["last_forward_name"] = ""
     with open(path, "rb") as export_file:
@@ -140,9 +139,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             return
         classes = css_classes(elem)
         if "service" in classes:
-            # Telegram Desktop uses negative-ID service blocks as date dividers
-            # (e.g. message-1). Keep their date for subsequent real service events,
-            # but do not import the divider as a separate message.
+            # Negative-ID date dividers supply the date for later service events.
             date_separator = htmlexport.extract_date_separator(elem)
             if date_separator is not None:
                 ctx["current_export_date"] = date_separator
