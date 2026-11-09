@@ -8,7 +8,7 @@ from lxml import etree
 from telethon import TelegramClient
 from telethon.tl import types as tl
 
-from . import album, bigfiles, cli, config, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
+from . import album, bigfiles, cli, config, customemoji, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
 from .htmlutil import css_classes
 from .textutil import (compose_message, compose_message_header, format_archive_timestamp,
                        split_with_entities, strip_with_entities, u16len)
@@ -164,6 +164,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             data["sender"] = ctx["last_sender"]
 
         htmlexport.inherit_forwarded_sender(data, ctx)
+        customemoji.apply_custom_emoji_entities(data, ctx.get("inline_emoji_ids", {}))
 
         album.prepare_inferred_group(
             data, ctx.get("inferred_groups", {}).get(source_id),
@@ -201,7 +202,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             return
 
         has_content = bool(
-            data["body_text"].strip() or data["media"] or data.get("inline_stickers") or data.get("is_forwarded")
+            data["body_text"].strip() or data["media"] or data.get("is_forwarded")
         )
         if not has_content:
             data["body_text"] = (
@@ -288,10 +289,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             text, entities = strip_with_entities(text, entities)
             preview_text, preview_entities = text, entities
 
-        oversize_media = list(data["media"]) + [
-            (item["path"], item["kind"]) for item in data.get("inline_stickers", [])
-        ]
-        oversize = bigfiles.find_oversize_media(oversize_media)
+        oversize = bigfiles.find_oversize_media(data["media"])
         if oversize:
             if config.settings.dry_run:
                 bigfiles.print_oversize_dry_run(source_id, data, oversize)
@@ -306,18 +304,13 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         annotation = [(annotation_text, annotation_entities)] if annotation_text.strip() else None
 
         kinds = [kind for _path, kind in data["media"]]
-        inline_sticker_count = len(data.get("inline_stickers") or [])
         captionable = bool(kinds) and kinds[0] not in NO_CAPTION_KINDS
-        has_sticker = (
-            any(kind in STICKER_KINDS for kind in kinds) or inline_sticker_count > 0
-        )
+        has_sticker = any(kind in STICKER_KINDS for kind in kinds)
         first_limit = config.settings.text_limit if has_sticker else (
             config.settings.caption_limit if (captionable or len(kinds) > 1)
             else config.settings.text_limit
         )
         kind_summary = ",".join(kinds) or "text"
-        if inline_sticker_count:
-            kind_summary += f"+{inline_sticker_count} inline sticker(s)"
         when = timestamp.strftime("%Y-%m-%d %H:%M") if timestamp else "?"
 
         if config.settings.dry_run:
@@ -430,6 +423,18 @@ async def _run_migration():
         await client.disconnect()
         return True
 
+    inline_emoji_ids = {}
+    if config.settings.dry_run:
+        await customemoji.prepare_inline_custom_emojis(client, files, dry_run=True)
+    else:
+        try:
+            inline_emoji_ids = await customemoji.prepare_inline_custom_emojis(client, files)
+        except Exception as exc:
+            print(
+                "  warning: could not prepare inline custom emojis "
+                f"({type(exc).__name__}: {exc}); fallback emoji text will be preserved"
+            )
+
     stats = {"sent": 0, "skipped": 0, "failed": 0, "forwarded": 0, "reaction_notes": 0}
     ctx = {
         "last_sender": "",
@@ -444,7 +449,8 @@ async def _run_migration():
         "halt": [],
         "oversize_report": [],
         "last_dest_id": None,
-        "inferred_groups": htmlexport.infer_media_groups(files),
+        "inline_emoji_ids": inline_emoji_ids,
+        "inferred_groups": htmlexport.infer_media_groups(files, inline_emoji_ids),
     }
 
     for path in files:
