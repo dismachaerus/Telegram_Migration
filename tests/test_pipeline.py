@@ -399,7 +399,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(client.kinds("send_message"), [])
         calls = client.kinds("send_file")
         self.assertEqual(len(calls), 1)
-        self.assertTrue(calls[0][2]["caption"].endswith("audio caption"))
+        caption = calls[0][2]["caption"]
         self.assertTrue(caption.endswith("original caption"))
         self.assertIn("Forwarded from HLI8IOS", caption)
         entities = calls[0][2]["formatting_entities"]
