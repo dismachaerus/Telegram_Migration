@@ -804,7 +804,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(album_calls), 1)
         sent_files, album_kwargs = album_calls[0][1], album_calls[0][2]
         self.assertEqual(sent_files, files)
-        self.assertFalse(album_kwargs.get("force_document", False))
+        self.assertTrue(album_kwargs.get("force_document", False))
         self.assertEqual(len(album_kwargs["caption"]), 4)
         self.assertTrue(all(len(caption) <= 1024 for caption in album_kwargs["caption"]))
         self.assertIn("message after the album", client.texts()[-1])
