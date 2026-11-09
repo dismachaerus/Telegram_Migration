@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from telegram_migration import bigfiles, config, htmlexport, mediatools, pipeline, progress
+from telegram_migration import bigfiles, config, customemoji, htmlexport, mediatools, pipeline, progress
 from lxml import html
 from telegram_migration.config import Settings
 
@@ -595,6 +595,51 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(client.kinds("send_file"), [])
         with config.use_settings(self.settings()):
             self.assertEqual(progress.load_id_map(), {"1": 777})
+
+    def test_inline_custom_emoji_stays_inside_original_media_caption(self):
+        sticker_rel = "stickers/flower.webp"
+        photo_rel = "photos/post.jpg"
+        fakes.write_file(self.folder.name, sticker_rel)
+        fakes.write_file(self.folder.name, photo_rel)
+        inner = (
+            fakes.text(
+                'caption before <a href="stickers/flower.webp">🌸</a> after'
+            )
+            + fakes.photo(photo_rel)
+        )
+        fakes.write_export(self.folder.name, [
+            fakes.message(901, inner, sender="Alice", minute=10)
+        ])
+        sticker_path = os.path.abspath(self.path(sticker_rel))
+
+        async def prepared_ids(_client, _files, *, dry_run=False):
+            self.assertFalse(dry_run)
+            return {
+                customemoji.reference_key(sticker_path, "sticker_static", "🌸"): 987654321
+            }
+
+        with patch.object(
+            pipeline.customemoji, "prepare_inline_custom_emojis", new=prepared_ids
+        ):
+            client, _, _ = self.run_once()
+
+        self.assertEqual(client.kinds("send_message"), [])
+        calls = client.kinds("send_file")
+        self.assertEqual(len(calls), 1)
+        caption = calls[0][2]["caption"]
+        entities = calls[0][2]["formatting_entities"]
+        custom_entities = [
+            entity for entity in entities
+            if isinstance(entity, tl.MessageEntityCustomEmoji)
+        ]
+        self.assertEqual(len(custom_entities), 1)
+        entity = custom_entities[0]
+        self.assertEqual(entity.document_id, 987654321)
+        self.assertEqual(
+            caption.encode("utf-16-le")[2 * entity.offset:2 * (entity.offset + entity.length)].decode("utf-16-le"),
+            "🌸",
+        )
+        self.assertIn("caption before 🌸 after", caption)
 
     def test_mp3_with_audio_export_markup_is_sent_as_audio_not_forced_document(self):
         relative = "files/voice-track.mp3"
