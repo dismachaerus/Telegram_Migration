@@ -817,16 +817,15 @@ class PipelineTests(unittest.TestCase):
         records = []
         expected = []
         for source_id, minute, filename in (
-            (401, 1, "files/first.jpg"),
-            (402, 15, "files/second.png"),
-            (403, 35, "files/third.mkv"),
+            (401, 1, "photos/first.jpg"),
+            (402, 15, "photos/second.png"),
+            (403, 35, "video_files/third.mkv"),
         ):
             fakes.write_file(self.folder.name, filename)
             expected.append(os.path.join(self.folder.name, filename))
             media = (
-                '<div class="media_wrap clearfix">'
-                f'<a class="media clearfix pull_left block_link media_file" href="{filename}">'
-                '</a></div>'
+                fakes.video(filename) if filename.startswith("video_files/")
+                else fakes.photo(filename)
             )
             records.append(fakes.message(
                 source_id, media + fakes.text(caption),
