@@ -158,6 +158,12 @@ def split_with_entities(text, entities, first_limit, limit):
     def unit(i):
         return b[2 * i] | (b[2 * i + 1] << 8)
 
+    custom_emoji_ranges = [
+        (int(entity.offset), int(entity.offset + entity.length))
+        for entity in entities
+        if type(entity).__name__ == "MessageEntityCustomEmoji"
+    ]
+
     chunks, start, lim = [], 0, first_limit
     while start < n:
         hard = min(n, start + lim)
@@ -173,6 +179,19 @@ def split_with_entities(text, entities, first_limit, limit):
             else:
                 if 0xD800 <= unit(hard - 1) <= 0xDBFF:
                     end = nxt = hard - 1
+        # A custom emoji entity must cover its entire fallback emoji in
+        # one Telegram message. Never split its UTF-16 range between chunks.
+        for entity_start, entity_end in custom_emoji_ranges:
+            if entity_start < nxt < entity_end:
+                if entity_start > start:
+                    end = nxt = entity_start
+                else:
+                    # A single emoji may be longer than a deliberately tiny
+                    # configured limit. Keep it intact in one slightly larger
+                    # chunk rather than sending a broken custom-emoji entity.
+                    end = nxt = entity_end
+                break
+
         if nxt <= start:
             # Forward-progress guard: a surrogate pair at the boundary with
             # lim == 1 would otherwise leave nxt == start and loop forever.
