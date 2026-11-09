@@ -197,7 +197,7 @@ def _mime_and_attributes(asset):
     raise ValueError(f"Unsupported inline custom-emoji file: {path}")
 
 
-async def _upload_custom_emoji_document(client, asset):
+async def _upload_custom_emoji_document(client, asset, peer):
     """Upload one sticker document without posting it to the destination channel."""
     mime_type, attributes, nosound_video = _mime_and_attributes(asset)
     uploaded_file = await client.upload_file(
@@ -211,7 +211,7 @@ async def _upload_custom_emoji_document(client, asset):
         nosound_video=nosound_video,
     )
     result = await client(functions.messages.UploadMediaRequest(
-        peer=tl.InputPeerEmpty(),
+        peer=peer,
         media=media,
     ))
     document = getattr(result, "document", None)
@@ -290,7 +290,7 @@ async def _add_sticker_to_set(client, short_name, asset, document):
     ))
 
 
-async def _prepare_pack(client, assets, pack_index, username, cache, result_ids):
+async def _prepare_pack(client, assets, pack_index, username, peer, cache, result_ids):
     keys = [asset["key"] for asset in assets]
     short_name = _pack_short_name(keys, username)
     sticker_set = await _get_sticker_set(client, short_name)
@@ -318,7 +318,7 @@ async def _prepare_pack(client, assets, pack_index, username, cache, result_ids)
         while missing and sticker_set is None:
             asset = missing.pop(0)
             try:
-                document = await _upload_custom_emoji_document(client, asset)
+                document = await _upload_custom_emoji_document(client, asset, peer)
                 sticker_set = await _create_sticker_set(
                     client, short_name,
                     f"Telegram Migration custom emojis {pack_index}",
@@ -362,7 +362,7 @@ async def _prepare_pack(client, assets, pack_index, username, cache, result_ids)
         if asset["key"] in result_ids:
             continue
         try:
-            document = await _upload_custom_emoji_document(client, asset)
+            document = await _upload_custom_emoji_document(client, asset, peer)
             await _add_sticker_to_set(client, short_name, asset, document)
             document_id = int(document.id)
             result_ids[asset["key"]] = document_id
@@ -375,7 +375,7 @@ async def _prepare_pack(client, assets, pack_index, username, cache, result_ids)
             )
 
 
-async def prepare_inline_custom_emojis(client, files, *, dry_run=False):
+async def prepare_inline_custom_emojis(client, files, *, peer, dry_run=False):
     """Create/reuse bot-owned custom emoji sticker sets and return asset-key -> document ID.
 
     Dry runs never create sticker sets or upload files. Unavailable/unsupported
@@ -415,12 +415,15 @@ async def prepare_inline_custom_emojis(client, files, *, dry_run=False):
     if not username:
         raise RuntimeError("The migration bot must have a username to create custom-emoji packs.")
 
+    # Resolve the destination entity once. messages.uploadMedia associates the
+    # uploaded document with this chat before it is added to the bot-owned pack.
+    upload_peer = await client.get_input_entity(peer)
     cache = _load_cache()
     result_ids = {}
     pack_count = (len(assets) + _PACK_SIZE - 1) // _PACK_SIZE
     for index in range(pack_count):
         pack_assets = assets[index * _PACK_SIZE:(index + 1) * _PACK_SIZE]
-        await _prepare_pack(client, pack_assets, index + 1, username, cache, result_ids)
+        await _prepare_pack(client, pack_assets, index + 1, username, upload_peer, cache, result_ids)
 
     _save_cache(cache)
     reference_ids = {
@@ -440,10 +443,10 @@ async def prepare_inline_custom_emojis(client, files, *, dry_run=False):
     return reference_ids
 
 
-async def prepare_inline_custom_emojis_for_run(client, files, *, dry_run=False):
+async def prepare_inline_custom_emojis_for_run(client, files, *, peer, dry_run=False):
     """Prepare custom emoji IDs safely; leave fallback glyphs when preparation fails."""
     try:
-        return await prepare_inline_custom_emojis(client, files, dry_run=dry_run)
+        return await prepare_inline_custom_emojis(client, files, peer=peer, dry_run=dry_run)
     except Exception as exc:
         print(
             "  warning: could not prepare inline custom emojis "
