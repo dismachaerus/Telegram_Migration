@@ -128,6 +128,43 @@ def _classify(rel, wrap_class, full, anchor_classes=(), export_label=""):
     return "document"
 
 
+def is_inline_sticker_reference(reference):
+    """Recognize Telegram Desktop's sticker-file links inside rich-text blocks."""
+    if not _is_local_media_reference(reference):
+        return False
+    relative = unquote(urlsplit(str(reference)).path).replace("\\", "/")
+    parts = relative.split("/")
+    if len(parts) < 2:
+        return False
+    if parts[0].casefold() == "stickers":
+        return True
+    # Video stickers may be represented as ordinary links in the text HTML
+    # rather than as a standalone media wrapper.
+    return (
+        parts[0].casefold() == "video_files"
+        and os.path.basename(relative).casefold().startswith("sticker")
+        and os.path.splitext(relative)[1].casefold() == ".webm"
+    )
+
+
+def resolve_inline_sticker(reference):
+    """Resolve an inline sticker link to its exported file and upload kind.
+
+    A missing file is returned as a reference-only record so rich-text parsing
+    can keep the visible fallback emoji and report the missing asset.
+    """
+    if not is_inline_sticker_reference(reference):
+        return None
+    path = _resolve_media_path(reference)
+    if path is None:
+        label = unquote(str(reference)).replace("\\", "/")
+        while label.startswith("./"):
+            label = label[2:]
+        return {"missing": label}
+    kind = _classify(reference, "media_wrap", path, (), "Sticker")
+    return {"path": path, "kind": kind}
+
+
 def _resolve_media_path(relative):
     """Path of an exported file, or None. The HTML may write file names raw or percent-encoded."""
     for candidate in (relative, unquote(relative)):
