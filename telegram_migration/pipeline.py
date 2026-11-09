@@ -84,6 +84,31 @@ async def _send_migrated_message(client, channel, data, source_id, text, entitie
         client, channel, data, chunks, reply_to, state, annotation, source_id,
     )
     if new_id:
+        if isinstance(new_id, (list, tuple)):
+            source_ids = data.get("_album_source_ids") or [source_id]
+            if len(source_ids) != len(new_id):
+                raise RuntimeError(
+                    f"Inferred album returned {len(new_id)} destination IDs "
+                    f"for {len(source_ids)} source messages"
+                )
+            for member_src, member_dst in zip(source_ids, new_id):
+                id_map[str(member_src)] = int(member_dst)
+                progress.append_id_map(member_src, member_dst)
+            primary_id = int(new_id[0])
+            ctx["last_dest_id"] = primary_id
+            stats["sent"] += len(source_ids)
+            for member_src in source_ids:
+                was_pending = str(member_src) in pending_replies
+                pending_replies.pop(str(member_src), None)
+                if was_pending:
+                    progress.save_pending_replies(pending_replies)
+            print(
+                f"  [{stats['sent']:>4}] inferred album "
+                f"{source_ids[0]}–{source_ids[-1]} → {primary_id} "
+                f"({len(source_ids)} media items)  {when}"
+            )
+            return primary_id
+
         id_map[source_id] = int(new_id)
         ctx["last_dest_id"] = int(new_id)
         progress.append_id_map(source_id, new_id)
@@ -105,6 +130,55 @@ async def _send_migrated_message(client, channel, data, source_id, text, entitie
             "verified": False,
             "status": "send_failed",
         })
+
+
+def _album_caption(record):
+    """Build the original archive header/forward attribution for one album item."""
+    timestamp = record.get("timestamp")
+    if record.get("service_event"):
+        header = compose_message_header(
+            timestamp, "Telegram service event", date_only=True
+        )
+    else:
+        header = compose_message_header(timestamp, record.get("sender", ""))
+    if record.get("is_forwarded"):
+        forward_name = record.get("forward_name") or ""
+        label = f"Forwarded from {forward_name}" if forward_name else "Forwarded message"
+        attribution = label
+        entities = []
+        if forward_name:
+            entities.append(tl.MessageEntityBold(
+                offset=u16len("Forwarded from "),
+                length=u16len(forward_name),
+            ))
+        forward_timestamp = record.get("forward_timestamp")
+        if forward_timestamp is not None:
+            forward_date = format_archive_timestamp(forward_timestamp, date_only=True)
+            if record.get("forward_timestamp_has_time"):
+                time_format = "%H:%M:%S" if record.get("forward_timestamp_has_seconds") else "%H:%M"
+                forward_date += f" · {forward_timestamp:{time_format}}"
+            entities.append(tl.MessageEntityItalic(
+                offset=u16len(attribution + "\n"),
+                length=u16len(forward_date),
+            ))
+            attribution += "\n" + forward_date
+        try:
+            quote = tl.MessageEntityBlockquote(
+                offset=0, length=u16len(attribution), collapsed=False
+            )
+        except TypeError:
+            quote = tl.MessageEntityBlockquote(offset=0, length=u16len(attribution))
+        entities.append(quote)
+        text, ents = compose_message(
+            header, ("", []), (attribution + "\n\n", entities),
+            record.get("body_text", ""), record.get("body_entities", []),
+        )
+    else:
+        text, ents = compose_message(
+            header, ("", []), ("", []),
+            record.get("body_text", ""), record.get("body_entities", []),
+        )
+    return strip_with_entities(text, ents)
 
 
 async def _process_message(elem, client, channel, id_map, partial, pending_replies,
@@ -137,6 +211,30 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             return
         source_id = str(data["msg_id"])
 
+        inferred_group = ctx.get("inferred_groups", {}).get(source_id)
+        if inferred_group and len(inferred_group) >= 2:
+            captions = []
+            caption_entities = []
+            all_media = []
+            member_ids = []
+            for member in inferred_group:
+                member_id = str(member["msg_id"])
+                member_ids.append(member_id)
+                caption_text, caption_ents = _album_caption(member)
+                captions.append(caption_text)
+                caption_entities.append(caption_ents)
+                all_media.extend(member["media"])
+            data["_inferred_album"] = True
+            data["_album_source_ids"] = member_ids
+            data["_album_captions"] = captions
+            data["_album_caption_entities"] = caption_entities
+            data["media"] = all_media
+            data["body_text"] = ""
+            data["body_entities"] = []
+            data["forward_source"] = None
+            data["is_forwarded"] = False
+            data["reply_src_id"] = None
+
         if data["sender"]:
             ctx["last_sender"] = data["sender"]
         elif data["joined"] and config.settings.preserve_sender_names:
@@ -148,6 +246,13 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             ctx["reaction_map"][source_id] = data["reactions"]
 
         if only_pending and source_id not in pending_replies:
+            return
+
+        if data.get("_inferred_album") and all(
+                member_id in id_map or member_id in ctx["manual_done"]
+                for member_id in data["_album_source_ids"]
+        ):
+            mark_completed = True
             return
 
         if source_id in id_map or source_id in ctx["manual_done"]:
@@ -281,10 +386,19 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         when = timestamp.strftime("%Y-%m-%d %H:%M") if timestamp else "?"
 
         if config.settings.dry_run:
-            _print_dry_run(
+            if data.get("_inferred_album"):
+                print(
+                    f"  [dry] inferred album ids={','.join(data['_album_source_ids'])} "
+                    f"({len(data['media'])} media items)"
+                )
+                stats["sent"] += len(data["_album_source_ids"])
+                for member_id in data["_album_source_ids"]:
+                    pending_replies.pop(member_id, None)
+            else:
+                _print_dry_run(
                 source_id, data, preview_text, preview_entities, first_limit, reply_to,
-                kind_summary, stats, pending_replies,
-            )
+                    kind_summary, stats, pending_replies,
+                )
             mark_completed = True
             return
 
@@ -304,6 +418,8 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
     finally:
         if source_id and mark_completed:
             ctx["processed_source_ids"].add(source_id)
+            if "data" in locals() and data and data.get("_inferred_album"):
+                ctx["processed_source_ids"].update(data["_album_source_ids"])
         elem.clear()
         while elem.getprevious() is not None:
             del elem.getparent()[0]
@@ -389,6 +505,7 @@ async def _run_migration():
         "halt": [],
         "oversize_report": [],
         "last_dest_id": None,
+        "inferred_groups": htmlexport.infer_media_groups(files),
     }
 
     for path in files:
