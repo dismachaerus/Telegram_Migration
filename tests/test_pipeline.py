@@ -614,8 +614,9 @@ class PipelineTests(unittest.TestCase):
         ])
         sticker_path = os.path.abspath(self.path(sticker_rel))
 
-        async def prepared_ids(_client, _files, *, dry_run=False):
+        async def prepared_ids(_client, _files, *, peer, dry_run=False):
             self.assertFalse(dry_run)
+            self.assertIsNotNone(peer)
             return {
                 customemoji.reference_key(sticker_path, "sticker_static", "🌸"): 987654321
             }
