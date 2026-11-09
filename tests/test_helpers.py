@@ -359,7 +359,19 @@ class MediaTests(unittest.TestCase):
 
     def test_voice_and_round_video_classification(self):
         self.assertEqual(exportmedia._classify("voice_messages/a.ogg", "media_wrap", "/tmp/a.ogg"), "voice")
+        self.assertEqual(
+            exportmedia._classify("files/a.ogg", "media_wrap", "/tmp/a.ogg", ("media_voice_message",), ""),
+            "voice",
+        )
         self.assertEqual(exportmedia._classify("round_video_messages/a.mp4", "media_wrap", "/tmp/a.mp4"), "round_video")
+        self.assertEqual(
+            exportmedia._classify("files/a.mp4", "media_wrap", "/tmp/a.mp4", ("media_video",), ""),
+            "round_video",
+        )
+        self.assertEqual(
+            exportmedia._classify("files/a.mp4", "media_wrap", "/tmp/a.mp4", ("video_file_wrap",), ""),
+            "video",
+        )
 
     def test_find_media_uses_export_root_and_finds_real_file(self):
         with tempfile.TemporaryDirectory() as temp:
