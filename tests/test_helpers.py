@@ -256,6 +256,39 @@ class InlineCustomEmojiTests(unittest.TestCase):
             self.assertEqual((entity.offset, entity.length, entity.document_id),
                              (2, 5, 987654321))
 
+    def test_video_custom_emoji_uses_video_sticker_attributes(self):
+        asset = {
+            "path": "/tmp/custom-emoji.webm",
+            "kind": "sticker_video",
+            "alt": "🫧",
+            "filename": "custom-emoji.webm",
+        }
+        with patch.object(
+            customemoji.mediatools, "probe_video_metadata",
+            return_value={"width": 256, "height": 256, "duration": 2.5},
+        ):
+            mime_type, attributes, nosound = customemoji._mime_and_attributes(asset)
+
+        self.assertEqual(mime_type, "video/webm")
+        self.assertTrue(nosound)
+        self.assertTrue(any(isinstance(a, tl.DocumentAttributeCustomEmoji) for a in attributes))
+        video = next(a for a in attributes if isinstance(a, tl.DocumentAttributeVideo))
+        self.assertEqual((video.w, video.h, video.duration), (256, 256, 2.5))
+        self.assertFalse(video.supports_streaming)
+        self.assertTrue(video.nosound)
+
+    def test_static_png_custom_emoji_has_an_image_mime_type(self):
+        asset = {
+            "path": "/tmp/custom-emoji.png",
+            "kind": "sticker_static",
+            "alt": "🌼",
+            "filename": "custom-emoji.png",
+        }
+        mime_type, attributes, nosound = customemoji._mime_and_attributes(asset)
+        self.assertEqual(mime_type, "image/png")
+        self.assertFalse(nosound)
+        self.assertTrue(any(isinstance(a, tl.DocumentAttributeCustomEmoji) for a in attributes))
+
     def test_inline_asset_collection_deduplicates_references_and_prepares_reusable_pack(self):
         class FakeStickerClient:
             def __init__(self):
