@@ -129,7 +129,7 @@ def _album_candidate(data, effective_sender):
     Desktop HTML. Continuation markers and timestamps are evaluated between
     adjacent candidates in _album_records_compatible().
     """
-    if len(data.get("media") or []) != 1:
+    if len(data.get("media") or []) != 1 or data.get("inline_stickers"):
         return False
     if data.get("reply_src_id") or data.get("reactions") or data.get("media_note"):
         return False
