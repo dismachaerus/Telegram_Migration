@@ -70,7 +70,8 @@ def _classify(rel, wrap_class, full, anchor_classes=(), export_label=""):
             return "sticker_video"
         return "sticker_unknown"
 
-    if (wrap_class == "roundvideo_file_wrap" or "round_video_messages" in lower_rel\n            or "media_video" in classes):
+    if (wrap_class == "roundvideo_file_wrap" or "round_video_messages" in lower_rel
+            or "media_video" in classes):
         return "round_video"
     if "voice_messages" in lower_rel or "media_voice_message" in classes:
         return "voice"
@@ -85,7 +86,11 @@ def _classify(rel, wrap_class, full, anchor_classes=(), export_label=""):
         ".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".mpeg",
         ".mpg", ".3gp", ".wmv", ".flv", ".m2ts", ".mts",
     }
-    explicit_video = (\n        "video_files/" in lower_rel\n        or wrap_class == "video_file_wrap"\n        or "video_file_wrap" in classes\n    )
+    explicit_video = (
+        "video_files/" in lower_rel
+        or wrap_class == "video_file_wrap"
+        or "video_file_wrap" in classes
+    )
     if explicit_video:
         return "gif" if _is_gif(full, anchor_classes, export_label) else "video"
 
