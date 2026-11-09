@@ -7,7 +7,7 @@ from telethon.errors import FloodWaitError
 from telethon.tl import types as tl
 
 from . import config, exportmedia, formatfallback, progress, uploads
-from .textutil import clean_invalid_entities
+from .textutil import clean_invalid_entities, split_with_entities
 from .constants import NO_CAPTION_KINDS, STICKER_KINDS
 
 
@@ -119,15 +119,9 @@ async def _send_native_forward(client, channel, forward_source, reply_to, state,
 async def _send_album(client, channel, chunks, media, reply_to, state, source_id,
                       *, force_document=False, captions=None, caption_entities=None,
                       return_all=False):
-    if "album_message_ids" in state:
-        saved_ids = list(state["album_message_ids"])
-        return saved_ids if return_all else saved_ids[0]
-    if "album_id" in state:
-        saved_ids = state.get("album_message_ids") or [state["album_id"]]
-        return saved_ids if return_all else state["album_id"]
-
     first_text, first_ents = chunks[0]
     files = [path for path, _kind in media]
+    inferred_captions = captions is not None
     if captions is None:
         captions = [first_text] + [""] * (len(files) - 1)
     else:
@@ -146,10 +140,46 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
             f"Album entity-row count {len(caption_entities)} does not match media count {len(files)}"
         )
 
+    # Inferred albums carry a complete archival caption for each source
+    # message, including sender/date/forwarding headers. A header can push an
+    # otherwise valid source caption over Telegram's 1024-unit bot limit.
+    # Keep the media grouped, put the first caption chunk on its media item,
+    # and send any remaining text as resumable replies to that item.
+    caption_tails = [[] for _ in files]
+    if inferred_captions:
+        caption_chunks = [
+            split_with_entities(
+                caption, entities,
+                config.settings.caption_limit, config.settings.text_limit,
+            )
+            for caption, entities in zip(captions, caption_entities)
+        ]
+        captions = [parts[0][0] for parts in caption_chunks]
+        caption_entities = [parts[0][1] for parts in caption_chunks]
+        caption_tails = [parts[1:] for parts in caption_chunks]
+
     safe_entity_rows = [
         clean_invalid_entities(caption, entities)
         for caption, entities in zip(captions, caption_entities)
     ]
+
+    async def send_caption_tails(message_ids):
+        for index, tail_chunks in enumerate(caption_tails):
+            if tail_chunks:
+                await _send_text_chunks(
+                    client, channel, tail_chunks, message_ids[index],
+                    state, f"album_caption_tail_{index}", source_id,
+                )
+
+    if "album_message_ids" in state:
+        saved_ids = list(state["album_message_ids"])
+        await send_caption_tails(saved_ids)
+        return saved_ids if return_all else saved_ids[0]
+    if "album_id" in state:
+        saved_ids = state.get("album_message_ids") or [state["album_id"]]
+        await send_caption_tails(saved_ids)
+        return saved_ids if return_all else state["album_id"]
+
     album_kwargs = {"caption": captions, "reply_to": reply_to, "parse_mode": None}
     if force_document:
         album_kwargs["force_document"] = True
@@ -173,8 +203,8 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
     state["album_id"] = message_ids[0]
     state["album_message_ids"] = message_ids
     progress.save_state(state["src"], state)
+    await send_caption_tails(message_ids)
     return message_ids if return_all else message_ids[0]
-
 
 async def _send_individual_media(client, channel, chunks, media, reply_to, state,
                                  source_id, has_sticker):
