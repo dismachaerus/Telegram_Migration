@@ -18,7 +18,6 @@ from .constants import NO_CAPTION_KINDS, STICKER_KINDS
 async def process_file(client, channel, path, id_map, partial, pending_replies, stats, ctx,
                       only_pending=False):
     print(("Retrying deferred replies in " if only_pending else "Streaming ") + os.path.basename(path) + " ...")
-    # Reset page-scoped export context before parsing this HTML file.
     ctx["current_export_date"] = None
     ctx["last_forward_name"] = ""
     with open(path, "rb") as export_file:
@@ -215,8 +214,6 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
 
         timestamp = data["timestamp"]
         if data.get("service_event"):
-            # HTML service-event blocks inherit only the day from the preceding
-            # negative-ID date divider; they do not carry an individual clock time.
             header = compose_message_header(
                 timestamp, "Telegram service event", date_only=True
             )
@@ -251,8 +248,6 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
                     offset=date_start, length=u16len(forward_date)
                 ))
 
-            # The left quote bar belongs only to the forwarding attribution.
-            # The forwarded text/media remains in this same message, below it.
             try:
                 blockquote = tl.MessageEntityBlockquote(
                     offset=0, length=u16len(attribution_text), collapsed=False
