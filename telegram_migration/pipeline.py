@@ -170,20 +170,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         elif data["joined"] and config.settings.preserve_sender_names:
             data["sender"] = ctx["last_sender"]
 
-        # Telegram Desktop omits the forwarded author's name on continuation
-        # messages in a joined forwarded block. Carry the attribution only
-        # across consecutive joined forwarded messages; never leak it into a
-        # later, unrelated forward.
-        if data.get("is_forwarded"):
-            if data.get("forward_name"):
-                ctx["last_forward_name"] = data["forward_name"]
-            elif data.get("joined") and ctx.get("last_forward_name"):
-                data["forward_name"] = ctx["last_forward_name"]
-                data["forward_header"] = f"Forwarded from {data['forward_name']}\\n"
-            else:
-                ctx["last_forward_name"] = ""
-        else:
-            ctx["last_forward_name"] = ""
+        htmlexport.inherit_forwarded_sender(data, ctx)
 
         if data["reply_src_id"]:
             ctx["reply_map"][source_id] = str(data["reply_src_id"])
