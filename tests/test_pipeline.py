@@ -8,6 +8,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from telethon.tl import types as tl
+
 from telegram_migration import bigfiles, config, customemoji, htmlexport, mediatools, pipeline, progress
 from lxml import html
 from telegram_migration.config import Settings
