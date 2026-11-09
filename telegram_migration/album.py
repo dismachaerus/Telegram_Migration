@@ -150,7 +150,7 @@ def _album_candidate(data, effective_sender):
 def _caption_signature(record):
     """Normalize a visible source caption for album matching."""
     import re
-    return re.sub(r"\\s+", " ", (record.get("body_text") or "")).strip()
+    return re.sub(r"\s+", " ", (record.get("body_text") or "")).strip()
 
 
 def _album_records_compatible(left, right):
