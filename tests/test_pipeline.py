@@ -735,7 +735,7 @@ class PipelineTests(unittest.TestCase):
             "01.07.2026 21:46:45",
             "01.07.2026 21:46:46",
         )
-        records = [fakes.message(308, fakes.text("preceding text"), minute=35)]
+        records = []
         long_caption = "A long description. " * 90
         for index, source_id in enumerate(range(309, 313)):
             relative = f"files/photo-{source_id}.jpg"
