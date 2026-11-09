@@ -700,6 +700,89 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(output.count("[dry] album ids=2,3"), 1)
         self.assertIn("sent=4", output)
 
+    def test_forwarded_album_uses_original_timestamps_and_stops_cleanly_on_failure(self):
+        def forwarded_media(source_id, outer_time, forward_time, relative,
+                            *, joined=False, outer_sender=True, caption=""):
+            classes = " joined" if joined else ""
+            sender = '<div class="from_name">⛯⛯</div>' if outer_sender else ""
+            caption_html = f'<div class="text">{caption}</div>' if caption else ""
+            return (
+                f'<div class="message default clearfix{classes}" id="message{source_id}">'
+                '<div class="body">'
+                f'<div class="pull_right date details" title="{outer_time} UTC+02:00">t</div>'
+                f'{sender}'
+                '<div class="forwarded body">'
+                f'<div class="from_name">espritzeit '
+                f'<span class="date details" title="{forward_time} UTC+02:00">{forward_time}</span>'
+                '</div>'
+                '<div class="media_wrap clearfix">'
+                f'<a class="media clearfix pull_left block_link media_file" href="{relative}">'
+                '</a></div>'
+                f'{caption_html}'
+                '</div></div></div>'
+            )
+
+        files = []
+        forward_times = (
+            "01.06.2026 22:39:10",
+            "01.06.2026 22:39:11",
+            "01.06.2026 22:39:11",
+            "01.06.2026 22:39:12",
+        )
+        outer_times = (
+            "01.07.2026 21:46:36",
+            "01.07.2026 21:46:45",
+            "01.07.2026 21:46:45",
+            "01.07.2026 21:46:46",
+        )
+        records = [fakes.message(308, fakes.text("preceding text"), minute=35)]
+        long_caption = "A long description. " * 90
+        for index, source_id in enumerate(range(309, 313)):
+            relative = f"files/photo-{source_id}.jpg"
+            fakes.write_file(self.folder.name, relative)
+            files.append(os.path.join(self.folder.name, relative))
+            records.append(forwarded_media(
+                source_id, outer_times[index], forward_times[index], relative,
+                joined=source_id >= 311, outer_sender=source_id <= 310,
+                caption=long_caption if source_id == 312 else "",
+            ))
+        records.append(fakes.message(313, fakes.text("message after the album"), minute=47))
+        fakes.write_export(self.folder.name, records)
+
+        with config.use_settings(self.settings()):
+            groups = htmlexport.infer_media_groups([self.path("messages.html")])
+        self.assertEqual(list(groups), ["309"])
+        self.assertEqual([row["msg_id"] for row in groups["309"]], ["309", "310", "311", "312"])
+        self.assertEqual(groups["309"][-1]["body_text"], long_caption)
+
+        # A failed album is an atomic source unit. The migration must stop at
+        # that point so its caption and all later messages remain for retry.
+        with patch.object(
+            pipeline.sending.uploads, "send_file",
+            side_effect=RuntimeError("synthetic album upload failure"),
+        ):
+            failed_client, failed_output, _ = self.run_once(max_retries=1)
+        self.assertEqual(failed_client.kinds("send_file"), [])
+        self.assertIn("Stopped at failed inferred album beginning with id=309", failed_output)
+        self.assertNotIn("message after the album", failed_client.texts())
+        with config.use_settings(self.settings()):
+            self.assertEqual(progress.load_id_map(), {})
+
+        # A fresh run retries the complete four-item album, its long caption,
+        # and then the following source message in order.
+        client, output, _ = self.run_once(max_retries=1)
+        album_calls = client.kinds("send_file")
+        self.assertEqual(len(album_calls), 1)
+        sent_files, album_kwargs = album_calls[0][1], album_calls[0][2]
+        self.assertEqual(sent_files, files)
+        self.assertTrue(album_kwargs["force_document"])
+        self.assertEqual(len(album_kwargs["caption"]), 4)
+        self.assertTrue(all(len(caption) <= 1024 for caption in album_kwargs["caption"]))
+        self.assertIn("message after the album", client.texts()[-1])
+        self.assertIn("sent=5", output)
+        with config.use_settings(self.settings()):
+            self.assertEqual(set(progress.load_id_map()), {"309", "310", "311", "312", "313"})
+
     def test_inferred_album_rejects_runs_longer_than_ten_items(self):
         records = [fakes.message(1, fakes.text("sender"), sender="Alice", minute=1)]
         for source_id in range(2, 14):
