@@ -71,17 +71,30 @@ def _parse_rich_text(root, *, extract_stickers=False):
             elif tag == "a" and child.get("href"):
                 href = child.get("href")
                 sticker = exportmedia.resolve_inline_sticker(href) if extract_stickers else None
+                start = pos[0]
+                walk(child)
+                end = pos[0]
                 if sticker and "path" in sticker:
-                    # The visible emoji is Telegram Desktop's fallback for the
-                    # sticker file. Keep the real sticker as media and omit
-                    # that duplicate fallback glyph from the reconstructed text.
-                    inline_stickers.append(sticker)
+                    alt = sanitize_text("".join(child.itertext()))
+                    if alt and end - start == u16len(alt):
+                        # Keep the ordinary fallback emoji in the text. It is
+                        # the exact character range that MessageEntityCustomEmoji
+                        # must cover once the sticker has been added to a pack.
+                        inline_stickers.append({
+                            "path": sticker["path"],
+                            "kind": sticker["kind"],
+                            "alt": alt,
+                            "offset": start,
+                            "length": end - start,
+                        })
+                    else:
+                        # Do not generate a custom-emoji entity for a link whose
+                        # visible text is not exactly the one fallback emoji.
+                        # Its original visible text remains intact as a link.
+                        emit("MessageEntityTextUrl", start, end, url=href)
                 else:
                     if sticker and sticker.get("missing"):
                         missing_stickers.append(sticker["missing"])
-                    start = pos[0]
-                    walk(child)
-                    end = pos[0]
                     if href.startswith("tg://user?id="):
                         try:
                             uid = int(href.split("id=", 1)[1])
@@ -138,8 +151,17 @@ def _parse_rich_text(root, *, extract_stickers=False):
                 add(child.tail)
 
     walk(root)
-    text, entities = strip_with_entities("".join(parts), entities)
-    return text, entities, inline_stickers, list(dict.fromkeys(missing_stickers))
+    raw_text = "".join(parts)
+    leading_units = u16len(raw_text) - u16len(raw_text.lstrip())
+    text, entities = strip_with_entities(raw_text, entities)
+    kept_stickers = []
+    text_length = u16len(text)
+    for sticker in inline_stickers:
+        offset = sticker["offset"] - leading_units
+        if offset < 0 or offset + sticker["length"] > text_length:
+            continue
+        kept_stickers.append({**sticker, "offset": offset})
+    return text, entities, kept_stickers, list(dict.fromkeys(missing_stickers))
 
 
 def parse_rich_text(root):
