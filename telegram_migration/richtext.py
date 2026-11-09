@@ -87,11 +87,8 @@ def _parse_rich_text(root, *, extract_stickers=False):
                             "offset": start,
                             "length": end - start,
                         })
-                    else:
-                        # Do not generate a custom-emoji entity for a link whose
-                        # visible text is not exactly the one fallback emoji.
-                        # Its original visible text remains intact as a link.
-                        emit("MessageEntityTextUrl", start, end, url=href)
+                    # Otherwise keep the fallback text, but do not invent a
+                    # URL entity for a local file inside the export folder.
                 else:
                     if sticker and sticker.get("missing"):
                         missing_stickers.append(sticker["missing"])
