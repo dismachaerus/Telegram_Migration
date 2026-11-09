@@ -783,6 +783,46 @@ class PipelineTests(unittest.TestCase):
         with config.use_settings(self.settings()):
             self.assertEqual(set(progress.load_id_map()), {"309", "310", "311", "312", "313"})
 
+    def test_identical_captions_group_separate_visual_files_without_two_second_limit(self):
+        caption = "Shared album description"
+        records = []
+        expected = []
+        for source_id, minute, filename in (
+            (401, 1, "files/first.jpg"),
+            (402, 15, "files/second.png"),
+            (403, 35, "files/third.mkv"),
+        ):
+            fakes.write_file(self.folder.name, filename)
+            expected.append(os.path.join(self.folder.name, filename))
+            media = (
+                '<div class="media_wrap clearfix">'
+                f'<a class="media clearfix pull_left block_link media_file" href="{filename}">'
+                '</a></div>'
+            )
+            records.append(fakes.message(
+                source_id, media + fakes.text(caption),
+                sender="Alice", minute=minute,
+            ))
+        records.append(fakes.message(404, fakes.text("after shared-caption album"),
+                                     sender="Alice", minute=40))
+        fakes.write_export(self.folder.name, records)
+
+        with config.use_settings(self.settings()):
+            groups = htmlexport.infer_media_groups([self.path("messages.html")])
+        self.assertEqual(list(groups), ["401"])
+        self.assertEqual([row["msg_id"] for row in groups["401"]], ["401", "402", "403"])
+
+        client, output, _ = self.run_once()
+        album_calls = client.kinds("send_file")
+        self.assertEqual(len(album_calls), 1)
+        sent_files, album_kwargs = album_calls[0][1], album_calls[0][2]
+        self.assertEqual(sent_files, expected)
+        self.assertFalse(album_kwargs.get("force_document", False))
+        self.assertEqual(len(album_kwargs["caption"]), 3)
+        self.assertTrue(all(caption in row for row in album_kwargs["caption"]))
+        self.assertIn("after shared-caption album", client.texts()[-1])
+        self.assertIn("sent=4", output)
+
     def test_inferred_album_rejects_runs_longer_than_ten_items(self):
         records = [fakes.message(1, fakes.text("sender"), sender="Alice", minute=1)]
         for source_id in range(2, 14):
