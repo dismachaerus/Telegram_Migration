@@ -157,17 +157,17 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             return
         source_id = str(data["msg_id"])
 
-        album.prepare_inferred_group(
-            data, ctx.get("inferred_groups", {}).get(source_id),
-            id_map, ctx["manual_done"], partial, progress.append_id_map,
-        )
-
         if data["sender"]:
             ctx["last_sender"] = data["sender"]
         elif data["joined"] and config.settings.preserve_sender_names:
             data["sender"] = ctx["last_sender"]
 
         htmlexport.inherit_forwarded_sender(data, ctx)
+
+        album.prepare_inferred_group(
+            data, ctx.get("inferred_groups", {}).get(source_id),
+            id_map, ctx["manual_done"], partial, progress.append_id_map,
+        )
 
         if data["reply_src_id"]:
             ctx["reply_map"][source_id] = str(data["reply_src_id"])
