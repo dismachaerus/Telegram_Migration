@@ -357,14 +357,61 @@ async def _do_send(client, channel, chunks, media, reply_to, forward_source,
     )
 
 
+async def _send_inline_stickers(client, channel, data, root_id, reply_to,
+                               state, source_id):
+    """Send exported inline stickers in source order as replies to their post.
+
+    Telegram does not support inserting an ordinary sticker document inside a
+    text message or media caption. The closest faithful bot representation is
+    to keep the reconstructed post intact, then attach its sticker sequence
+    as replies. Each uploaded sticker is checkpointed for safe resumption.
+    """
+    stickers = data.get("inline_stickers") or []
+    if not stickers or state.get("native"):
+        return root_id
+
+    sent_ids = list(state.get("inline_sticker_ids", []))
+    if len(sent_ids) > len(stickers):
+        raise RuntimeError(
+            f"Saved {len(sent_ids)} inline sticker IDs for {len(stickers)} source stickers"
+        )
+    if root_id is None and sent_ids:
+        root_id = int(sent_ids[0])
+
+    while len(sent_ids) < len(stickers):
+        index = len(sent_ids)
+        sticker = stickers[index]
+        parent_id = sent_ids[-1] if sent_ids else (root_id or reply_to)
+        message = await uploads.send_media_item(
+            client, channel, sticker["path"], sticker["kind"],
+            parent_id, source_id,
+        )
+        sent_ids.append(int(message.id))
+        state["inline_sticker_ids"] = sent_ids
+        progress.save_state(state["src"], state)
+        if root_id is None:
+            root_id = int(message.id)
+    return int(root_id) if root_id is not None else None
+
+
 async def send_one(client, channel, data, chunks, reply_to, state, annotation, source_id):
     attempt, floods = 0, 0
     while True:
         try:
-            return await _do_send(
-                client, channel, chunks, data["media"], reply_to,
-                data["forward_source"], state, annotation,
-                source_id, data,
+            has_base_text = any(text.strip() for text, _entities in chunks)
+            has_base_payload = (
+                has_base_text or bool(data.get("media"))
+                or bool(data.get("forward_source"))
+            )
+            root_id = None
+            if has_base_payload:
+                root_id = await _do_send(
+                    client, channel, chunks, data["media"], reply_to,
+                    data["forward_source"], state, annotation,
+                    source_id, data,
+                )
+            return await _send_inline_stickers(
+                client, channel, data, root_id, reply_to, state, source_id
             )
         except FloodWaitError as fw:
             floods += 1
