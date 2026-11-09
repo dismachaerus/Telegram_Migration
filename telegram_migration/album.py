@@ -69,10 +69,20 @@ def prepare_inferred_group(data, group, id_map, manual_done, partial, persist_id
         return False
 
     member_ids = [str(member["msg_id"]) for member in group]
-    saved_album_ids = partial.get(str(data["msg_id"]), {}).get("album_message_ids")
-    if saved_album_ids and len(saved_album_ids) == len(member_ids):
-        # Recover mappings if the process stopped after the album upload was
-        # checkpointed but before every ID-map line was appended.
+    saved_state = partial.get(str(data["msg_id"]), {})
+    saved_album_ids = saved_state.get("album_message_ids")
+    tail_counts = saved_state.get("album_caption_tail_counts")
+    tails_complete = True
+    if tail_counts is not None:
+        for index, expected in enumerate(tail_counts):
+            done = saved_state.get(f"album_caption_tail_{index}", {}).get("done", 0)
+            if done < expected:
+                tails_complete = False
+                break
+    if (saved_album_ids and len(saved_album_ids) == len(member_ids)
+            and tails_complete):
+        # Recover mappings only after any overflow-caption replies have also
+        # been checkpointed. Otherwise _send_album must resume those replies.
         for member_id, destination_id in zip(member_ids, saved_album_ids):
             if member_id not in id_map:
                 id_map[member_id] = int(destination_id)
