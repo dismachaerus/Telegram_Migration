@@ -212,16 +212,43 @@ class PipelineTests(unittest.TestCase):
                 f'<div class="text">{payload}</div>'
                 '</div></div></div>'
             )
+        # A later forward starts a different attribution group. Its joined
+        # continuation must inherit the new author, never Valerie's.
+        messages.extend([
+            (
+                '<div class="message default clearfix" id="message251">'
+                '<div class="body">'
+                '<div class="pull_right date details" title="01.07.2026 21:42:49 UTC+02:00">21:42</div>'
+                '<div class="from_name">⛯⛯</div>'
+                '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
+                '<div class="forwarded body">'
+                '<div class="from_name">🍀 🌼'
+                '<span class="date details" title="10.05.2026 17:02:00 UTC+02:00">'
+                '10.05.2026 17:02:00</span></div>'
+                '<div class="text">A separate forwarded message</div>'
+                '</div></div></div>'
+            ),
+            (
+                '<div class="message default clearfix joined" id="message252">'
+                '<div class="body">'
+                '<div class="pull_right date details" title="01.07.2026 21:42:50 UTC+02:00">21:42</div>'
+                '<div class="forwarded body"><div class="text">Its continuation</div></div>'
+                '</div></div>'
+            ),
+        ])
         fakes.write_export(self.folder.name, messages)
         client, _, _ = self.run_once()
 
         sent = client.kinds("send_message")
-        self.assertEqual(len(sent), 4)
-        for call in sent:
+        self.assertEqual(len(sent), 6)
+        for call in sent[:4]:
             self.assertIn("Forwarded from Valerie Demian", call[1])
         self.assertTrue(sent[1][1].endswith("Хотя мне так лень"))
         self.assertTrue(sent[2][1].endswith("Портить день еще себе ток"))
         self.assertTrue(sent[3][1].endswith("Ненавижу таких мужчин , что бывших преследуют"))
+        for call in sent[4:]:
+            self.assertIn("Forwarded from 🍀 🌼", call[1])
+            self.assertNotIn("Forwarded from Valerie Demian", call[1])
 
     def test_reconstructed_text_forward_keeps_attribution_and_payload_in_one_message(self):
         forwarded = (
