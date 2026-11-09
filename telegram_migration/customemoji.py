@@ -19,7 +19,7 @@ from collections import OrderedDict
 from lxml import etree
 from telethon.tl import functions, types as tl
 
-from . import config, exportmedia, mediatools
+from . import bigfiles, config, exportmedia, mediatools
 from .htmlutil import css_classes, find_first
 from .textutil import sanitize_text
 
@@ -384,10 +384,29 @@ async def prepare_inline_custom_emojis(client, files, *, dry_run=False):
     assets, references = collect_inline_custom_emojis(files)
     if not assets:
         return {}
+
+    oversized = bigfiles.find_oversize_media([
+        (asset["path"], asset["kind"]) for asset in assets
+    ])
+    oversized_paths = {os.path.abspath(path) for path, _kind, _size in oversized}
+    if oversized:
+        for path, kind, size in oversized:
+            print(
+                f"  warning: inline custom emoji is over the configured upload limit "
+                f"and will remain fallback text [{kind}] {path} "
+                f"({bigfiles.format_mb(size)} > {bigfiles.format_mb(bigfiles.max_upload_bytes())})"
+            )
+        assets = [
+            asset for asset in assets
+            if os.path.abspath(asset["path"]) not in oversized_paths
+        ]
+    if not assets:
+        return {}
+
     if dry_run:
         print(
             f"  DRY RUN: found {references} inline custom-emoji references "
-            f"({len(assets)} unique assets); no sticker sets were created."
+            f"({len(assets)} unique eligible assets); no sticker sets were created."
         )
         return {}
 
