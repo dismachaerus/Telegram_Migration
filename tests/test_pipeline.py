@@ -607,7 +607,7 @@ class PipelineTests(unittest.TestCase):
             '</a></div>'
         )
         fakes.write_export(self.folder.name, [
-            fakes.message(801, fakes.text("audio caption") + markup, sender="Alice")
+            fakes.message(801, fakes.text("audio caption") + markup, sender="Alice", minute=4)
         ])
 
         client, _, _ = self.run_once()
