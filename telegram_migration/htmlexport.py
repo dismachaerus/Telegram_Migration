@@ -427,13 +427,14 @@ def _album_records_compatible(left, right):
 
 
 def infer_media_groups(files):
-    """Infer likely media groups from consecutive joined records in Desktop HTML.
+    """Infer likely media groups from consecutive media records in Desktop HTML.
 
-    Desktop HTML does not retain Telegram's grouped_id, so this is deliberately
-    conservative. Every inferred member must be a joined, single-media record;
-    adjacent records must have the same sender/forward context, compatible media,
-    no reply edge, and timestamps no more than two seconds apart. Groups larger
-    than Telegram's ten-item limit are rejected as a whole rather than split.
+    Desktop HTML does not retain Telegram's grouped_id. Album starts may lack
+    the "joined" class, so single-media records are held as possible starts.
+    Ordinary continuations still require the joined marker and close export
+    timestamps; forwarded continuations can instead use close original
+    forward timestamps from the same source author. Groups larger than
+    Telegram's ten-item limit are rejected as a whole rather than split.
     """
     from lxml import etree
 
