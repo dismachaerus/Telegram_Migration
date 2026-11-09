@@ -332,7 +332,7 @@ class MediaTests(unittest.TestCase):
         self.assertEqual(
             exportmedia._classify(
                 "video_files/exported-sticker.webm", "media_wrap",
-                "/tmp/exported-sticker.webm", ("media_photo",), "Sticker\\n🧐",
+                "/tmp/exported-sticker.webm", ("media_photo",), "Sticker\n🧐",
             ),
             "sticker_video",
         )
@@ -341,7 +341,7 @@ class MediaTests(unittest.TestCase):
         self.assertEqual(
             exportmedia._classify(
                 "files/voice-track.mp3", "media_wrap",
-                "/tmp/voice-track.mp3", ("media_audio_file",), "voice-track.mp3\\n00:30",
+                "/tmp/voice-track.mp3", ("media_audio_file",), "voice-track.mp3\n00:30",
             ),
             "audio",
         )
