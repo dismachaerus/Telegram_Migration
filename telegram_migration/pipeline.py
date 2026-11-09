@@ -8,7 +8,7 @@ from lxml import etree
 from telethon import TelegramClient
 from telethon.tl import types as tl
 
-from . import bigfiles, cli, config, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
+from . import album, bigfiles, cli, config, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
 from .htmlutil import css_classes
 from .textutil import (compose_message, compose_message_header, format_archive_timestamp,
                        split_with_entities, strip_with_entities, u16len)
@@ -86,15 +86,9 @@ async def _send_migrated_message(client, channel, data, source_id, text, entitie
     if new_id:
         if isinstance(new_id, (list, tuple)):
             source_ids = data.get("_album_source_ids") or [source_id]
-            if len(source_ids) != len(new_id):
-                raise RuntimeError(
-                    f"Inferred album returned {len(new_id)} destination IDs "
-                    f"for {len(source_ids)} source messages"
-                )
-            for member_src, member_dst in zip(source_ids, new_id):
-                id_map[str(member_src)] = int(member_dst)
-                progress.append_id_map(member_src, member_dst)
-            primary_id = int(new_id[0])
+            primary_id = album.map_destination_ids(
+                source_ids, new_id, id_map, progress.append_id_map
+            )
             ctx["last_dest_id"] = primary_id
             stats["sent"] += len(source_ids)
             for member_src in source_ids:
@@ -132,55 +126,6 @@ async def _send_migrated_message(client, channel, data, source_id, text, entitie
         })
 
 
-def _album_caption(record):
-    """Build the original archive header/forward attribution for one album item."""
-    timestamp = record.get("timestamp")
-    if record.get("service_event"):
-        header = compose_message_header(
-            timestamp, "Telegram service event", date_only=True
-        )
-    else:
-        header = compose_message_header(timestamp, record.get("sender", ""))
-    if record.get("is_forwarded"):
-        forward_name = record.get("forward_name") or ""
-        label = f"Forwarded from {forward_name}" if forward_name else "Forwarded message"
-        attribution = label
-        entities = []
-        if forward_name:
-            entities.append(tl.MessageEntityBold(
-                offset=u16len("Forwarded from "),
-                length=u16len(forward_name),
-            ))
-        forward_timestamp = record.get("forward_timestamp")
-        if forward_timestamp is not None:
-            forward_date = format_archive_timestamp(forward_timestamp, date_only=True)
-            if record.get("forward_timestamp_has_time"):
-                time_format = "%H:%M:%S" if record.get("forward_timestamp_has_seconds") else "%H:%M"
-                forward_date += f" · {forward_timestamp:{time_format}}"
-            entities.append(tl.MessageEntityItalic(
-                offset=u16len(attribution + "\n"),
-                length=u16len(forward_date),
-            ))
-            attribution += "\n" + forward_date
-        try:
-            quote = tl.MessageEntityBlockquote(
-                offset=0, length=u16len(attribution), collapsed=False
-            )
-        except TypeError:
-            quote = tl.MessageEntityBlockquote(offset=0, length=u16len(attribution))
-        entities.append(quote)
-        text, ents = compose_message(
-            header, ("", []), (attribution + "\n\n", entities),
-            record.get("body_text", ""), record.get("body_entities", []),
-        )
-    else:
-        text, ents = compose_message(
-            header, ("", []), ("", []),
-            record.get("body_text", ""), record.get("body_entities", []),
-        )
-    return strip_with_entities(text, ents)
-
-
 async def _process_message(elem, client, channel, id_map, partial, pending_replies,
                            stats, ctx, only_pending):
     source_id = None
@@ -211,49 +156,10 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             return
         source_id = str(data["msg_id"])
 
-        inferred_group = ctx.get("inferred_groups", {}).get(source_id)
-        if inferred_group and len(inferred_group) >= 2:
-            member_ids = [str(member["msg_id"]) for member in inferred_group]
-            saved_album_ids = partial.get(source_id, {}).get("album_message_ids")
-            if saved_album_ids and len(saved_album_ids) == len(member_ids):
-                # Recover the complete source-to-destination mapping if the
-                # process stopped after the album upload was checkpointed but
-                # before every ID-map line was appended.
-                for member_id, destination_id in zip(member_ids, saved_album_ids):
-                    if member_id not in id_map:
-                        id_map[member_id] = int(destination_id)
-                        progress.append_id_map(member_id, destination_id)
-            already_mapped = [
-                member_id for member_id in member_ids
-                if member_id in id_map or member_id in ctx["manual_done"]
-            ]
-            if already_mapped and len(already_mapped) != len(member_ids):
-                # A previous run may have sent some members individually.
-                # Never resend those records as part of a newly inferred album.
-                inferred_group = None
-
-        if inferred_group and len(inferred_group) >= 2:
-            captions = []
-            caption_entities = []
-            all_media = []
-            member_ids = []
-            for member in inferred_group:
-                member_id = str(member["msg_id"])
-                member_ids.append(member_id)
-                caption_text, caption_ents = _album_caption(member)
-                captions.append(caption_text)
-                caption_entities.append(caption_ents)
-                all_media.extend(member["media"])
-            data["_inferred_album"] = True
-            data["_album_source_ids"] = member_ids
-            data["_album_captions"] = captions
-            data["_album_caption_entities"] = caption_entities
-            data["media"] = all_media
-            data["body_text"] = ""
-            data["body_entities"] = []
-            data["forward_source"] = None
-            data["is_forwarded"] = False
-            data["reply_src_id"] = None
+        album.prepare_inferred_group(
+            data, ctx.get("inferred_groups", {}).get(source_id),
+            id_map, ctx["manual_done"], partial, progress.append_id_map,
+        )
 
         if data["sender"]:
             ctx["last_sender"] = data["sender"]
