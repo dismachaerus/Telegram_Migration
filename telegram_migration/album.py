@@ -147,14 +147,20 @@ def _album_candidate(data, effective_sender):
     return bool(data.get("timestamp"))
 
 
+def _caption_signature(record):
+    """Normalize a visible source caption for album matching."""
+    import re
+    return re.sub(r"\\s+", " ", (record.get("body_text") or "")).strip()
+
+
 def _album_records_compatible(left, right):
     """Check whether adjacent records share a plausible album context.
 
-    For forwarded records, the original forwarded timestamps are stronger
-    evidence than the timestamps at which the export owner re-posted them.
-    They can differ by several seconds even when the original items belong to
-    one album. For ordinary records, retain the stricter Desktop joined marker
-    and two-second outer-timestamp rule.
+    Identical non-empty captions are strong evidence that separate HTML
+    records are members of one Telegram media group. Telegram Desktop may
+    attach a single album caption to only one member, so a one-sided caption
+    is also accepted when the surrounding sender/forward context and source
+    timestamps support a short consecutive sequence.
     """
     if left.get("_album_sender") != right.get("_album_sender"):
         return False
@@ -163,6 +169,12 @@ def _album_records_compatible(left, right):
     if left.get("forward_name", "") != right.get("forward_name", ""):
         return False
     if left.get("reply_src_id") or right.get("reply_src_id"):
+        return False
+
+    left_caption = _caption_signature(left)
+    right_caption = _caption_signature(right)
+    same_caption = bool(left_caption and right_caption and left_caption == right_caption)
+    if left_caption and right_caption and not same_caption:
         return False
 
     left_time, right_time = left.get("timestamp"), right.get("timestamp")
@@ -175,23 +187,21 @@ def _album_records_compatible(left, right):
     left_forward_time = left.get("forward_timestamp")
     right_forward_time = right.get("forward_timestamp")
     if (left_forward_time is None) != (right_forward_time is None):
-        return False
-
-    if left_forward_time is not None:
-        # Both records are forwarded from the same author (checked above).
-        # Their original timestamps, not the later re-forward timestamps,
-        # determine whether they plausibly belonged to the same source album.
-        forward_gap = (right_forward_time - left_forward_time).total_seconds()
-        if forward_gap < 0 or forward_gap > 2:
+        if not same_caption:
             return False
-    else:
-        # Without original source timestamps, rely on Telegram Desktop's
-        # continuation marker and the close outer timestamps.
-        if not right.get("joined") or outer_gap > 2:
+
+    if left_forward_time is not None and right_forward_time is not None:
+        forward_gap = (right_forward_time - left_forward_time).total_seconds()
+        if forward_gap < 0 or (forward_gap > 30 and not same_caption):
+            return False
+    elif not same_caption:
+        # Without matching captions or original source timestamps, use the
+        # Desktop continuation marker and a wider 30-second tolerance. The
+        # two-second outer timestamp rule was too strict for real exports.
+        if not right.get("joined") or outer_gap > 30:
             return False
 
     return exportmedia.album_compatible(left["media"] + right["media"])
-
 
 def infer_media_groups(files):
     """Infer likely media groups from consecutive media records in Desktop HTML.
