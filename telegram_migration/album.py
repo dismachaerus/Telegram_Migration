@@ -119,6 +119,15 @@ def prepare_inferred_group(data, group, id_map, manual_done, partial, persist_id
     return True
 
 
+def stop_after_failed_album(ctx, source_id):
+    """Stop before later records when an inferred album could not be sent."""
+    ctx["stop"] = True
+    print(
+        f"  Stopped at failed inferred album beginning with id={source_id}. "
+        "Later messages were left untouched; restart to retry this album."
+    )
+
+
 def map_destination_ids(source_ids, destination_ids, id_map, persist_id):
     """Persist one destination message ID for every original album source record."""
     if len(source_ids) != len(destination_ids):
