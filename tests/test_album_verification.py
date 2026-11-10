@@ -45,6 +45,24 @@ class AlbumVerificationTests(unittest.TestCase):
                 client, -100123, [stale], ["archive caption"], [[]], "310",
             ))
 
+    def test_blockquote_false_and_missing_collapsed_flag_are_equivalent(self):
+        from telethon.tl import types as tl
+
+        explicit_false = tl.MessageEntityBlockquote(
+            offset=0, length=7, collapsed=False
+        )
+        omitted_flag = tl.MessageEntityBlockquote(offset=0, length=7)
+        self.assertTrue(album._entity_lists_match(
+            [explicit_false], [omitted_flag]
+        ))
+
+    def test_entity_verification_still_rejects_different_formatting(self):
+        from telethon.tl import types as tl
+
+        bold = tl.MessageEntityBold(offset=0, length=7)
+        italic = tl.MessageEntityItalic(offset=0, length=7)
+        self.assertFalse(album._entity_lists_match([bold], [italic]))
+
     def test_message_not_modified_checks_formatting_entities_too(self):
         from telethon.tl import types as tl
 
