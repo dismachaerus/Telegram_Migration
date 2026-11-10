@@ -883,6 +883,45 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("after shared-caption album", client.texts()[-1])
         self.assertIn("sent=4", output)
 
+    def test_arbitrary_forwarded_media_caption_is_preserved_verbatim(self):
+        """Captions are payload data; preservation must not depend on their words."""
+        source_caption = "Résumé — 東京\\nLine 2: 100% & every word stays."
+        media_path = "video_files/arbitrary-caption.mp4"
+        fakes.write_file(self.folder.name, media_path)
+        forwarded = (
+            '<div class="message default clearfix" id="message790">'
+            '<div class="body">'
+            '<div class="pull_right date details" '
+            'title="08.11.2026 09:28:59 UTC+02:00">09:28</div>'
+            '<div class="from_name">Archive owner</div>'
+            '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
+            '<div class="forwarded body">'
+            '<div class="from_name">Original author '
+            '<span class="date details" title="05.11.2026 19:35:11 UTC+02:00">'
+            '05.11.2026 19:35:11</span></div>'
+            '<div class="media_wrap clearfix">'
+            f'<a class="video_file_wrap clearfix pull_left" href="{media_path}"></a>'
+            '</div>'
+            '<div class="text">Résumé — 東京<br>Line 2: 100% &amp; every word stays.</div>'
+            '</div></div></div>'
+        )
+        fakes.write_export(self.folder.name, [forwarded])
+
+        with config.use_settings(self.settings()):
+            document = html.fromstring(
+                open(self.path("messages.html"), encoding="utf-8").read()
+            )
+            parsed = htmlexport.extract_message_data(document.xpath('//*[@id="message790"]')[0])
+        self.assertEqual(parsed["body_text"], source_caption)
+
+        client, _, _ = self.run_once()
+        calls = client.kinds("send_file")
+        self.assertEqual(len(calls), 1)
+        delivered_caption = calls[0][2]["caption"]
+        self.assertIn(source_caption, delivered_caption)
+        self.assertIn("Forwarded from Original author", delivered_caption)
+
+
     def test_actual_export_forwarded_video_groups_keep_caption_and_boundary(self):
         """Reproduce the actual 448–464 export structure and its 197-second boundary."""
         records = [fakes.message(447, fakes.text("previous album context"),
