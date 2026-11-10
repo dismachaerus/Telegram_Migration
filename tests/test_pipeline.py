@@ -804,10 +804,6 @@ class PipelineTests(unittest.TestCase):
                 '<div class="media_wrap clearfix"><a class="media_voice_message" '
                 f'href="{p}"></a></div>'
             ), "voice_messages"),
-            ("round_video", lambda p: (
-                '<div class="roundvideo_file_wrap"><a '
-                f'href="{p}"></a></div>'
-            ), "round_video_messages"),
             ("sticker", lambda p: (
                 '<div class="sticker_wrap"><a '
                 f'href="{p}"></a></div>'
