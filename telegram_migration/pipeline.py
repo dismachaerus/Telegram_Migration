@@ -33,70 +33,6 @@ async def process_file(client, channel, path, id_map, partial, pending_replies, 
     return ctx["stop"]
 
 
-async def _verify_mapped_album(client, channel, data, id_map, partial, source_id):
-    """Audit an already-mapped inferred album before silently skipping it.
-
-    Older versions recorded source-to-destination IDs without checking the
-    Telegram grouped_id. Verify those existing destination messages on resume;
-    repair missing captions where possible, but never resend media automatically.
-    """
-    source_ids = data["_album_source_ids"]
-    state = dict(partial.get(str(source_id), {}) or {})
-    saved_ids = state.get("album_message_ids")
-    mapped_ids = [int(id_map[member_id]) for member_id in source_ids]
-    if saved_ids is not None and [int(value) for value in saved_ids] != mapped_ids:
-        raise RuntimeError(
-            f"Partial album IDs disagree with the migration ID map for source id={source_id}; "
-            "refusing to guess which destination messages belong to this album"
-        )
-    captions = []
-    entities = []
-    for caption, row in zip(
-        data["_album_captions"], data["_album_caption_entities"]
-    ):
-        parts = split_with_entities(
-            caption, row,
-            config.settings.caption_limit, config.settings.text_limit,
-        )
-        captions.append(parts[0][0])
-        entities.append(sending.clean_invalid_entities(parts[0][0], parts[0][1]))
-
-    grouped_id = await sending._verify_saved_album(
-        client, channel, mapped_ids, captions, entities, source_id
-    )
-    state["src"] = str(source_id)
-    state["album_id"] = mapped_ids[0]
-    state["album_message_ids"] = mapped_ids
-    state["album_grouped_id"] = int(grouped_id)
-    progress.save_state(source_id, state)
-    print(
-        f"    audited existing Telegram album for source id={source_id}: "
-        f"{len(mapped_ids)} items, grouped_id={grouped_id}"
-    )
-
-
-def _resolve_reply(data, source_id, id_map, pending_replies, ctx):
-    reply_to = id_map.get(str(data["reply_src_id"])) if data["reply_src_id"] else None
-    reply_fallback = ("", [])
-    if not data["reply_src_id"] or reply_to is not None:
-        return reply_to, reply_fallback, False
-
-    target_src = str(data["reply_src_id"])
-    if target_src in ctx["source_ids"] and target_src not in ctx["processed_source_ids"]:
-        if not config.settings.dry_run:
-            if pending_replies.get(source_id) != target_src:
-                pending_replies[source_id] = target_src
-                progress.save_pending_replies(pending_replies)
-        else:
-            print(f"  [dry] would defer reply id={source_id} until target id={target_src} is migrated")
-        return None, reply_fallback, True
-
-    fallback = f"[Original reply target #{target_src} is unavailable in the destination]\n"
-    if data.get("reply_preview"):
-        fallback += f"Original reply preview: {data['reply_preview']}\n"
-    return None, (fallback + "\n", []), False
-
-
 def _print_dry_run(source_id, data, text, entities, first_limit, reply_to,
                    kind_summary, stats, pending_replies):
     chunks = split_with_entities(text, entities, first_limit, config.settings.text_limit)
@@ -225,7 +161,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
                 for member_id in data["_album_source_ids"]
         ):
             if all(member_id in id_map for member_id in data["_album_source_ids"]):
-                await _verify_mapped_album(
+                await album.verify_mapped_album(
                     client, channel, data, id_map, partial, source_id
                 )
             mark_completed = True
@@ -304,7 +240,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
                 )
             attribution_entities.append(blockquote)
 
-        reply_to, reply_fallback, deferred = _resolve_reply(
+        reply_to, reply_fallback, deferred = replylinks.resolve_reply(
             data, source_id, id_map, pending_replies, ctx
         )
         if deferred:
