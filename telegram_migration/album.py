@@ -261,7 +261,13 @@ def infer_media_groups(files, inline_emoji_ids=None):
                     flush()
                 else:
                     data["sender"] = effective_sender
-                    data["_album_sender"] = effective_sender or data.get("forward_name", "")
+                    # For forwarded posts, the original forwarded author is
+                    # the stable group identity. The outer forwarder may only
+                    # be rendered on some joined rows in Desktop HTML.
+                    data["_album_sender"] = (
+                        data.get("forward_name") if data.get("is_forwarded")
+                        else effective_sender
+                    ) or effective_sender
                     last_sender = effective_sender
                     if not pending:
                         pending = [data]
