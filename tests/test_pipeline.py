@@ -336,6 +336,56 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(sent[1][bold.offset:bold.offset + bold.length], "hello")
         self.assertEqual(sent[1][italic.offset:italic.offset + italic.length], "world")
 
+    def test_forwarded_photo_album_with_repeated_reply_context_is_grouped(self):
+        first_path = "photos/first.jpg"
+        second_path = "photos/second.jpg"
+        fakes.write_file(self.folder.name, first_path)
+        fakes.write_file(self.folder.name, second_path)
+
+        def forwarded_photo(msg_id, clock, path, caption="", joined=False):
+            joined_class = " joined" if joined else ""
+            caption_html = f'<div class="text">{caption}</div>' if caption else ""
+            return (
+                f'<div class="message default clearfix{joined_class}" id="message{msg_id}">'
+                '<div class="body">'
+                f'<div class="pull_right date details" title="01.07.2026 21:46:{clock} UTC+02:00">21:46</div>'
+                '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
+                '<div class="forwarded body">'
+                '<div class="from_name">espritzeit '
+                '<span class="date details" title="04.06.2026 18:10:26 UTC+02:00">'
+                '04.06.2026 18:10:26</span></div>'
+                '<div class="reply_to details"><a href="#go_to_message330">this message</a></div>'
+                '<div class="media_wrap clearfix">'
+                f'<a class="photo_wrap clearfix pull_left" href="{path}">'
+                f'<img class="photo" src="{path}_thumb.jpg"/>'
+                '</a></div>'
+                f'{caption_html}'
+                '</div></div></div>'
+            )
+
+        first = forwarded_photo(
+            901, "56", first_path,
+            "<blockquote>The subject's private channel, where the aforementioned "
+            "Instagram sessions are advertised, is also featured prominently on "
+            "the phishing website.</blockquote>",
+        )
+        second = forwarded_photo(902, "57", second_path, joined=True)
+        fakes.write_export(self.folder.name, [first, second])
+
+        client, _, _ = self.run_once()
+        self.assertEqual(client.kinds("send_message"), [])
+        album_calls = client.kinds("send_file")
+        self.assertEqual(len(album_calls), 1)
+        files, kwargs = album_calls[0][1], album_calls[0][2]
+        self.assertEqual(files, [
+            os.path.join(self.folder.name, first_path),
+            os.path.join(self.folder.name, second_path),
+        ])
+        self.assertIn("The subject's private channel", kwargs["caption"])
+        self.assertIn("Forwarded from espritzeit", kwargs["caption"])
+        with config.use_settings(self.settings()):
+            self.assertEqual(progress.load_id_map(), {"901": 1001, "902": 1002})
+
     def test_reconstructed_forward_media_keeps_attribution_in_same_media_caption(self):
         media_path = "video_files/a6579a95-f3fd-497d-9b88-46592c1a878e_wm.mp4"
         fakes.write_file(self.folder.name, media_path)
