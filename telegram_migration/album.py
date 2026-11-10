@@ -322,9 +322,9 @@ def map_destination_ids(source_ids, destination_ids, id_map, persist_id):
 
 
 async def verify_mapped_album(client, channel, data, id_map, partial, source_id):
+    """Audit a mapped album before skipping it; never resend media automatically."""
     from . import config, progress, sending
     from .textutil import split_with_entities
-    """Audit a mapped album before skipping it; never resend media automatically."""
 
     source_ids = data["_album_source_ids"]
     state = dict(partial.get(str(source_id), {}) or {})
