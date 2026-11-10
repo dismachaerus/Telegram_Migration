@@ -119,12 +119,10 @@ def _album_candidate(data, effective_sender):
         return False
     if data.get("media_note"):
         return False
-    # Only Telegram album-capable media may participate in an inferred
-    # source group. Video notes, voice messages, animations and stickers are
-    # standalone message types; adjacency, a shared forwarder, timestamps, or
-    # the HTML "joined" layout class must not turn them into album continuations.
-    # Photo/video pairs may mix, while document and audio groups stay homogeneous.
-    if data["media"][0][1] not in {"photo", "video", "document", "audio"}:
+    # A round-video note is its own Telegram message type, not an album
+    # continuation. Telegram Desktop may still apply the visual "joined" class
+    # to adjacent notes, so never infer a source album from that layout marker.
+    if data["media"][0][1] == "round_video":
         return False
     if data.get("is_forwarded") and not data.get("forward_name"):
         return False
@@ -197,12 +195,10 @@ def _album_records_compatible(left, right):
         if outer_gap is None or outer_gap > 30:
             return False
 
-    # A source album pair must obey Telegram's media-group type rules too.
-    # This prevents nearby standalone items (video notes, voice notes,
-    # animations, stickers) and incompatible media families from being merged
-    # merely because their sender, timestamps, and HTML layout look similar.
-    combined_media = list(left.get("media") or []) + list(right.get("media") or [])
-    return exportmedia.album_compatible(combined_media)
+    # Source grouping is deliberately independent of destination album
+    # support. The sender decides whether a confirmed source run can be sent
+    # natively or must be preserved as ordered individual messages.
+    return True
 
 def infer_media_groups(files, inline_emoji_ids=None):
     """Infer likely media groups from consecutive media records in Desktop HTML.
