@@ -289,10 +289,16 @@ def media_note(msg_div):
 
 
 def album_compatible(media):
-    """Telegram albums hold photos/videos together, or documents together. Nothing else."""
+    """Whether Telegram can send this complete media set as one native album.
+
+    Photos and videos may be mixed. Documents and audio files each form
+    homogeneous albums, but cannot be mixed with each other. Animations,
+    voice notes, round videos and stickers are valid media items, but not
+    members of Telegram's native sendMediaGroup album type.
+    """
     kinds = {kind for _path, kind in media}
+    if len(kinds) == 0:
+        return False
     if kinds <= {"photo", "video"}:
         return True
-    if kinds == {"document"}:
-        return True
-    return False
+    return len(kinds) == 1 and next(iter(kinds)) in {"document", "audio"}
