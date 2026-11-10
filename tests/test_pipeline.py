@@ -416,7 +416,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(caption[italic_caption.offset:italic_caption.offset + italic_caption.length],
                          "original caption")
 
-    def test_native_forward_with_media_bypasses_reconstructed_quote_prefix(self):
+    def test_native_forward_with_media_and_archive_header_reconstructs_inline(self):
         media_path = "video_files/native-forward.mp4"
         fakes.write_file(self.folder.name, media_path)
         forwarded = (
@@ -429,7 +429,9 @@ class PipelineTests(unittest.TestCase):
             '<div class="from_name"><a href="https://t.me/NewsChannel/4321">News Channel</a></div>'
             '<div class="media_wrap clearfix">'
             f'<a class="video_file_wrap" href="{media_path}"></a>'
-            '</div></div></div></div>'
+            '</div>'
+            '<div class="text">original video caption</div>'
+            '</div></div></div>'
         )
         fakes.write_export(self.folder.name, [forwarded])
         native_calls = []
@@ -439,22 +441,15 @@ class PipelineTests(unittest.TestCase):
             return 777
 
         with patch.object(pipeline.sending, "_try_native_forward", new=native_forward):
-            client, output, _ = self.run_once()
+            client, _, _ = self.run_once()
 
-        self.assertEqual(native_calls, [("NewsChannel", 4321)])
-        # The only text call is the existing sender/timestamp annotation that
-        # is replied to the genuine native forward; no reconstructed quote or
-        # duplicate media upload is added.
-        text_calls = client.kinds("send_message")
-        self.assertEqual(len(text_calls), 1)
-        self.assertNotIn("Forwarded from", text_calls[0][1])
-        self.assertNotIn(
-            "MessageEntityBlockquote",
-            [type(entity).__name__ for entity in text_calls[0][2]["formatting_entities"]],
-        )
-        self.assertEqual(text_calls[0][2]["reply_to"], 777)
-        self.assertEqual(client.kinds("send_file"), [])
-        self.assertIn("native_forwards=1", output)
+        self.assertEqual(native_calls, [])
+        self.assertEqual(client.kinds("send_message"), [])
+        media_calls = client.kinds("send_file")
+        self.assertEqual(len(media_calls), 1)
+        caption = media_calls[0][2]["caption"]
+        self.assertIn("Forwarded from News Channel", caption)
+        self.assertIn("original video caption", caption)
 
     def test_real_telegram_forward_body_link_is_used_for_native_source(self):
         forwarded = html.fromstring(
@@ -480,12 +475,10 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(data["forward_timestamp_has_time"])
         self.assertTrue(data["forward_timestamp_has_seconds"])
 
-    def test_native_forward_path_remains_native_and_does_not_use_reconstruction_quote(self):
+    def test_native_forward_path_remains_available_without_archive_annotation(self):
         forwarded = (
             '<div class="message default clearfix" id="message139">'
             '<div class="body">'
-            '<div class="pull_right date details" title="08.11.2026 07:09:41 UTC+02:00">07:09</div>'
-            '<div class="from_name">Alice</div>'
             '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
             '<div class="forwarded body">'
             '<div class="from_name"><a href="https://t.me/NewsChannel/4321">News Channel</a></div>'
@@ -503,16 +496,7 @@ class PipelineTests(unittest.TestCase):
             client, output, _ = self.run_once()
 
         self.assertEqual(native_calls, [("NewsChannel", 4321)])
-        # Native forwarding sends the source message itself; the only text
-        # message is the normal archive header annotated as a reply.
-        self.assertEqual(client.texts(), ["Alice\n8 November 2026 · 07:09"])
-        send_call = client.kinds("send_message")[0]
-        self.assertEqual(send_call[2]["reply_to"], 777)
-        self.assertNotIn("Forwarded from", send_call[1])
-        self.assertNotIn(
-            "MessageEntityBlockquote",
-            [type(entity).__name__ for entity in send_call[2]["formatting_entities"]],
-        )
+        self.assertEqual(client.kinds("send_message"), [])
         self.assertIn("native_forwards=1", output)
 
     def test_reply_to_a_later_message_is_deferred_then_linked(self):
@@ -899,30 +883,40 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("after shared-caption album", client.texts()[-1])
         self.assertIn("sent=4", output)
 
-    def test_forwarded_seven_video_album_keeps_caption_from_first_media_item(self):
-        """Mirror the export shape of messages 458–464, including the caption."""
-        records = [
-            fakes.message(457, fakes.text("previous sender context"),
-                          sender="⛯⛯", minute=1)
-        ]
-        expected_files = []
-        forward_clock = (
+    def test_actual_export_forwarded_video_groups_keep_caption_and_boundary(self):
+        """Reproduce the actual 448–464 export structure and its 197-second boundary."""
+        records = [fakes.message(447, fakes.text("previous album context"),
+                                 sender="⛯⛯", minute=1)]
+        expected_first, expected_second = [], []
+        first_forward_clock = (
+            "14:35:07", "14:35:08", "14:35:08", "14:35:09", "14:35:09",
+            "14:35:10", "14:35:10", "14:35:11", "14:35:11", "14:35:14",
+        )
+        second_forward_clock = (
             "14:38:31", "14:38:32", "14:38:32", "14:38:33",
             "14:38:33", "14:38:34", "14:38:34",
         )
         outer_clock = (
-            "18:25:39", "18:25:39", "18:25:40", "18:25:40",
-            "18:25:41", "18:25:45", "18:25:46",
+            "18:25:32", "18:25:32", "18:25:33", "18:25:33", "18:25:34",
+            "18:25:34", "18:25:37", "18:25:37", "18:25:38", "18:25:38",
+            "18:25:39", "18:25:39", "18:25:40", "18:25:40", "18:25:41",
+            "18:25:45", "18:25:46",
         )
-        for index, source_id in enumerate(range(458, 465)):
-            relative = f"video_files/video-{source_id}.mp4"
+        for index, source_id in enumerate(range(448, 465)):
+            if source_id <= 457:
+                forward_clock = first_forward_clock[source_id - 448]
+                relative = f"video_files/video ({source_id - 416}).mp4"
+                expected_first.append(os.path.join(self.folder.name, relative))
+            else:
+                forward_clock = second_forward_clock[source_id - 458]
+                relative = f"video_files/video ({source_id - 416}).mp4"
+                expected_second.append(os.path.join(self.folder.name, relative))
             fakes.write_file(self.folder.name, relative)
-            expected_files.append(os.path.join(self.folder.name, relative))
-            joined = source_id != 463
+            joined = source_id not in (454, 463)
             classes = " joined" if joined else ""
             outer_sender = (
                 '<div class="from_name">⛯⛯</div>'
-                if source_id in (458, 463) else ""
+                if source_id in (454, 463) else ""
             )
             caption_html = (
                 '<div class="text">Paranoid schizophrenia<br>You want more?</div>'
@@ -934,34 +928,90 @@ class PipelineTests(unittest.TestCase):
                 f'<div class="pull_right date details" '
                 f'title="09.07.2026 {outer_clock[index]} UTC+02:00">18:25</div>'
                 f'{outer_sender}'
-                '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
+                '<div class="pull_left forwarded userpic_wrap">'
+                '<div class="userpic userpic2"><div class="initials">e</div></div></div>'
                 '<div class="forwarded body">'
                 f'<div class="from_name">espritzeit '
-                f'<span class="date details" title="08.07.2026 {forward_clock[index]} UTC+02:00">'
-                f'08.07.2026 {forward_clock[index]}</span></div>'
+                f'<span class="date details" title="08.07.2026 {forward_clock} UTC+02:00">'
+                f'08.07.2026 {forward_clock}</span></div>'
                 '<div class="media_wrap clearfix">'
-                f'<a class="video_file_wrap clearfix pull_left" href="{relative}"></a>'
-                '</div>'
+                f'<a class="video_file_wrap clearfix pull_left" href="{relative}">'
+                '<div class="video_play_bg"><div class="video_play"></div></div>'
+                '<div class="video_duration">00:06</div>'
+                f'<img class="video_file" src="{relative}_thumb.jpg" '
+                'style="width: 260px; height: 260px"/>'
+                '</a></div>'
                 f'{caption_html}'
                 '</div></div></div>'
             )
         fakes.write_export(self.folder.name, records)
 
-        client, output, _ = self.run_once()
+        with config.use_settings(self.settings()):
+            groups = htmlexport.infer_media_groups([self.path("messages.html")])
+        self.assertEqual(list(groups), ["448", "458"])
+        self.assertEqual([row["msg_id"] for row in groups["448"]], list(map(str, range(448, 458))))
+        self.assertEqual([row["msg_id"] for row in groups["458"]], list(map(str, range(458, 465))))
+        self.assertEqual(groups["458"][0]["body_text"], "Paranoid schizophrenia\nYou want more?")
+        caption, _entities = album.caption_for_record(groups["458"][0])
+        self.assertIn("Paranoid schizophrenia\nYou want more?", caption)
 
+        client, output, _ = self.run_once()
         album_calls = client.kinds("send_file")
-        self.assertEqual(len(album_calls), 1)
-        sent_files, kwargs = album_calls[0][1], album_calls[0][2]
-        self.assertEqual(sent_files, expected_files)
-        self.assertEqual(len(kwargs["caption"]), 7)
-        self.assertIn("Paranoid schizophrenia\nYou want more?", kwargs["caption"][0])
-        self.assertIn("Forwarded from espritzeit", kwargs["caption"][0])
-        self.assertEqual(len({message.grouped_id for message in client.messages.values()
-                              if message.grouped_id is not None}), 1)
+        self.assertEqual(len(album_calls), 2)
+        first_files, first_kwargs = album_calls[0][1], album_calls[0][2]
+        second_files, second_kwargs = album_calls[1][1], album_calls[1][2]
+        self.assertEqual(first_files, expected_first)
+        self.assertEqual(second_files, expected_second)
+        self.assertEqual(len(first_kwargs["caption"]), 10)
+        self.assertEqual(len(second_kwargs["caption"]), 7)
+        self.assertIn("Paranoid schizophrenia\nYou want more?", second_kwargs["caption"][0])
+        grouped_ids = {message.grouped_id for message in client.messages.values()
+                       if message.grouped_id is not None}
+        self.assertEqual(len(grouped_ids), 2)
+        self.assertIn("album 448–457", output)
         self.assertIn("album 458–464", output)
         self.assertIn("verified Telegram album", output)
         with config.use_settings(self.settings()):
-            self.assertEqual(set(progress.load_id_map()), {str(i) for i in range(457, 465)})
+            self.assertEqual(set(progress.load_id_map()), {str(i) for i in range(447, 465)})
+
+    def test_forwarded_album_with_real_source_links_is_grouped_not_native_forwarded_item_by_item(self):
+        records = []
+        expected = []
+        for source_id, clock in ((801, "09:00:00"), (802, "09:00:01")):
+            relative = f"video_files/linked-{source_id}.mp4"
+            fakes.write_file(self.folder.name, relative)
+            expected.append(os.path.join(self.folder.name, relative))
+            joined = " joined" if source_id == 802 else ""
+            records.append(
+                f'<div class="message default clearfix{joined}" id="message{source_id}">'
+                '<div class="body">'
+                '<div class="pull_right date details" title="12.03.2023 10:01:00 UTC+02:00">10:01</div>'
+                '<div class="from_name">Alice</div>'
+                '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
+                '<div class="forwarded body">'
+                f'<div class="from_name"><a href="https://t.me/NewsChannel/{source_id}">News Channel</a>'
+                f'<span class="date details" title="12.03.2023 {clock} UTC+02:00">{clock}</span></div>'
+                '<div class="media_wrap clearfix">'
+                f'<a class="video_file_wrap" href="{relative}"></a>'
+                '</div>'
+                f'<div class="text">caption {source_id}</div>'
+                '</div></div></div>'
+            )
+        fakes.write_export(self.folder.name, records)
+
+        with config.use_settings(self.settings()):
+            groups = htmlexport.infer_media_groups([self.path("messages.html")])
+        self.assertEqual([row["msg_id"] for row in groups["801"]], ["801", "802"])
+
+        client, _, _ = self.run_once()
+        calls = client.kinds("send_file")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1], expected)
+        self.assertEqual(len(calls[0][2]["caption"]), 2)
+        self.assertTrue(all("Forwarded from News Channel" in row for row in calls[0][2]["caption"]))
+        self.assertTrue(all(f"caption {source_id}" in row for row, source_id in zip(calls[0][2]["caption"], (801, 802))))
+        self.assertEqual(client.kinds("send_message"), [])
+
 
     def test_forwarded_round_video_keeps_attribution_in_same_media_message(self):
         media_path = "round_video_messages/forwarded-round-video.mp4"
