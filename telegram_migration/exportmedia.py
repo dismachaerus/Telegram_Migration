@@ -70,8 +70,10 @@ def _classify(rel, wrap_class, full, anchor_classes=(), export_label=""):
             return "sticker_video"
         return "sticker_unknown"
 
-    if (wrap_class == "roundvideo_file_wrap" or "round_video_messages" in lower_rel
-            or "media_video" in classes):
+    # Generic media_video is used for exported video thumbnails in more than
+    # one context. A round video note has dedicated wrapper/path markers;
+    # the generic class alone must not override an ordinary video extension.
+    if wrap_class == "roundvideo_file_wrap" or "round_video_messages" in lower_rel:
         return "round_video"
     if "voice_messages" in lower_rel or "media_voice_message" in classes:
         return "voice"
