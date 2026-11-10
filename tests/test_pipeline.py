@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from telethon.tl import types as tl
 
-from telegram_migration import bigfiles, config, customemoji, htmlexport, mediatools, pipeline, progress
+from telegram_migration import album, bigfiles, config, customemoji, htmlexport, mediatools, pipeline, progress
 from lxml import html
 from telegram_migration.config import Settings
 
@@ -994,8 +994,8 @@ class PipelineTests(unittest.TestCase):
                 '<div class="media_wrap clearfix">'
                 f'<a class="video_file_wrap" href="{relative}"></a>'
                 '</div>'
-                f'<div class="text">caption {source_id}</div>'
-                '</div></div></div>'
+                + ('<div class="text">caption 801</div>' if source_id == 801 else '')
+                + '</div></div></div>'
             )
         fakes.write_export(self.folder.name, records)
 
@@ -1009,7 +1009,8 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(calls[0][1], expected)
         self.assertEqual(len(calls[0][2]["caption"]), 2)
         self.assertTrue(all("Forwarded from News Channel" in row for row in calls[0][2]["caption"]))
-        self.assertTrue(all(f"caption {source_id}" in row for row, source_id in zip(calls[0][2]["caption"], (801, 802))))
+        self.assertIn("caption 801", calls[0][2]["caption"][0])
+        self.assertEqual(calls[0][2]["caption"][1].count("caption 801"), 0)
         self.assertEqual(client.kinds("send_message"), [])
 
 
