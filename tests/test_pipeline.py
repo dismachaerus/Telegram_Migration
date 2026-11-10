@@ -1132,8 +1132,8 @@ class PipelineTests(unittest.TestCase):
         calls = client.kinds("send_file")
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][1], expected)
-        self.assertEqual(calls[0][2]["caption"], ["", ""])
         self.assertIn("caption 801", calls[0][2]["caption"][0])
+        self.assertEqual(calls[0][2]["caption"][1:], [""])
         self.assertIn("Forwarded from News Channel", calls[0][2]["caption"][0])
         self.assertFalse(any("caption 801" in text for text in client.texts()))
 
