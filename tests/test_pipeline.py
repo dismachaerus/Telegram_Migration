@@ -954,7 +954,7 @@ class PipelineTests(unittest.TestCase):
         sent_files, kwargs = album_calls[0][1], album_calls[0][2]
         self.assertEqual(sent_files, expected_files)
         self.assertEqual(len(kwargs["caption"]), 7)
-        self.assertIn("Paranoid schizophrenia\\nYou want more?", kwargs["caption"][0])
+        self.assertIn("Paranoid schizophrenia\nYou want more?", kwargs["caption"][0])
         self.assertIn("Forwarded from espritzeit", kwargs["caption"][0])
         self.assertEqual(len({message.grouped_id for message in client.messages.values()
                               if message.grouped_id is not None}), 1)
