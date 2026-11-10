@@ -256,6 +256,40 @@ class InlineCustomEmojiTests(unittest.TestCase):
             self.assertEqual((entity.offset, entity.length, entity.document_id),
                              (2, 5, 987654321))
 
+    def test_bot_auth_skips_custom_emoji_sticker_set_creation(self):
+        class BotClient:
+            async def get_me(self):
+                return SimpleNamespace(username="migration_bot", bot=True)
+
+            async def get_input_entity(self, peer):
+                raise AssertionError("bot authentication must not attempt sticker-set uploads")
+
+            async def upload_file(self, *args, **kwargs):
+                raise AssertionError("bot authentication must not upload custom emojis")
+
+            async def __call__(self, request):
+                raise AssertionError("bot authentication must not call sticker-set methods")
+
+        with tempfile.TemporaryDirectory() as temp:
+            sticker = Path(temp) / "stickers" / "flower.webp"
+            sticker.parent.mkdir()
+            sticker.write_bytes(b"static sticker bytes")
+            page = Path(temp) / "messages.html"
+            page.write_text(
+                '<html><body><div class="message" id="message1">'
+                '<div class="text"><a href="stickers/flower.webp">🌸</a></div>'
+                '</div></body></html>',
+                encoding="utf-8",
+            )
+            with patch.object(config.get_settings(), "base_dir", temp):
+                mapping = asyncio.run(
+                    customemoji.prepare_inline_custom_emojis(
+                        BotClient(), [str(page)],
+                        peer=tl.InputPeerChannel(channel_id=123, access_hash=456),
+                    )
+                )
+            self.assertEqual(mapping, {})
+
     def test_oversize_inline_custom_emoji_is_left_as_fallback_text(self):
         class NoUploadClient:
             async def get_me(self):
