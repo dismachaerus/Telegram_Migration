@@ -789,6 +789,62 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("album 702–711", output)
         self.assertIn("sent=12", output)
 
+    def test_source_group_inference_is_type_agnostic_for_every_supported_size(self):
+        records = []
+        expected = {}
+        next_id = 2000
+        media_builders = (
+            ("photo", lambda p: fakes.photo(p), "photos"),
+            ("video", lambda p: fakes.video(p), "video_files"),
+            ("gif", lambda p: (
+                '<div class="media_wrap clearfix"><a class="animated_wrap" '
+                f'href="{p}"><div class="gif_play">GIF</div></a></div>'
+            ), "video_files"),
+            ("voice", lambda p: (
+                '<div class="media_wrap clearfix"><a class="media_voice_message" '
+                f'href="{p}"></a></div>'
+            ), "voice_messages"),
+            ("round_video", lambda p: (
+                '<div class="roundvideo_file_wrap"><a '
+                f'href="{p}"></a></div>'
+            ), "round_video_messages"),
+            ("sticker", lambda p: (
+                '<div class="sticker_wrap"><a '
+                f'href="{p}"></a></div>'
+            ), "stickers"),
+        )
+
+        for count in range(2, 11):
+            first_id = next_id
+            expected[str(first_id)] = count
+            for index in range(count):
+                kind, builder, folder = media_builders[index % len(media_builders)]
+                extension = {
+                    "photo": ".jpg", "video": ".mp4", "gif": ".mp4",
+                    "voice": ".ogg", "round_video": ".mp4", "sticker": ".webp",
+                }[kind]
+                relative = f"{folder}/group_{count}_{index}{extension}"
+                fakes.write_file(self.folder.name, relative)
+                joined = "joined" if index else ""
+                caption = fakes.text(f"caption for {count}-item source group") if index == 0 else ""
+                records.append(fakes.message(
+                    next_id, builder(relative) + caption,
+                    sender="Alice", classes=joined,
+                ))
+                next_id += 1
+            # A text-only record is an explicit boundary between source groups.
+            records.append(fakes.message(next_id, fakes.text("group boundary"), sender="Alice"))
+            next_id += 1
+
+        fakes.write_export(self.folder.name, records)
+        with config.use_settings(self.settings()):
+            groups = htmlexport.infer_media_groups([self.path("messages.html")])
+
+        self.assertEqual(set(groups), set(expected))
+        for first_id, count in expected.items():
+            self.assertEqual(len(groups[first_id]), count)
+            self.assertTrue(all(len(member["media"]) == 1 for member in groups[first_id]))
+
     def test_joined_jpg_documents_keep_owner_and_caption_in_one_album(self):
         records = []
         expected_files = []
