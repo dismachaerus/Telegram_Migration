@@ -23,11 +23,9 @@ from . import bigfiles, config, exportmedia, mediatools
 from .htmlutil import css_classes, find_first
 from .textutil import sanitize_text
 
-
 _CACHE_VERSION = 1
 _CACHE_NAME = "migration_custom_emoji_ids.json"
 _PACK_SIZE = 200
-
 
 @lru_cache(maxsize=4096)
 def _asset_key_cached(path: str, kind: str, alt: str, mtime_ns: int, size: int) -> str:
@@ -39,7 +37,6 @@ def _asset_key_cached(path: str, kind: str, alt: str, mtime_ns: int, size: int) 
     identity = "\0".join((digest.hexdigest(), kind, os.path.splitext(path)[1].casefold(), alt))
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
-
 def _asset_key(path: str, kind: str, alt: str) -> str:
     stat = os.stat(path)
     return _asset_key_cached(
@@ -48,11 +45,9 @@ def _asset_key(path: str, kind: str, alt: str) -> str:
         stat.st_size,
     )
 
-
 def reference_key(path: str, kind: str, alt: str) -> str:
     """Fast per-export lookup key used after the content hashes are prepared."""
     return "\0".join((os.path.normcase(os.path.abspath(path)), kind, alt))
-
 
 def collect_inline_custom_emojis(files):
     """Find unique, existing inline emoji assets in export order.
@@ -108,10 +103,8 @@ def collect_inline_custom_emojis(files):
 
     return list(assets.values()), reference_count
 
-
 def _cache_path():
     return os.path.join(config.settings.base_dir, _CACHE_NAME)
-
 
 def _load_cache():
     path = _cache_path()
@@ -126,7 +119,6 @@ def _load_cache():
     except Exception as exc:
         print(f"  warning: could not read custom-emoji cache: {type(exc).__name__}: {exc}")
         return {}
-
 
 def _save_cache(document_ids):
     path = _cache_path()
@@ -150,7 +142,6 @@ def _save_cache(document_ids):
             pass
         return False
 
-
 def _pack_short_name(keys, bot_username):
     digest = hashlib.sha256("\n".join(sorted(keys)).encode("ascii")).hexdigest()[:12]
     username = re.sub(r"_+", "_", re.sub(r"[^a-z0-9_]", "", str(bot_username).casefold()))
@@ -160,7 +151,6 @@ def _pack_short_name(keys, bot_username):
     if len(short_name) > 64:
         raise RuntimeError("The bot username is too long for a Telegram sticker-set short name.")
     return short_name
-
 
 def _mime_and_attributes(asset):
     path, kind = asset["path"], asset["kind"]
@@ -196,7 +186,6 @@ def _mime_and_attributes(asset):
         return "video/webm", attributes, True
     raise ValueError(f"Unsupported inline custom-emoji file: {path}")
 
-
 async def _upload_custom_emoji_document(client, asset, peer):
     """Upload one sticker document without posting it to the destination channel."""
     mime_type, attributes, nosound_video = _mime_and_attributes(asset)
@@ -221,7 +210,6 @@ async def _upload_custom_emoji_document(client, asset, peer):
         )
     return document
 
-
 def _input_sticker_item(document, alt):
     reference = tl.InputDocument(
         id=int(document.id),
@@ -229,7 +217,6 @@ def _input_sticker_item(document, alt):
         file_reference=document.file_reference,
     )
     return tl.InputStickerSetItem(document=reference, emoji=alt)
-
 
 def _document_names(sticker_set):
     """Index set documents by the stable filename embedded at upload time."""
@@ -246,7 +233,6 @@ def _document_names(sticker_set):
             found[(filename, alt)] = document
     return found
 
-
 def _is_missing_sticker_set(exc):
     message = f"{type(exc).__name__}: {exc}".casefold()
     return any(token in message for token in (
@@ -255,11 +241,9 @@ def _is_missing_sticker_set(exc):
         "stickersetinvalid",
     ))
 
-
 def _is_short_name_occupied(exc):
     message = f"{type(exc).__name__}: {exc}".casefold()
     return any(token in message for token in ("pack_short_name_occupied", "packshortnameoccupied", "short name is occupied", "shortnameoccupied"))
-
 
 async def _get_sticker_set(client, short_name):
     try:
@@ -272,7 +256,6 @@ async def _get_sticker_set(client, short_name):
             return None
         raise
 
-
 async def _create_sticker_set(client, short_name, title, asset, document):
     return await client(functions.stickers.CreateStickerSetRequest(
         user_id=tl.InputUserSelf(),
@@ -282,13 +265,11 @@ async def _create_sticker_set(client, short_name, title, asset, document):
         emojis=True,
     ))
 
-
 async def _add_sticker_to_set(client, short_name, asset, document):
     return await client(functions.stickers.AddStickerToSetRequest(
         stickerset=tl.InputStickerSetShortName(short_name=short_name),
         sticker=_input_sticker_item(document, asset["alt"]),
     ))
-
 
 async def _prepare_pack(client, assets, pack_index, username, peer, cache, result_ids):
     keys = [asset["key"] for asset in assets]
@@ -374,7 +355,6 @@ async def _prepare_pack(client, assets, pack_index, username, peer, cache, resul
                 f"{type(exc).__name__}: {exc}. Its fallback glyph will remain plain text."
             )
 
-
 async def prepare_inline_custom_emojis(client, files, *, peer, dry_run=False):
     """Create/reuse bot-owned custom emoji sticker sets and return asset-key -> document ID.
 
@@ -452,7 +432,6 @@ async def prepare_inline_custom_emojis(client, files, *, peer, dry_run=False):
         )
     return reference_ids
 
-
 async def prepare_inline_custom_emojis_for_run(client, files, *, peer, dry_run=False):
     """Prepare custom emoji IDs safely; leave fallback glyphs when preparation fails."""
     try:
@@ -463,7 +442,6 @@ async def prepare_inline_custom_emojis_for_run(client, files, *, peer, dry_run=F
             f"({type(exc).__name__}: {exc}); fallback emoji text will be preserved"
         )
         return {}
-
 
 def apply_custom_emoji_entities(data, document_ids):
     """Attach MessageEntityCustomEmoji to fallback glyphs at their original offsets."""
