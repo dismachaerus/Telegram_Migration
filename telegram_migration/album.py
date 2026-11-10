@@ -1,5 +1,7 @@
 """Helpers for inferred media albums reconstructed from Telegram Desktop HTML."""
 
+import copy
+
 from telethon.errors import MessageNotModifiedError
 from telethon.tl import types as tl
 
@@ -119,7 +121,7 @@ def prepare_inferred_group(data, group, id_map, manual_done, partial, persist_id
             offset = u16len(combined_text + separator)
             combined_text += separator + caption_text
             for entity in caption_ents:
-                shifted = entity.__class__(**entity.to_dict())
+                shifted = copy.copy(entity)
                 shifted.offset += offset
                 combined_entities.append(shifted)
         all_media.extend(member["media"])
