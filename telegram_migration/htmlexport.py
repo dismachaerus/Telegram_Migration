@@ -318,9 +318,14 @@ def extract_message_data(msg_div):
     preview = _reply_preview(reply_div)
     reply_src_id = _extract_reply_source_id(msg_div)
 
-    text_div = find_first(msg_div, "text")
+    # For forwarded messages, read the payload text from the forwarded body
+    # itself. Searching the whole message can select an unrelated outer text
+    # block first and silently omit the forwarded caption.
+    text_root = find_first(fwd_div, "text") if fwd_div is not None else None
+    if text_root is None:
+        text_root = find_first(msg_div, "text")
     body_text, body_entities, inline_stickers, missing_stickers = (
-        parse_rich_text_with_stickers(text_div)
+        parse_rich_text_with_stickers(text_root)
     )
 
     media = exportmedia.find_media(msg_div)
