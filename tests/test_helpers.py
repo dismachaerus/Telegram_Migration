@@ -911,7 +911,13 @@ class AsyncSendTests(unittest.TestCase):
                 calls = []
                 async def send_file(channel, files, **kwargs):
                     calls.append((channel, files, kwargs))
-                    return [SimpleNamespace(id=501), SimpleNamespace(id=502)]
+                    captions = kwargs.get("caption") or ["", ""]
+                    if not isinstance(captions, (list, tuple)):
+                        captions = [captions, ""]
+                    return [
+                        SimpleNamespace(id=501, grouped_id=77, message=captions[0]),
+                        SimpleNamespace(id=502, grouped_id=77, message=captions[1]),
+                    ]
                 client = SimpleNamespace(send_file=send_file)
                 state = {"src": "77"}
                 with patch.object(config.get_settings(), "partial_file", str(Path(temp) / "partial.jsonl")):
@@ -947,7 +953,13 @@ class AsyncSendTests(unittest.TestCase):
                 calls = []
                 async def send_file(channel, files, **kwargs):
                     calls.append((channel, files, kwargs))
-                    return [SimpleNamespace(id=501), SimpleNamespace(id=502)]
+                    captions = kwargs.get("caption") or ["", ""]
+                    if not isinstance(captions, (list, tuple)):
+                        captions = [captions, ""]
+                    return [
+                        SimpleNamespace(id=501, grouped_id=77, message=captions[0]),
+                        SimpleNamespace(id=502, grouped_id=77, message=captions[1]),
+                    ]
                 client = SimpleNamespace(send_file=send_file)
                 state = {"src": "77"}
                 bold = tl.MessageEntityBold(offset=0, length=5)
@@ -976,7 +988,13 @@ class AsyncSendTests(unittest.TestCase):
 
                 async def send_file(channel, files, **kwargs):
                     album_calls.append((files, kwargs))
-                    return [SimpleNamespace(id=501), SimpleNamespace(id=502)]
+                    captions = kwargs.get("caption") or ["", ""]
+                    if not isinstance(captions, (list, tuple)):
+                        captions = [captions, ""]
+                    return [
+                        SimpleNamespace(id=501, grouped_id=77, message=captions[0]),
+                        SimpleNamespace(id=502, grouped_id=77, message=captions[1]),
+                    ]
 
                 async def send_message(channel, text, **kwargs):
                     tail_calls.append((text, kwargs))
