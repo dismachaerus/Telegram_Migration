@@ -49,7 +49,7 @@ class AlbumVerificationTests(unittest.TestCase):
         from telethon.tl import types as tl
 
         expected_entities = [tl.MessageEntityBold(offset=0, length=7)]
-        stale = SimpleNamespace(id=79, grouped_id=9003, message="caption")
+        stale = SimpleNamespace(id=79, grouped_id=9003, message="old caption")
         confirmed = SimpleNamespace(
             id=79, grouped_id=9003, message="caption", entities=[]
         )
