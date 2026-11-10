@@ -122,11 +122,13 @@ def _album_candidate(data, effective_sender):
     path, kind = data["media"][0]
     if kind not in ("photo", "video", "document"):
         return False
-    if not effective_sender and not data.get("forward_name"):
-        return False
+    # Group reconstruction must not depend on whether sender names are
+    # configured for display or whether this export retained its date field.
+    # Adjacency, joined markers, sender/forward context and media compatibility
+    # are evaluated together before a run is accepted as an album.
     if data.get("is_forwarded") and not data.get("forward_name"):
         return False
-    return bool(data.get("timestamp"))
+    return True
 
 
 def _caption_signature(record):
@@ -323,7 +325,6 @@ async def verify_mapped_album(client, channel, data, id_map, partial, source_id)
             f"Partial album IDs disagree with the migration ID map for source id={source_id}; "
             "refusing to guess which destination messages belong to this album"
         )
-    from . import sending
     first_caption, _continuation = sending.inferred_album_caption_parts(
         data.get("_album_caption_text", ""),
         data.get("_album_caption_entities", []),
