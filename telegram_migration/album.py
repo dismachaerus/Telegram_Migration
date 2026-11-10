@@ -70,24 +70,31 @@ def caption_for_record(record):
 
 
 def caption_for_group(group):
-    """Collect distinct source captions into one text post below the whole album."""
-    blocks = []
+    """Collect distinct source caption text, without per-item archive headers."""
     entities = []
     seen = set()
     text = ""
     for record in group:
-        body = (record.get("body_text") or "").strip()
-        if not body or body in seen:
+        raw = record.get("body_text") or ""
+        caption = raw.strip()
+        if not caption or caption in seen:
             continue
-        seen.add(body)
-        block, block_entities = caption_for_record(record)
+        seen.add(caption)
+
+        leading = len(raw) - len(raw.lstrip())
+        trim_offset = u16len(raw[:leading])
+        caption_length = u16len(caption)
         if text:
             text += "\n\n"
-        offset = u16len(text)
-        text += block
-        for entity in block_entities:
+        base_offset = u16len(text)
+        text += caption
+        for entity in record.get("body_entities") or []:
+            start = int(entity.offset) - trim_offset
+            end = start + int(entity.length)
+            if start < 0 or end > caption_length:
+                continue
             shifted = copy(entity)
-            shifted.offset += offset
+            shifted.offset = base_offset + start
             entities.append(shifted)
     return text, entities
 
