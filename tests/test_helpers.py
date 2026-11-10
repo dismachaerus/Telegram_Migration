@@ -989,31 +989,29 @@ class AsyncSendTests(unittest.TestCase):
                 self.assertEqual(ents[1], [])
         asyncio.run(scenario())
 
-    def test_inferred_album_splits_long_captions_and_resumes_overflow(self):
+    def test_inferred_album_keeps_media_caption_free_and_resumes_caption_below(self):
         async def scenario():
             with tempfile.TemporaryDirectory() as temp:
                 album_calls = []
-                tail_calls = []
+                caption_calls = []
                 sent_messages = []
-                fail_tail_once = [True]
+                fail_caption_once = [True]
 
                 async def send_file(channel, files, **kwargs):
                     album_calls.append((files, kwargs))
-                    captions = kwargs.get("caption") or ["", ""]
-                    if not isinstance(captions, (list, tuple)):
-                        captions = [captions, ""]
+                    self.assertEqual(kwargs.get("caption"), ["", ""])
                     sent_messages[:] = [
-                        SimpleNamespace(id=501, grouped_id=77, message=captions[0]),
-                        SimpleNamespace(id=502, grouped_id=77, message=captions[1]),
+                        SimpleNamespace(id=501, grouped_id=77, message=""),
+                        SimpleNamespace(id=502, grouped_id=77, message=""),
                     ]
                     return sent_messages[:]
 
                 async def send_message(channel, text, **kwargs):
-                    tail_calls.append((text, kwargs))
-                    if fail_tail_once[0]:
-                        fail_tail_once[0] = False
-                        raise RuntimeError("temporary tail failure")
-                    return SimpleNamespace(id=601)
+                    caption_calls.append((text, kwargs))
+                    if fail_caption_once[0]:
+                        fail_caption_once[0] = False
+                        raise RuntimeError("temporary caption failure")
+                    return SimpleNamespace(id=601 + len(caption_calls))
 
                 async def get_messages(channel, ids=None):
                     wanted = set(ids if isinstance(ids, (list, tuple)) else [ids])
@@ -1023,34 +1021,36 @@ class AsyncSendTests(unittest.TestCase):
                     send_file=send_file, send_message=send_message,
                     get_messages=get_messages,
                 )
+                caption = "H" * 5000
                 state = {"src": "77"}
                 data = {
                     "msg_id": "77",
                     "_inferred_album": True,
-                    "_album_captions": ["H" * 1100, "short caption"],
-                    "_album_caption_entities": [[], []],
+                    "_album_caption_text": caption,
+                    "_album_caption_entities": [],
                 }
                 media = [("photos/a.jpg", "photo"), ("photos/b.jpg", "photo")]
                 with patch.object(config.get_settings(), "partial_file",
                                   str(Path(temp) / "partial.jsonl")):
-                    with self.assertRaisesRegex(RuntimeError, "temporary tail failure"):
+                    with self.assertRaisesRegex(RuntimeError, "temporary caption failure"):
                         await sending._do_send(
                             client, "channel", [("", [])], media, None, None,
                             state, None, "77", data,
                         )
                     self.assertEqual(len(album_calls), 1)
-                    self.assertLessEqual(len(album_calls[0][1]["caption"][0]), 1024)
-                    self.assertEqual(state["album_caption_tail_counts"], [1, 0])
+                    self.assertEqual(album_calls[0][1]["caption"], ["", ""])
+                    self.assertEqual(state["album_message_ids"], [501, 502])
 
                     result = await sending._do_send(
                         client, "channel", [("", [])], media, None, None,
                         state, None, "77", data,
                     )
+
                 self.assertEqual(result, [501, 502])
                 self.assertEqual(len(album_calls), 1)
-                self.assertEqual(len(tail_calls), 2)
-                self.assertEqual(tail_calls[0][0], "H" * 76)
-                self.assertEqual(tail_calls[1][0], "H" * 76)
+                self.assertEqual([text for text, _kwargs in caption_calls],
+                                 ["H" * 4096, "H" * 4096, "H" * 904])
+                self.assertEqual(state["album_caption_prog"]["done"], 2)
         asyncio.run(scenario())
 
     def test_video_without_audio_probe_result_is_not_forced_to_silent_video(self):
