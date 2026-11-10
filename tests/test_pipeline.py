@@ -899,6 +899,99 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("after shared-caption album", client.texts()[-1])
         self.assertIn("sent=4", output)
 
+    def test_forwarded_seven_video_album_keeps_caption_from_first_media_item(self):
+        """Mirror the export shape of messages 458–464, including the caption."""
+        records = []
+        expected_files = []
+        forward_clock = (
+            "14:38:31", "14:38:32", "14:38:32", "14:38:33",
+            "14:38:33", "14:38:34", "14:38:34",
+        )
+        outer_clock = (
+            "18:25:39", "18:25:39", "18:25:40", "18:25:40",
+            "18:25:41", "18:25:45", "18:25:46",
+        )
+        for index, source_id in enumerate(range(458, 465)):
+            relative = f"video_files/video-{source_id}.mp4"
+            fakes.write_file(self.folder.name, relative)
+            expected_files.append(os.path.join(self.folder.name, relative))
+            joined = source_id not in (458, 463)
+            classes = " joined" if joined else ""
+            outer_sender = (
+                '<div class="from_name">⛯⛯</div>'
+                if source_id in (458, 463) else ""
+            )
+            caption_html = (
+                '<div class="text">Paranoid schizophrenia<br>You want more?</div>'
+                if source_id == 458 else ""
+            )
+            records.append(
+                f'<div class="message default clearfix{classes}" id="message{source_id}">'
+                '<div class="body">'
+                f'<div class="pull_right date details" '
+                f'title="09.07.2026 {outer_clock[index]} UTC+02:00">18:25</div>'
+                f'{outer_sender}'
+                '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
+                '<div class="forwarded body">'
+                f'<div class="from_name">espritzeit '
+                f'<span class="date details" title="08.07.2026 {forward_clock[index]} UTC+02:00">'
+                f'08.07.2026 {forward_clock[index]}</span></div>'
+                '<div class="media_wrap clearfix">'
+                f'<a class="video_file_wrap clearfix pull_left" href="{relative}"></a>'
+                '</div>'
+                f'{caption_html}'
+                '</div></div></div>'
+            )
+        fakes.write_export(self.folder.name, records)
+
+        client, output, _ = self.run_once()
+
+        album_calls = client.kinds("send_file")
+        self.assertEqual(len(album_calls), 1)
+        sent_files, kwargs = album_calls[0][1], album_calls[0][2]
+        self.assertEqual(sent_files, expected_files)
+        self.assertEqual(len(kwargs["caption"]), 7)
+        self.assertIn("Paranoid schizophrenia\\nYou want more?", kwargs["caption"][0])
+        self.assertIn("Forwarded from espritzeit", kwargs["caption"][0])
+        self.assertEqual(len({message.grouped_id for message in client.messages.values()
+                              if message.grouped_id is not None}), 1)
+        self.assertIn("album 458–464", output)
+        self.assertIn("verified Telegram album", output)
+        with config.use_settings(self.settings()):
+            self.assertEqual(set(progress.load_id_map()), {str(i) for i in range(458, 465)})
+
+    def test_forwarded_round_video_keeps_attribution_in_same_media_message(self):
+        media_path = "round_video_messages/forwarded-round-video.mp4"
+        fakes.write_file(self.folder.name, media_path)
+        forwarded = (
+            '<div class="message default clearfix" id="message154">'
+            '<div class="body">'
+            '<div class="pull_right date details" '
+            'title="08.11.2026 09:28:59 UTC+02:00">09:28</div>'
+            '<div class="from_name">jbvjhvjhvjh</div>'
+            '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
+            '<div class="forwarded body">'
+            '<div class="from_name">HLI8IOS '
+            '<span class="date details" title="05.11.2026 19:35:11 UTC+02:00">'
+            '05.11.2026 19:35:11</span></div>'
+            '<div class="media_wrap clearfix">'
+            f'<a class="video_file_wrap clearfix pull_left" href="{media_path}"></a>'
+            '</div>'
+            '<div class="text">forwarded round-video caption</div>'
+            '</div></div></div>'
+        )
+        fakes.write_export(self.folder.name, [forwarded])
+
+        client, _, _ = self.run_once()
+
+        self.assertEqual(client.kinds("send_message"), [])
+        media_calls = client.kinds("send_file")
+        self.assertEqual(len(media_calls), 1)
+        kwargs = media_calls[0][2]
+        self.assertTrue(kwargs["video_note"])
+        self.assertIn("Forwarded from HLI8IOS", kwargs["caption"])
+        self.assertIn("forwarded round-video caption", kwargs["caption"])
+
     def test_inferred_album_rejects_runs_longer_than_ten_items(self):
         records = [fakes.message(1, fakes.text("sender"), sender="Alice", minute=1)]
         for source_id in range(2, 14):
