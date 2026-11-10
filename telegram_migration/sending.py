@@ -98,7 +98,8 @@ async def _send_text_chunks(client, channel, chunks, reply_to, state, prog_key,
 async def _send_native_forward(client, channel, forward_source, reply_to, state,
                                annotation, source_id):
     if (forward_source is not None and config.settings.native_forward
-            and reply_to is None and not state.get("force_reconstruction")):
+            and reply_to is None and not state.get("force_reconstruction")
+            and not annotation):
         new_id = state.get("native_id")
         if new_id is None and not state.get("fwd_tried"):
             peer_hint, src_id = forward_source
