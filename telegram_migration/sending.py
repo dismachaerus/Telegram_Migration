@@ -124,16 +124,27 @@ async def _send_native_forward(client, channel, forward_source, reply_to, state,
     return None
 
 
-async def send_inferred_album_caption(client, channel, caption, entities, state, source_id):
-    """Send the album's collected caption once as a standalone post after its media."""
+def inferred_album_caption_parts(caption, entities):
+    """Return the native album caption and any text-limit continuation chunks."""
     if not caption or not caption.strip():
-        return
+        return ("", []), []
     chunks = split_with_entities(
         caption, entities or [],
-        config.settings.text_limit, config.settings.text_limit,
+        config.settings.caption_limit, config.settings.text_limit,
     )
+    return chunks[0], chunks[1:]
+
+
+async def send_inferred_album_caption(
+    client, channel, caption, entities, state, source_id, album_message_id,
+):
+    """Send only caption overflow as a reply; the first part belongs to the album."""
+    _first, continuation = inferred_album_caption_parts(caption, entities)
+    if not continuation:
+        return
     await _send_text_chunks(
-        client, channel, chunks, None, state, "album_caption_prog", source_id,
+        client, channel, continuation, album_message_id, state,
+        "album_caption_continuation_prog", source_id,
     )
 
 
@@ -145,10 +156,15 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
     files = [path for path, _kind in media]
     inferred_album = album_caption is not None
     if inferred_album:
-        # The grouped media itself must remain caption-free. The archive text
-        # is sent once, as a standalone message immediately after the album.
-        captions = [""] * len(files)
-        caption_entities = [[] for _ in files]
+        # Telegram stores an album's one caption on its first media item and
+        # renders it beneath the complete grouped album. Keep every item in
+        # the same group; only overflow beyond the bot caption limit is replied
+        # to the album as continuation text.
+        first_caption, _continuation = inferred_album_caption_parts(
+            album_caption, album_caption_entities,
+        )
+        captions = [first_caption[0]] + [""] * (len(files) - 1)
+        caption_entities = [first_caption[1]] + [[] for _ in files[1:]]
     else:
         captions = [first_text] + [""] * (len(files) - 1) if captions is None else list(captions)
         caption_entities = [first_ents] + [[] for _ in files[1:]] if caption_entities is None else list(caption_entities)
@@ -166,11 +182,11 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
         for caption, entities in zip(captions, caption_entities)
     ]
 
-    async def send_group_caption():
+    async def send_group_caption(album_message_id):
         if inferred_album:
             await send_inferred_album_caption(
                 client, channel, album_caption, album_caption_entities,
-                state, source_id,
+                state, source_id, album_message_id,
             )
 
     if "album_message_ids" in state:
@@ -186,7 +202,7 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
         )
         state["album_grouped_id"] = int(grouped_id)
         progress.save_state(state["src"], state)
-        await send_group_caption()
+        await send_group_caption(saved_ids[0])
         return saved_ids if return_all else saved_ids[0]
     if "album_id" in state:
         # Older partial-state files may contain only the first ID. Guessing
@@ -239,7 +255,7 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
         f"    verified Telegram album for source id={source_id}: "
         f"{len(message_ids)} items, grouped_id={grouped_id}"
     )
-    await send_group_caption()
+    await send_group_caption(message_ids[0])
     return message_ids if return_all else message_ids[0]
 
 async def _send_individual_media(client, channel, chunks, media, reply_to, state,
