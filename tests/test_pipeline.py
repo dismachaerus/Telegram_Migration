@@ -1037,11 +1037,10 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(second_files, expected_second)
         self.assertEqual(len(first_kwargs["caption"]), 10)
         self.assertEqual(len(second_kwargs["caption"]), 7)
-        self.assertEqual(sum(bool(caption) for caption in first_kwargs["caption"]), 1)
-        self.assertEqual(sum(bool(caption) for caption in second_kwargs["caption"]), 1)
         self.assertIn("Paranoid schizophrenia\nYou want more?", second_kwargs["caption"][0])
-        self.assertIn("Different caption on item 459", second_kwargs["caption"][0])
-        self.assertTrue(all(not caption for caption in second_kwargs["caption"][1:]))
+        self.assertIn("Different caption on item 459", second_kwargs["caption"][1])
+        self.assertNotIn("Different caption on item 459", second_kwargs["caption"][0])
+        self.assertNotIn("Paranoid schizophrenia", second_kwargs["caption"][1])
         grouped_ids = {message.grouped_id for message in client.messages.values()
                        if message.grouped_id is not None}
         self.assertEqual(len(grouped_ids), 2)
@@ -1085,10 +1084,9 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][1], expected)
         self.assertEqual(len(calls[0][2]["caption"]), 2)
-        self.assertEqual(sum(bool(row) for row in calls[0][2]["caption"]), 1)
-        self.assertIn("Forwarded from News Channel", calls[0][2]["caption"][0])
+        self.assertTrue(all("Forwarded from News Channel" in row for row in calls[0][2]["caption"]))
         self.assertIn("caption 801", calls[0][2]["caption"][0])
-        self.assertEqual(calls[0][2]["caption"][1], "")
+        self.assertNotIn("caption 801", calls[0][2]["caption"][1])
         self.assertEqual(client.kinds("send_message"), [])
 
 
