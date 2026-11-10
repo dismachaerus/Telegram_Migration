@@ -136,11 +136,12 @@ async def send_media_item(client, channel, path, kind, reply_to, source_id=None,
         sticker_options = _sticker_upload_options(path, kind)
         kwargs.update(sticker_options)
     elif kind == "gif":
-        # Telegram GIFs are documents marked with DocumentAttributeAnimated.
-        # For exported silent MP4 animations, nosound_video=False asks Telegram
-        # to display it as a GIF. For actual .gif files, the Animated attribute
-        # asks Telegram to convert the uploaded GIF to its native MP4 form.
-        kwargs["force_document"] = True
+        # Telegram represents GIFs internally as animated documents, but they
+        # must not be force-uploaded as generic files: that sets Telegram's
+        # force_file flag and makes the animation appear as a download.
+        # The Animated attribute identifies actual .gif uploads; for exported
+        # silent MP4 animations, nosound_video=False asks Telegram to display
+        # the video as an inline animation.
         kwargs["attributes"] = [tl.DocumentAttributeAnimated()]
         ext = os.path.splitext(path)[1].casefold()
         if ext == ".gif":
