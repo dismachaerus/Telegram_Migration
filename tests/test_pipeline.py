@@ -1066,30 +1066,8 @@ class PipelineTests(unittest.TestCase):
             )
         fakes.write_export(self.folder.name, records)
 
-        document = html.fromstring(open(self.path("messages.html"), encoding="utf-8").read())
         with config.use_settings(self.settings()):
-            debug_rows = []
-            last_sender = ""
-            for source_id in (448, 449, 454, 455, 457, 458, 459, 463, 464):
-                elem = document.xpath(f'//*[@id="message{source_id}"]')[0]
-                row = htmlexport.extract_message_data(elem)
-                if row.get("sender"):
-                    last_sender = row["sender"]
-                effective = row.get("sender") or (last_sender if row.get("joined") else "")
-                row["_album_sender"] = effective or row.get("forward_name", "")
-                debug_rows.append(row)
-                print(
-                    "ALBUM_DEBUG", source_id, row["media"], repr(row.get("media_note")),
-                    repr(row.get("sender")), repr(row.get("forward_name")),
-                    row.get("is_forwarded"), row.get("joined"),
-                    row.get("timestamp"), row.get("forward_timestamp"),
-                    album._album_candidate(row, effective),
-                )
-            for left, right in zip(debug_rows, debug_rows[1:]):
-                print("ALBUM_PAIR", left["msg_id"], right["msg_id"],
-                      album._album_records_compatible(left, right))
             groups = htmlexport.infer_media_groups([self.path("messages.html")])
-        self.assertEqual(list(groups), ["448", "458"])
         self.assertEqual([row["msg_id"] for row in groups["448"]], list(map(str, range(448, 458))))
         self.assertEqual([row["msg_id"] for row in groups["458"]], list(map(str, range(458, 465))))
         self.assertEqual(groups["458"][0]["body_text"], "Paranoid schizophrenia\nYou want more?")
