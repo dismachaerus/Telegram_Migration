@@ -142,10 +142,33 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
 
         htmlexport.inherit_forwarded_sender(data, ctx)
 
-        album.prepare_inferred_group(
-            data, ctx.get("inferred_groups", {}).get(source_id),
+        inferred_group = ctx.get("inferred_groups", {}).get(source_id)
+        prepared_album = album.prepare_inferred_group(
+            data, inferred_group,
             id_map, ctx["manual_done"], partial, progress.append_id_map,
         )
+        if inferred_group and not prepared_album:
+            member_ids = [str(member["msg_id"]) for member in inferred_group]
+            mapped_ids = [
+                member_id for member_id in member_ids
+                if member_id in id_map or member_id in ctx["manual_done"]
+            ]
+            if mapped_ids and len(mapped_ids) != len(member_ids):
+                # Some members were already migrated individually (or marked
+                # manually complete). Sending the remaining members normally
+                # would scatter the source album across separate Telegram posts.
+                # Do not guess, duplicate, or silently fall back to individual
+                # uploads: stop here and require an explicit repair decision.
+                reason = (
+                    f"Cannot reconstruct inferred album {member_ids[0]}–{member_ids[-1]}: "
+                    f"{len(mapped_ids)} of {len(member_ids)} source messages are already "
+                    "mapped/completed. Refusing to scatter the remaining media."
+                )
+                print("    album recovery conflict: " + reason)
+                progress.log_failure("album:" + member_ids[0], reason)
+                stats["failed"] += 1
+                ctx["stop"] = True
+                return
 
         if data["reply_src_id"]:
             ctx["reply_map"][source_id] = str(data["reply_src_id"])
