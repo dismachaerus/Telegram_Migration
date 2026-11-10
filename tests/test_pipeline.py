@@ -885,7 +885,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_arbitrary_forwarded_media_caption_is_preserved_verbatim(self):
         """Captions are payload data; preservation must not depend on their words."""
-        source_caption = "Résumé — 東京\\nLine 2: 100% & every word stays."
+        source_caption = "Résumé — 東京\nLine 2: 100% & every word stays."
         media_path = "video_files/arbitrary-caption.mp4"
         fakes.write_file(self.folder.name, media_path)
         forwarded = (
