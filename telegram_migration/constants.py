@@ -22,4 +22,6 @@ HTML_FILE_PATTERN = r"^messages(\d*)\.html$"
 # Sticker files need sticker-specific upload attributes and cannot be captioned like
 # ordinary photos/videos, so their text is sent as a separate message first.
 STICKER_KINDS = ("sticker_static", "sticker_animated", "sticker_video", "sticker_unknown")
-NO_CAPTION_KINDS = ("voice", "round_video", *STICKER_KINDS)
+# Round videos are documents in MTProto and can carry message text/caption.
+# Keep only voice notes and stickers on the separate-text path.
+NO_CAPTION_KINDS = ("voice", *STICKER_KINDS)
