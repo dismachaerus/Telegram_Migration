@@ -319,3 +319,45 @@ def map_destination_ids(source_ids, destination_ids, id_map, persist_id):
         id_map[str(source_id)] = int(destination_id)
         persist_id(source_id, destination_id)
     return int(destination_ids[0])
+
+
+async def verify_mapped_album(client, channel, data, id_map, partial, source_id):
+    from . import config, progress, sending
+    from .textutil import split_with_entities
+    """Audit a mapped album before skipping it; never resend media automatically."""
+
+    source_ids = data["_album_source_ids"]
+    state = dict(partial.get(str(source_id), {}) or {})
+    saved_ids = state.get("album_message_ids")
+    mapped_ids = [int(id_map[member_id]) for member_id in source_ids]
+    if saved_ids is not None and [int(value) for value in saved_ids] != mapped_ids:
+        raise RuntimeError(
+            f"Partial album IDs disagree with the migration ID map for source id={source_id}; "
+            "refusing to guess which destination messages belong to this album"
+        )
+    captions = []
+    entities = []
+    for caption, row in zip(
+        data["_album_captions"], data["_album_caption_entities"]
+    ):
+        parts = split_with_entities(
+            caption, row,
+            config.settings.caption_limit, config.settings.text_limit,
+        )
+        captions.append(parts[0][0])
+        entities.append(sending.clean_invalid_entities(parts[0][0], parts[0][1]))
+
+    grouped_id = await sending._verify_saved_album(
+        client, channel, mapped_ids, captions, entities, source_id
+    )
+    state["src"] = str(source_id)
+    state["album_id"] = mapped_ids[0]
+    state["album_message_ids"] = mapped_ids
+    state["album_grouped_id"] = int(grouped_id)
+    progress.save_state(source_id, state)
+    print(
+        f"    audited existing Telegram album for source id={source_id}: "
+        f"{len(mapped_ids)} items, grouped_id={grouped_id}"
+    )
+
+
