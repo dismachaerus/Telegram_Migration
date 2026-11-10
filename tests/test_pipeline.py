@@ -737,6 +737,84 @@ class PipelineTests(unittest.TestCase):
         self.assertIs(result, False)
 
 
+    def test_forwarded_ten_jpg_file_group_is_one_album_with_one_attributed_caption(self):
+        # Reproduce the user's actual Desktop HTML shape: message 319 is a
+        # standalone forwarded file; messages 320-329 are ten joined file
+        # attachments from one forwarded source post. Desktop exports these
+        # JPGs as media_file (documents), not photo_wrap (photos).
+        def forwarded_file(message_id, export_second, original_second, relative, joined=False,
+                           archive_sender=False):
+            outer_time = f"01.07.2026 21:46:{export_second:02d} UTC+02:00"
+            original_time = f"04.06.2026 09:46:{original_second:02d} UTC+02:00"
+            classes = "message default clearfix" + (" joined" if joined else "")
+            sender = '<div class="from_name">Archive owner</div>' if archive_sender else ""
+            return (
+                f'<div class="{classes}" id="message{message_id}"><div class="body">'
+                f'<div class="pull_right date details" title="{outer_time}">21:46</div>'
+                f'{sender}'
+                '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
+                '<div class="forwarded body">'
+                '<div class="from_name">🗝 '
+                f'<span class="date details" title="{original_time}">{original_time}</span>'
+                '</div>'
+                '<div class="media_wrap clearfix">'
+                f'<a class="media clearfix pull_left block_link media_file" href="{relative}">'
+                '<div class="fill pull_left"></div><div class="body">'
+                f'<div class="title bold">{os.path.basename(relative)}</div>'
+                '<div class="status details">250 KB</div></div></a>'
+                '</div></div></div></div>'
+            )
+
+        source_rows = [
+            (319, 50, 55, "files/preceding.jpg", False),
+            (320, 50, 56, "files/group-01.jpg", True),
+            (321, 51, 56, "files/group-02.jpg", True),
+            (322, 51, 57, "files/group-03.jpg", True),
+            (323, 52, 57, "files/group-04.jpg", True),
+            (324, 52, 58, "files/group-05.jpg", True),
+            (325, 53, 58, "files/group-06.jpg", True),
+            (326, 54, 59, "files/group-07.jpg", True),
+            (327, 55, 59, "files/group-08.jpg", True),
+            (328, 55, 59, "files/group-09.jpg", True),
+            (329, 55, 60, "files/group-10.jpg", True),
+        ]
+        html_rows = []
+        expected_group_files = []
+        for index, (message_id, export_second, original_second, relative, joined) in enumerate(source_rows):
+            fakes.write_file(self.folder.name, relative)
+            html_rows.append(forwarded_file(
+                message_id, export_second, original_second, relative,
+                joined=joined, archive_sender=(index == 0),
+            ))
+            if message_id >= 320:
+                expected_group_files.append(self.path(relative))
+        fakes.write_export(self.folder.name, html_rows)
+
+        client, _, _ = self.run_once()
+        media_calls = client.kinds("send_file")
+        self.assertEqual(len(media_calls), 2)
+
+        # The prelude remains an independent message.
+        self.assertEqual(media_calls[0][1], self.path("files/preceding.jpg"))
+        self.assertTrue(media_calls[0][2]["force_document"])
+        self.assertIn("Forwarded from 🗝", media_calls[0][2]["caption"])
+
+        # The ten joined JPG attachments are sent together as one document
+        # album, with the forwarded attribution attached to its first item.
+        album_files, album_kwargs = media_calls[1][1], media_calls[1][2]
+        self.assertEqual(album_files, expected_group_files)
+        self.assertTrue(album_kwargs["force_document"])
+        self.assertEqual(len(album_kwargs["caption"]), 10)
+        self.assertIn("Forwarded from 🗝", album_kwargs["caption"][0])
+        self.assertIn("4 June 2026", album_kwargs["caption"][0])
+        self.assertEqual(album_kwargs["caption"][1:], [""] * 9)
+        self.assertEqual(client.kinds("send_message"), [])
+
+        with config.use_settings(self.settings()):
+            mapped = progress.load_id_map()
+        self.assertEqual(set(mapped), {str(row[0]) for row in source_rows})
+        self.assertEqual(len({mapped[str(i)] for i in range(320, 330)}), 10)
+
     def test_ten_joined_file_media_after_standalone_same_type_form_one_album(self):
         # Synthetic IDs: the leading attachment is a separate non-joined
         # message, followed by ten compatible joined records. The importer
