@@ -434,7 +434,7 @@ class PipelineTests(unittest.TestCase):
         fakes.write_export(self.folder.name, [forwarded])
         native_calls = []
 
-        async def native_forward(_client, _channel, peer_hint, source_msg_id):
+        async def native_forward(_client, _channel, peer_hint, source_msg_id, archive_source_id=None):
             native_calls.append((peer_hint, source_msg_id))
             return 777
 
@@ -495,7 +495,7 @@ class PipelineTests(unittest.TestCase):
         fakes.write_export(self.folder.name, [forwarded])
         native_calls = []
 
-        async def native_forward(_client, _channel, peer_hint, source_msg_id):
+        async def native_forward(_client, _channel, peer_hint, source_msg_id, archive_source_id=None):
             native_calls.append((peer_hint, source_msg_id))
             return 777
 
@@ -961,7 +961,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("album 458–464", output)
         self.assertIn("verified Telegram album", output)
         with config.use_settings(self.settings()):
-            self.assertEqual(set(progress.load_id_map()), {str(i) for i in range(458, 465)})
+            self.assertEqual(set(progress.load_id_map()), {str(i) for i in range(457, 465)})
 
     def test_forwarded_round_video_keeps_attribution_in_same_media_message(self):
         media_path = "round_video_messages/forwarded-round-video.mp4"
