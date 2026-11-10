@@ -924,6 +924,54 @@ class AsyncSendTests(unittest.TestCase):
             self.assertEqual(kwargs["caption"], "a *literal* caption")
         asyncio.run(scenario())
 
+    def test_native_album_compatibility_is_separate_from_source_grouping(self):
+        self.assertTrue(exportmedia.album_compatible([
+            ("a.jpg", "photo"), ("b.mp4", "video"),
+        ]))
+        self.assertTrue(exportmedia.album_compatible([
+            ("a.pdf", "document"), ("b.pdf", "document"),
+        ]))
+        self.assertTrue(exportmedia.album_compatible([
+            ("a.mp3", "audio"), ("b.ogg", "audio"),
+        ]))
+        for media in (
+            [("a.gif", "gif"), ("b.jpg", "photo")],
+            [("a.ogg", "voice"), ("b.jpg", "photo")],
+            [("a.webm", "round_video"), ("b.mp4", "video")],
+            [("a.webp", "sticker_static"), ("b.jpg", "photo")],
+            [("a.mp3", "audio"), ("b.pdf", "document")],
+        ):
+            self.assertFalse(exportmedia.album_compatible(media))
+
+    def test_inferred_incompatible_media_group_sends_in_order_and_returns_all_ids(self):
+        async def scenario():
+            calls = []
+            async def send_file(channel, path, **kwargs):
+                calls.append((path, dict(kwargs)))
+                return SimpleNamespace(id=700 + len(calls))
+            client = SimpleNamespace(send_file=send_file)
+            state = {"src": "900"}
+            data = {
+                "_inferred_album": True,
+                "_album_caption_text": "source caption",
+                "_album_caption_entities": [],
+            }
+            media = [
+                ("video_files/animation.mp4", "gif"),
+                ("voice_messages/voice.ogg", "voice"),
+            ]
+            with patch.object(progress, "save_state"):
+                result = await sending._do_send(
+                    client, "channel", [("", [])], media, None, None,
+                    state, None, "900", data,
+                )
+            self.assertEqual(result, [701, 702])
+            self.assertEqual([call[0] for call in calls], [item[0] for item in media])
+            self.assertEqual(calls[0][1]["caption"], "source caption")
+            self.assertTrue(calls[1][1]["voice_note"])
+            self.assertEqual(state["multi_media_ids"], [701, 702])
+        asyncio.run(scenario())
+
     def test_gif_upload_uses_inline_animation_metadata_for_supported_gif_files(self):
         async def scenario():
             cases = (
