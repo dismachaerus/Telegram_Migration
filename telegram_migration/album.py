@@ -1,5 +1,7 @@
 """Helpers for inferred media albums reconstructed from Telegram Desktop HTML."""
 
+from copy import copy
+
 from telethon.errors import MessageNotModifiedError
 from telethon.tl import types as tl
 
@@ -67,6 +69,29 @@ def caption_for_record(record):
     return strip_with_entities(text, ents)
 
 
+def caption_for_group(group):
+    """Collect distinct source captions into one text post below the whole album."""
+    blocks = []
+    entities = []
+    seen = set()
+    text = ""
+    for record in group:
+        body = (record.get("body_text") or "").strip()
+        if not body or body in seen:
+            continue
+        seen.add(body)
+        block, block_entities = caption_for_record(record)
+        if text:
+            text += "\\n\\n"
+        offset = u16len(text)
+        text += block
+        for entity in block_entities:
+            shifted = copy(entity)
+            shifted.offset += offset
+            entities.append(shifted)
+    return text, entities
+
+
 def prepare_inferred_group(data, group, id_map, manual_done, partial, persist_id):
     """Attach album payload and captions, recovering mappings after an interrupted send."""
     if not group or len(group) < 2:
@@ -101,22 +126,15 @@ def prepare_inferred_group(data, group, id_map, manual_done, partial, persist_id
         # those records as part of a newly inferred album.
         return False
 
-    # Preserve the caption and formatting associated with each source
-    # message. Telegram's media-group API accepts one caption per media item;
-    # do not merge distinct source messages into a synthetic album caption.
-    captions = []
-    caption_entities = []
-    all_media = []
-    for member in group:
-        caption_text, caption_ents = caption_for_record(member)
-        captions.append(caption_text)
-        caption_entities.append(caption_ents)
-        all_media.extend(member["media"])
+    # Keep every media item caption-free. Any source captions are collected
+    # into one ordinary text message sent after the complete media group.
+    album_caption, album_caption_entities = caption_for_group(group)
+    all_media = [item for member in group for item in member["media"]]
 
     data["_inferred_album"] = True
     data["_album_source_ids"] = member_ids
-    data["_album_captions"] = captions
-    data["_album_caption_entities"] = caption_entities
+    data["_album_caption_text"] = album_caption
+    data["_album_caption_entities"] = album_caption_entities
     data["media"] = all_media
     data["body_text"] = ""
     data["body_entities"] = []
@@ -330,8 +348,7 @@ def map_destination_ids(source_ids, destination_ids, id_map, persist_id):
 
 async def verify_mapped_album(client, channel, data, id_map, partial, source_id):
     """Audit a mapped album before skipping it; never resend media automatically."""
-    from . import config, progress, sending
-    from .textutil import split_with_entities
+    from . import progress, sending
 
     source_ids = data["_album_source_ids"]
     state = dict(partial.get(str(source_id), {}) or {})
@@ -342,20 +359,10 @@ async def verify_mapped_album(client, channel, data, id_map, partial, source_id)
             f"Partial album IDs disagree with the migration ID map for source id={source_id}; "
             "refusing to guess which destination messages belong to this album"
         )
-    captions = []
-    entities = []
-    for caption, row in zip(
-        data["_album_captions"], data["_album_caption_entities"]
-    ):
-        parts = split_with_entities(
-            caption, row,
-            config.settings.caption_limit, config.settings.text_limit,
-        )
-        captions.append(parts[0][0])
-        entities.append(sending.clean_invalid_entities(parts[0][0], parts[0][1]))
-
+    empty_captions = [""] * len(mapped_ids)
+    empty_entities = [[] for _ in mapped_ids]
     grouped_id = await _verify_saved_album(
-        client, channel, mapped_ids, captions, entities, source_id
+        client, channel, mapped_ids, empty_captions, empty_entities, source_id
     )
     state["src"] = str(source_id)
     state["album_id"] = mapped_ids[0]
@@ -365,6 +372,10 @@ async def verify_mapped_album(client, channel, data, id_map, partial, source_id)
     print(
         f"    audited existing Telegram album for source id={source_id}: "
         f"{len(mapped_ids)} items, grouped_id={grouped_id}"
+    )
+    await sending.send_inferred_album_caption(
+        client, channel, data.get("_album_caption_text", ""),
+        data.get("_album_caption_entities", []), state, source_id,
     )
 
 
