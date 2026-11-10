@@ -1023,7 +1023,7 @@ class AsyncSendTests(unittest.TestCase):
                 self.assertEqual(ents[1], [])
         asyncio.run(scenario())
 
-    def test_inferred_album_keeps_media_caption_free_and_resumes_caption_below(self):
+    def test_inferred_album_attaches_caption_and_resumes_overflow_below(self):
         async def scenario():
             with tempfile.TemporaryDirectory() as temp:
                 album_calls = []
@@ -1033,9 +1033,9 @@ class AsyncSendTests(unittest.TestCase):
 
                 async def send_file(channel, files, **kwargs):
                     album_calls.append((files, kwargs))
-                    self.assertEqual(kwargs.get("caption"), ["", ""])
+                    self.assertEqual(kwargs.get("caption"), ["H" * 1024, ""])
                     sent_messages[:] = [
-                        SimpleNamespace(id=501, grouped_id=77, message=""),
+                        SimpleNamespace(id=501, grouped_id=77, message="H" * 1024),
                         SimpleNamespace(id=502, grouped_id=77, message=""),
                     ]
                     return sent_messages[:]
@@ -1072,7 +1072,7 @@ class AsyncSendTests(unittest.TestCase):
                             state, None, "77", data,
                         )
                     self.assertEqual(len(album_calls), 1)
-                    self.assertEqual(album_calls[0][1]["caption"], ["", ""])
+                    self.assertEqual(album_calls[0][1]["caption"], ["H" * 1024, ""])
                     self.assertEqual(state["album_message_ids"], [501, 502])
 
                     result = await sending._do_send(
@@ -1083,8 +1083,9 @@ class AsyncSendTests(unittest.TestCase):
                 self.assertEqual(result, [501, 502])
                 self.assertEqual(len(album_calls), 1)
                 self.assertEqual([text for text, _kwargs in caption_calls],
-                                 ["H" * 4096, "H" * 4096, "H" * 904])
-                self.assertEqual(state["album_caption_prog"]["done"], 2)
+                                 ["H" * 3976, "H" * 3976])
+                self.assertEqual(caption_calls[0][1]["reply_to"], 501)
+                self.assertEqual(state["album_caption_continuation_prog"]["done"], 1)
         asyncio.run(scenario())
 
     def test_video_without_audio_probe_result_is_not_forced_to_silent_video(self):
