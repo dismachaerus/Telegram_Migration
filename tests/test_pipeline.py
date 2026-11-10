@@ -1085,9 +1085,10 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][1], expected)
         self.assertEqual(len(calls[0][2]["caption"]), 2)
-        self.assertTrue(all("Forwarded from News Channel" in row for row in calls[0][2]["caption"]))
+        self.assertEqual(sum(bool(row) for row in calls[0][2]["caption"]), 1)
+        self.assertIn("Forwarded from News Channel", calls[0][2]["caption"][0])
         self.assertIn("caption 801", calls[0][2]["caption"][0])
-        self.assertEqual(calls[0][2]["caption"][1].count("caption 801"), 0)
+        self.assertEqual(calls[0][2]["caption"][1], "")
         self.assertEqual(client.kinds("send_message"), [])
 
 
