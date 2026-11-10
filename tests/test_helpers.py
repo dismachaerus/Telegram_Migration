@@ -909,16 +909,21 @@ class AsyncSendTests(unittest.TestCase):
         async def scenario():
             with tempfile.TemporaryDirectory() as temp:
                 calls = []
+                sent_messages = []
                 async def send_file(channel, files, **kwargs):
                     calls.append((channel, files, kwargs))
                     captions = kwargs.get("caption") or ["", ""]
                     if not isinstance(captions, (list, tuple)):
                         captions = [captions, ""]
-                    return [
+                    sent_messages[:] = [
                         SimpleNamespace(id=501, grouped_id=77, message=captions[0]),
                         SimpleNamespace(id=502, grouped_id=77, message=captions[1]),
                     ]
-                client = SimpleNamespace(send_file=send_file)
+                    return sent_messages[:]
+                async def get_messages(channel, ids=None):
+                    wanted = set(ids if isinstance(ids, (list, tuple)) else [ids])
+                    return [message for message in sent_messages if message.id in wanted]
+                client = SimpleNamespace(send_file=send_file, get_messages=get_messages)
                 state = {"src": "77"}
                 with patch.object(config.get_settings(), "partial_file", str(Path(temp) / "partial.jsonl")):
                     result = await sending._do_send(
@@ -951,16 +956,21 @@ class AsyncSendTests(unittest.TestCase):
         async def scenario():
             with tempfile.TemporaryDirectory() as temp:
                 calls = []
+                sent_messages = []
                 async def send_file(channel, files, **kwargs):
                     calls.append((channel, files, kwargs))
                     captions = kwargs.get("caption") or ["", ""]
                     if not isinstance(captions, (list, tuple)):
                         captions = [captions, ""]
-                    return [
+                    sent_messages[:] = [
                         SimpleNamespace(id=501, grouped_id=77, message=captions[0]),
                         SimpleNamespace(id=502, grouped_id=77, message=captions[1]),
                     ]
-                client = SimpleNamespace(send_file=send_file)
+                    return sent_messages[:]
+                async def get_messages(channel, ids=None):
+                    wanted = set(ids if isinstance(ids, (list, tuple)) else [ids])
+                    return [message for message in sent_messages if message.id in wanted]
+                client = SimpleNamespace(send_file=send_file, get_messages=get_messages)
                 state = {"src": "77"}
                 bold = tl.MessageEntityBold(offset=0, length=5)
                 with patch.object(config.get_settings(), "partial_file",
@@ -984,6 +994,7 @@ class AsyncSendTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as temp:
                 album_calls = []
                 tail_calls = []
+                sent_messages = []
                 fail_tail_once = [True]
 
                 async def send_file(channel, files, **kwargs):
@@ -991,10 +1002,11 @@ class AsyncSendTests(unittest.TestCase):
                     captions = kwargs.get("caption") or ["", ""]
                     if not isinstance(captions, (list, tuple)):
                         captions = [captions, ""]
-                    return [
+                    sent_messages[:] = [
                         SimpleNamespace(id=501, grouped_id=77, message=captions[0]),
                         SimpleNamespace(id=502, grouped_id=77, message=captions[1]),
                     ]
+                    return sent_messages[:]
 
                 async def send_message(channel, text, **kwargs):
                     tail_calls.append((text, kwargs))
@@ -1003,7 +1015,14 @@ class AsyncSendTests(unittest.TestCase):
                         raise RuntimeError("temporary tail failure")
                     return SimpleNamespace(id=601)
 
-                client = SimpleNamespace(send_file=send_file, send_message=send_message)
+                async def get_messages(channel, ids=None):
+                    wanted = set(ids if isinstance(ids, (list, tuple)) else [ids])
+                    return [message for message in sent_messages if message.id in wanted]
+
+                client = SimpleNamespace(
+                    send_file=send_file, send_message=send_message,
+                    get_messages=get_messages,
+                )
                 state = {"src": "77"}
                 data = {
                     "msg_id": "77",
