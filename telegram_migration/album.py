@@ -119,9 +119,9 @@ def _album_candidate(data, effective_sender):
         return False
     if data.get("media_note"):
         return False
-    path, kind = data["media"][0]
-    if kind not in ("photo", "video", "document"):
-        return False
+    # Source grouping is independent of destination album support. GIFs,
+    # audio/voice, round videos and stickers can be part of the same inferred
+    # source run; sending.py chooses native album vs ordered individual posts.
     # Group reconstruction must not depend on whether sender names are
     # configured for display or whether this export retained its date field.
     # Adjacency, joined markers, sender/forward context and media compatibility
@@ -197,7 +197,10 @@ def _album_records_compatible(left, right):
         if outer_gap is None or outer_gap > 30:
             return False
 
-    return exportmedia.album_compatible(left["media"] + right["media"])
+    # Do not use Telegram's destination album compatibility here. These
+    # records may still be one source group even when Telegram cannot represent
+    # the combination as a native media group (GIF/voice/sticker mixtures).
+    return True
 
 def infer_media_groups(files, inline_emoji_ids=None):
     """Infer likely media groups from consecutive media records in Desktop HTML.
