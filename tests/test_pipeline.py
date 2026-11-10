@@ -991,7 +991,7 @@ class PipelineTests(unittest.TestCase):
         media_calls = client.kinds("send_file")
         self.assertEqual(len(media_calls), 1)
         kwargs = media_calls[0][2]
-        self.assertTrue(kwargs["video_note"])
+        self.assertNotIn("video_note", kwargs)
         self.assertIn("Forwarded from HLI8IOS", kwargs["caption"])
         self.assertIn("forwarded round-video caption", kwargs["caption"])
 
