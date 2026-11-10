@@ -959,7 +959,10 @@ class PipelineTests(unittest.TestCase):
             )
             caption_html = (
                 '<div class="text">Paranoid schizophrenia<br>You want more?</div>'
-                if source_id == 458 else ""
+                if source_id == 458 else (
+                    f'<div class="text">Different caption on item {source_id}</div>'
+                    if source_id == 459 else ""
+                )
             )
             records.append(
                 f'<div class="message default clearfix{classes}" id="message{source_id}">'
@@ -991,6 +994,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual([row["msg_id"] for row in groups["448"]], list(map(str, range(448, 458))))
         self.assertEqual([row["msg_id"] for row in groups["458"]], list(map(str, range(458, 465))))
         self.assertEqual(groups["458"][0]["body_text"], "Paranoid schizophrenia\nYou want more?")
+        self.assertEqual(groups["458"][1]["body_text"], "Different caption on item 459")
         caption, _entities = album.caption_for_record(groups["458"][0])
         self.assertIn("Paranoid schizophrenia\nYou want more?", caption)
 
@@ -1004,6 +1008,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(first_kwargs["caption"]), 10)
         self.assertEqual(len(second_kwargs["caption"]), 7)
         self.assertIn("Paranoid schizophrenia\nYou want more?", second_kwargs["caption"][0])
+        self.assertIn("Different caption on item 459", second_kwargs["caption"][1])
         grouped_ids = {message.grouped_id for message in client.messages.values()
                        if message.grouped_id is not None}
         self.assertEqual(len(grouped_ids), 2)
