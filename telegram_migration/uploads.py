@@ -157,7 +157,17 @@ async def send_media_item(client, channel, path, kind, reply_to, source_id=None,
     elif kind == "voice":
         kwargs["voice_note"] = True
     elif kind == "round_video":
-        kwargs["video_note"] = True
+        if caption:
+            # Telegram video notes have no caption field in the bot send API.
+            # Keep the forwarded attribution and payload in the same Telegram
+            # message by uploading captioned round-video media as a regular
+            # video. Uncaptioned round videos retain their circular presentation.
+            print(
+                f"    note: captioned round video {os.path.basename(path)} "
+                "is being sent as a regular video so its caption stays attached"
+            )
+        else:
+            kwargs["video_note"] = True
     elif kind == "document":
         # Telethon auto-detects .jpg/.png files as photos by extension unless
         # force_document is set. For files/ attachments, preserve the original
