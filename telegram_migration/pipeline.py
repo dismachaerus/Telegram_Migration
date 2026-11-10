@@ -10,10 +10,8 @@ from telethon.tl import types as tl
 
 from . import album, bigfiles, cli, config, customemoji, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
 from .htmlutil import css_classes
-from .textutil import (compose_message, compose_message_header, format_archive_timestamp,
-                       split_with_entities, strip_with_entities, u16len)
+from .textutil import compose_message, compose_message_header, format_archive_timestamp, split_with_entities, strip_with_entities, u16len
 from .constants import NO_CAPTION_KINDS, STICKER_KINDS
-
 
 async def process_file(client, channel, path, id_map, partial, pending_replies, stats, ctx,
                       only_pending=False):
@@ -134,9 +132,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             mark_completed = bool(source_id)
             return
         source_id = str(data["msg_id"])
-        customemoji.apply_custom_emoji_entities(
-            data, ctx.get("inline_custom_emoji_ids", {})
-        )
+        customemoji.apply_custom_emoji_entities(data, ctx["inline_custom_emoji_ids"])
 
         if data["sender"]:
             ctx["last_sender"] = data["sender"]
@@ -425,10 +421,7 @@ async def _run_migration():
         await client.disconnect()
         return True
 
-    inline_custom_emoji_ids = await customemoji.prepare_inline_custom_emojis_for_run(
-        client, files, peer=channel, dry_run=config.settings.dry_run
-    )
-
+    inline_custom_emoji_ids = await customemoji.prepare_inline_custom_emojis_for_run(client, files, peer=channel, dry_run=config.settings.dry_run)
     stats = {"sent": 0, "skipped": 0, "failed": 0, "forwarded": 0, "reaction_notes": 0}
     ctx = {
         "inline_custom_emoji_ids": inline_custom_emoji_ids,
