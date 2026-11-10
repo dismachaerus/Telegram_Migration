@@ -738,6 +738,36 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("album 702–711", output)
         self.assertIn("sent=12", output)
 
+    def test_partially_mapped_inferred_album_stops_instead_of_scattering_remaining_media(self):
+        records = []
+        for source_id in (2, 3):
+            relative = f"files/document-{source_id}.png"
+            fakes.write_file(self.folder.name, relative)
+            attachment = (
+                '<div class="media_wrap clearfix">'
+                f'<a class="media clearfix pull_left block_link media_file" href="{relative}">'
+                '</a></div>'
+            )
+            records.append(
+                fakes.message(source_id, attachment, sender="Alice",
+                              classes="" if source_id == 2 else "joined", minute=2)
+            )
+        fakes.write_export(self.folder.name, records)
+
+        # Simulate an interrupted/older run that already mapped only the first
+        # source member. The remaining member must not be sent as a standalone.
+        with config.use_settings(self.settings()):
+            progress.append_id_map("2", 1001)
+
+        client, output, _ = self.run_once()
+
+        self.assertEqual(client.kinds("send_file"), [])
+        self.assertIn("album recovery conflict", output)
+        self.assertIn("Refusing to scatter the remaining media", output)
+        self.assertIn("failed=1", output)
+        with config.use_settings(self.settings()):
+            self.assertEqual(progress.load_id_map(), {"2": 1001})
+
     def test_dry_run_counts_inferred_album_members_only_once(self):
         records = [fakes.message(1, fakes.text("before"), sender="Alice", minute=1)]
         for source_id in (2, 3):
