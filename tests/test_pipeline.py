@@ -918,7 +918,7 @@ class PipelineTests(unittest.TestCase):
             relative = f"video_files/video-{source_id}.mp4"
             fakes.write_file(self.folder.name, relative)
             expected_files.append(os.path.join(self.folder.name, relative))
-            joined = source_id not in (458, 463)
+            joined = source_id != 463
             classes = " joined" if joined else ""
             outer_sender = (
                 '<div class="from_name">⛯⛯</div>'
