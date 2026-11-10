@@ -727,9 +727,8 @@ class PipelineTests(unittest.TestCase):
         album_files, album_kwargs = media_calls[1][1], media_calls[1][2]
         self.assertEqual(album_files, expected_files)
         self.assertTrue(album_kwargs["force_document"])
-        self.assertEqual(len(album_kwargs["caption"]), 10)
-        self.assertTrue(all("Alice" in caption for caption in album_kwargs["caption"]))
-        self.assertFalse(any("inferred" in caption.casefold() for caption in album_kwargs["caption"]))
+        self.assertEqual(album_kwargs["caption"], [""] * 10)
+        self.assertEqual(client.kinds("send_message"), [])
 
         with config.use_settings(self.settings()):
             mapped = progress.load_id_map()
