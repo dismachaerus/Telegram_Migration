@@ -1,7 +1,5 @@
 """Helpers for inferred media albums reconstructed from Telegram Desktop HTML."""
 
-import copy
-
 from telethon.errors import MessageNotModifiedError
 from telethon.tl import types as tl
 
@@ -103,30 +101,17 @@ def prepare_inferred_group(data, group, id_map, manual_done, partial, persist_id
         # those records as part of a newly inferred album.
         return False
 
-    # Telegram clients may show an album-level caption only when exactly
-    # one item in the group has a caption. The archival headers generated for
-    # every source record used to make every item non-empty, so the real source
-    # caption could appear only in the individual media viewer instead of
-    # beneath the grouped post. Preserve every record's text and formatting,
-    # but combine them into one caption attached to the first album item.
+    # Preserve the caption and formatting associated with each source
+    # message. Telegram's media-group API accepts one caption per media item;
+    # do not merge distinct source messages into a synthetic album caption.
     captions = []
     caption_entities = []
     all_media = []
-    combined_text = ""
-    combined_entities = []
     for member in group:
         caption_text, caption_ents = caption_for_record(member)
-        if caption_text:
-            separator = "\n\n" if combined_text else ""
-            offset = u16len(combined_text + separator)
-            combined_text += separator + caption_text
-            for entity in caption_ents:
-                shifted = copy.copy(entity)
-                shifted.offset += offset
-                combined_entities.append(shifted)
+        captions.append(caption_text)
+        caption_entities.append(caption_ents)
         all_media.extend(member["media"])
-    captions = [combined_text] + [""] * (len(group) - 1)
-    caption_entities = [combined_entities] + [[] for _ in range(len(group) - 1)]
 
     data["_inferred_album"] = True
     data["_album_source_ids"] = member_ids
