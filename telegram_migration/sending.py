@@ -290,7 +290,7 @@ async def _send_multiple_media(client, channel, chunks, media, reply_to, state, 
         for path, kind in media
     )
     individual = (
-        has_sticker or has_document_image
+        has_sticker
         or any(kind in ("gif", "voice", "round_video") for _path, kind in media)
         or not exportmedia.album_compatible(media)
     )
