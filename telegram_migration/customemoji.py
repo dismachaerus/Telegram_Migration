@@ -411,9 +411,19 @@ async def prepare_inline_custom_emojis(client, files, *, peer, dry_run=False):
         return {}
 
     me = await client.get_me()
+    if bool(getattr(me, "bot", False)):
+        # MTProto sticker-set creation is unavailable to bot-authenticated
+        # clients. Do not attempt one upload per emoji: keep the export's
+        # fallback glyphs as ordinary text instead.
+        print(
+            "  Inline custom emojis: skipped for bot authentication; "
+            "Telegram does not allow this client to create sticker sets. "
+            "Fallback emoji text will be preserved."
+        )
+        return {}
     username = getattr(me, "username", None)
     if not username:
-        raise RuntimeError("The migration bot must have a username to create custom-emoji packs.")
+        raise RuntimeError("The Telegram account needs a username to create custom-emoji packs.")
 
     # Resolve the destination entity once. messages.uploadMedia associates the
     # uploaded document with this chat before it is added to the bot-owned pack.
