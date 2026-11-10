@@ -133,10 +133,6 @@ def _album_candidate(data, effective_sender):
         return False
     if data.get("reply_src_id") or data.get("reactions") or data.get("media_note"):
         return False
-    if data.get("forward_source") and data["forward_source"][0] != "__text__":
-        # A native-forward source ID identifies a real source message; leave it
-        # to the ordinary per-message forwarding path.
-        return False
     path, kind = data["media"][0]
     if kind not in ("photo", "video", "document"):
         return False
