@@ -3,10 +3,13 @@
 These tests use synthetic records only. They verify source grouping separately
 from Telegram's narrower native sendMediaGroup compatibility rules.
 """
+import tempfile
 import unittest
 from datetime import datetime, timedelta
+from pathlib import Path
+from unittest.mock import patch
 
-from telegram_migration import album, exportmedia
+from telegram_migration import album, config, exportmedia
 
 
 class AlbumGroupingMatrixTests(unittest.TestCase):
@@ -103,3 +106,99 @@ class AlbumGroupingMatrixTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TelegramDesktopHtmlGroupingTests(unittest.TestCase):
+    @staticmethod
+    def _message_html(message_id, outer_second, forward_second, path, kind, *, joined=False):
+        outer = f"01.07.2026 21:46:{outer_second:02d} UTC+02:00"
+        forwarded = f"04.06.2026 09:46:{forward_second:02d} UTC+02:00"
+        classes = "message default clearfix" + (" joined" if joined else "")
+        if kind == "document":
+            anchor = (
+                f'<a class="media clearfix pull_left block_link media_file" href="{path}">'
+                '<div class="fill pull_left"></div><div class="body">'
+                '<div class="title bold">attachment.jpg</div>'
+                '<div class="status details">100 KB</div></div></a>'
+            )
+        elif kind == "round_video":
+            anchor = (
+                f'<a class="media clearfix pull_left block_link media_video" href="{path}">'
+                '<img class="thumb pull_left" src="round_video_thumb.jpg"/>'
+                '<div class="body"><div class="title bold">Video message</div>'
+                '<div class="status details">00:05</div></div></a>'
+            )
+        elif kind == "video":
+            anchor = (
+                f'<a class="video_file_wrap clearfix pull_left" href="{path}">'
+                '<div class="video_play_bg"><div class="video_play"></div></div>'
+                '<div class="video_duration">00:05</div>'
+                '<img class="video_file" src="ordinary_video_thumb.jpg"/></a>'
+            )
+        elif kind == "photo":
+            anchor = (
+                f'<a class="photo_wrap clearfix pull_left" href="{path}">'
+                '<img class="photo" src="photo_thumb.jpg"/></a>'
+            )
+        else:
+            raise AssertionError(f"Unsupported test media kind: {kind}")
+        return (
+            f'<div class="{classes}" id="message{message_id}"><div class="body">'
+            f'<div class="pull_right date details" title="{outer}">21:46</div>'
+            '<div class="forwarded body"><div class="from_name">Original author '
+            f'<span class="date details" title="{forwarded}">04.06.2026</span></div>'
+            f'<div class="media_wrap clearfix">{anchor}</div></div></div></div>'
+        )
+
+    def _infer(self, messages):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for relative, _kind in messages:
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"synthetic media")
+            html_path = root / "messages.html"
+            chunks = []
+            for index, (relative, kind) in enumerate(messages):
+                message_id = 319 + index
+                chunks.append(self._message_html(
+                    message_id, index, index, relative, kind,
+                    joined=index > 0,
+                ))
+            html_path.write_text(
+                "<html><body>" + "".join(chunks) + "</body></html>",
+                encoding="utf-8",
+            )
+            with patch.object(config.get_settings(), "base_dir", temp):
+                return album.infer_media_groups([str(html_path)])
+
+    def test_ten_joined_file_attachments_form_one_group_after_preceding_post(self):
+        messages = [("files/preceding.jpg", "document")]
+        messages.extend(
+            (f"files/group_{index}.jpg", "document")
+            for index in range(10)
+        )
+        groups = self._infer(messages)
+        self.assertEqual(list(groups), ["320"])
+        self.assertEqual(
+            [item["msg_id"] for item in groups["320"]],
+            [str(value) for value in range(320, 330)],
+        )
+
+    def test_joined_round_video_notes_remain_independent_posts(self):
+        groups = self._infer([
+            ("round_video_messages/one.mp4", "round_video"),
+            ("round_video_messages/two.mp4", "round_video"),
+        ])
+        self.assertEqual(groups, {})
+
+    def test_ordinary_photo_video_album_is_still_inferred(self):
+        groups = self._infer([
+            ("photos/one.jpg", "photo"),
+            ("video_files/two.mp4", "video"),
+        ])
+        self.assertEqual(list(groups), ["319"])
+        self.assertEqual(
+            [item["msg_id"] for item in groups["319"]],
+            ["319", "320"],
+        )
