@@ -924,50 +924,58 @@ class AsyncSendTests(unittest.TestCase):
             self.assertEqual(kwargs["caption"], "a *literal* caption")
         asyncio.run(scenario())
 
-    def test_gif_upload_sets_animation_metadata_without_forcing_download(self):
+    def test_gif_upload_uses_inline_animation_metadata_for_supported_gif_files(self):
         async def scenario():
-            calls = []
-            async def send_file(channel, file, **kwargs):
-                calls.append(kwargs)
-                return SimpleNamespace(id=778)
-            client = SimpleNamespace(send_file=send_file)
-            uploads._UNSUPPORTED_SEND_KWARGS.clear()
-            await uploads.send_media_item(
-                client, "channel", "video_files/animation.mp4", "gif", None,
+            cases = (
+                ("video_files/animation.mp4", "video/mp4", False),
+                ("animations/animation.gif", "image/gif", None),
             )
-            kwargs = calls[0]
-            self.assertNotIn("force_document", kwargs)
-            self.assertEqual(kwargs["mime_type"], "video/mp4")
-            self.assertIs(kwargs["nosound_video"], False)
-            self.assertTrue(any(
-                isinstance(attr, tl.DocumentAttributeAnimated)
-                for attr in kwargs["attributes"]
-            ))
+            for index, (path, mime_type, nosound_video) in enumerate(cases, start=778):
+                calls = []
+
+                async def send_file(channel, file, **kwargs):
+                    calls.append(kwargs)
+                    return SimpleNamespace(id=index)
+
+                client = SimpleNamespace(send_file=send_file)
+                uploads._UNSUPPORTED_SEND_KWARGS.clear()
+                await uploads.send_media_item(client, "channel", path, "gif", None)
+                kwargs = calls[0]
+                self.assertNotIn("force_document", kwargs)
+                self.assertEqual(kwargs["mime_type"], mime_type)
+                if nosound_video is None:
+                    self.assertNotIn("nosound_video", kwargs)
+                else:
+                    self.assertIs(kwargs["nosound_video"], nosound_video)
+                self.assertTrue(any(
+                    isinstance(attr, tl.DocumentAttributeAnimated)
+                    for attr in kwargs["attributes"]
+                ))
         asyncio.run(scenario())
 
-    def test_telegram_desktop_animated_wrap_mp4_is_classified_as_gif(self):
+    def test_telegram_desktop_animation_markup_classifies_mp4_as_gif(self):
         with tempfile.TemporaryDirectory() as temp:
             media = Path(temp) / "video_files" / "animation.mp4"
             media.parent.mkdir()
             media.write_bytes(b"fake mp4 payload")
             page = Path(temp) / "messages.html"
             page.write_text(
-                '<html><body><div class="message" id="message178">'
+                '<html><body><div class="message" id="message1">'
                 '<div class="body"><div class="media_wrap clearfix">'
                 '<a class="animated_wrap clearfix pull_left" '
                 'href="video_files/animation.mp4">'
                 '<div class="video_play_bg"><div class="gif_play">GIF</div></div>'
                 '<img class="animated" src="video_files/animation.mp4_thumb.jpg"/>'
-                '</a></div><div class="text">animation caption</div></div></div>'
+                '</a></div><div class="text">an example caption</div></div></div>'
                 '</body></html>',
                 encoding="utf-8",
             )
             with patch.object(config.get_settings(), "base_dir", temp):
                 from lxml import html
                 root = html.parse(str(page))
-                message = root.xpath('//div[@id="message178"]')[0]
+                message = root.xpath('//div[@id="message1"]')[0]
                 data = htmlexport.extract_message_data(message)
-            self.assertEqual(data["body_text"], "animation caption")
+            self.assertEqual(data["body_text"], "an example caption")
             self.assertEqual(len(data["media"]), 1)
             self.assertEqual(data["media"][0][1], "gif")
 
