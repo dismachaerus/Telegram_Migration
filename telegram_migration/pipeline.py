@@ -8,7 +8,7 @@ from lxml import etree
 from telethon import TelegramClient
 from telethon.tl import types as tl
 
-from . import album, bigfiles, cli, config, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
+from . import album, bigfiles, cli, config, customemoji, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
 from .htmlutil import css_classes
 from .textutil import (compose_message, compose_message_header, format_archive_timestamp,
                        split_with_entities, strip_with_entities, u16len)
