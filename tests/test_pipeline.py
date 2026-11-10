@@ -1083,8 +1083,10 @@ class PipelineTests(unittest.TestCase):
         second_files, second_kwargs = album_calls[1][1], album_calls[1][2]
         self.assertEqual(first_files, expected_first)
         self.assertEqual(second_files, expected_second)
-        self.assertEqual(first_kwargs["caption"], [""] * 10)
-        self.assertEqual(second_kwargs["caption"], [""] * 7)
+        first_caption, _first_entities = album.caption_for_group(groups["448"])
+        second_caption, _second_entities = album.caption_for_group(groups["458"])
+        self.assertEqual(first_kwargs["caption"], [first_caption] + [""] * 9)
+        self.assertEqual(second_kwargs["caption"], [second_caption] + [""] * 6)
         self.assertIn("Paranoid schizophrenia\nYou want more?", second_kwargs["caption"][0])
         self.assertIn("Different caption on item 459", second_kwargs["caption"][0])
         self.assertIn("Forwarded from espritzeit", second_kwargs["caption"][0])
