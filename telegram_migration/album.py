@@ -171,8 +171,6 @@ def _album_records_compatible(left, right):
     left_caption = _caption_signature(left)
     right_caption = _caption_signature(right)
     same_caption = bool(left_caption and right_caption and left_caption == right_caption)
-    if left_caption and right_caption and not same_caption:
-        return False
 
     left_time, right_time = left.get("timestamp"), right.get("timestamp")
     if left_time is None or right_time is None:
@@ -181,20 +179,29 @@ def _album_records_compatible(left, right):
     if outer_gap < 0:
         return False
 
+    # Telegram Desktop's "joined" class is strong evidence that this record
+    # continues the preceding visual message. Captions belong to individual
+    # media items, so different non-empty captions must not split an otherwise
+    # consecutive album. Keep the original forwarded timestamps as a separate
+    # boundary signal: a large jump there can indicate a new forwarded album
+    # even when the export timestamps are only a second apart.
+    joined_continuation = bool(right.get("joined") and outer_gap <= 30)
+    if left_caption and right_caption and not same_caption and not joined_continuation:
+        return False
+
     left_forward_time = left.get("forward_timestamp")
     right_forward_time = right.get("forward_timestamp")
     if (left_forward_time is None) != (right_forward_time is None):
-        if not same_caption:
+        if not (same_caption or joined_continuation):
             return False
 
     if left_forward_time is not None and right_forward_time is not None:
         forward_gap = (right_forward_time - left_forward_time).total_seconds()
         if forward_gap < 0 or (forward_gap > 30 and not same_caption):
             return False
-    elif not same_caption:
-        # Without matching captions or original source timestamps, use the
-        # Desktop continuation marker and a wider 30-second tolerance. The
-        # two-second outer timestamp rule was too strict for real exports.
+    elif not (same_caption or joined_continuation):
+        # Without original source timestamps, only accept a short explicit
+        # Desktop continuation. The outer timestamp is the export clock.
         if not right.get("joined") or outer_gap > 30:
             return False
 
