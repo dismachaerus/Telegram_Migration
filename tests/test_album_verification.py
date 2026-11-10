@@ -10,76 +10,51 @@ from telegram_migration import album
 
 
 class AlbumVerificationTests(unittest.TestCase):
-    def test_message_not_modified_is_accepted_only_after_exact_refetch(self):
-        expected_entities = []
-        stale = SimpleNamespace(id=77, grouped_id=9001, message="stale caption")
-        confirmed = SimpleNamespace(
-            id=77, grouped_id=9001, message="archive caption", entities=[]
-        )
+    def test_message_not_modified_confirms_server_already_has_requested_caption(self):
+        stale = SimpleNamespace(id=77, grouped_id=9001, message="stale local caption")
         client = SimpleNamespace(
             edit_message=AsyncMock(side_effect=MessageNotModifiedError(None)),
-            get_messages=AsyncMock(return_value=confirmed),
+            get_messages=AsyncMock(),
         )
 
         grouped_id = asyncio.run(album._verify_album_delivery(
-            client, -100123, [stale], ["archive caption"],
-            [expected_entities], "309",
+            client, -100123, [stale], ["archive caption"], [[]], "309",
         ))
 
         self.assertEqual(grouped_id, 9001)
         client.edit_message.assert_awaited_once()
-        client.get_messages.assert_awaited_once_with(-100123, ids=77)
+        client.get_messages.assert_not_awaited()
 
-    def test_message_not_modified_does_not_hide_a_real_caption_mismatch(self):
+    def test_successful_edit_still_rejects_a_real_caption_mismatch(self):
         stale = SimpleNamespace(id=78, grouped_id=9002, message="stale caption")
-        confirmed = SimpleNamespace(
-            id=78, grouped_id=9002, message="still wrong", entities=[]
-        )
+        edited = SimpleNamespace(id=78, grouped_id=9002, message="still wrong")
         client = SimpleNamespace(
-            edit_message=AsyncMock(side_effect=MessageNotModifiedError(None)),
-            get_messages=AsyncMock(return_value=confirmed),
+            edit_message=AsyncMock(return_value=edited),
+            get_messages=AsyncMock(return_value=edited),
         )
 
-        with self.assertRaisesRegex(RuntimeError, "text or formatting entities"):
+        with self.assertRaisesRegex(RuntimeError, "expected text was not retained"):
             asyncio.run(album._verify_album_delivery(
                 client, -100123, [stale], ["archive caption"], [[]], "310",
             ))
 
-    def test_blockquote_false_and_missing_collapsed_flag_are_equivalent(self):
-        from telethon.tl import types as tl
-
-        explicit_false = tl.MessageEntityBlockquote(
-            offset=0, length=7, collapsed=False
-        )
-        omitted_flag = tl.MessageEntityBlockquote(offset=0, length=7)
-        self.assertTrue(album._entity_lists_match(
-            [explicit_false], [omitted_flag]
-        ))
-
-    def test_entity_verification_still_rejects_different_formatting(self):
-        from telethon.tl import types as tl
-
-        bold = tl.MessageEntityBold(offset=0, length=7)
-        italic = tl.MessageEntityItalic(offset=0, length=7)
-        self.assertFalse(album._entity_lists_match([bold], [italic]))
-
-    def test_message_not_modified_checks_formatting_entities_too(self):
+    def test_message_not_modified_is_accepted_for_caption_with_entities(self):
         from telethon.tl import types as tl
 
         expected_entities = [tl.MessageEntityBold(offset=0, length=7)]
         stale = SimpleNamespace(id=79, grouped_id=9003, message="old caption")
-        confirmed = SimpleNamespace(
-            id=79, grouped_id=9003, message="caption", entities=[]
-        )
         client = SimpleNamespace(
             edit_message=AsyncMock(side_effect=MessageNotModifiedError(None)),
-            get_messages=AsyncMock(return_value=confirmed),
+            get_messages=AsyncMock(),
         )
 
-        with self.assertRaisesRegex(RuntimeError, "text or formatting entities"):
-            asyncio.run(album._verify_album_delivery(
-                client, -100123, [stale], ["caption"], [expected_entities], "311",
-            ))
+        grouped_id = asyncio.run(album._verify_album_delivery(
+            client, -100123, [stale], ["caption"], [expected_entities], "311",
+        ))
+
+        self.assertEqual(grouped_id, 9003)
+        client.edit_message.assert_awaited_once()
+        client.get_messages.assert_not_awaited()
 
 
 if __name__ == "__main__":
