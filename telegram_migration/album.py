@@ -183,9 +183,11 @@ def _album_records_compatible(left, right):
 
     if left_forward_time is not None and right_forward_time is not None:
         forward_gap = (right_forward_time - left_forward_time).total_seconds()
-        if forward_gap < 0 or (
-            forward_gap > 30 and not (same_caption or joined_continuation)
-        ):
+        # For forwarded exports, the original source timestamp is the
+        # strongest album boundary. A joined CSS class can span consecutive
+        # forwarded posts, so it must not override a substantial source-time
+        # jump between two distinct original messages.
+        if forward_gap < 0 or (forward_gap > 30 and not same_caption):
             return False
     elif not (same_caption or joined_continuation):
         # Without original source timestamps, require a short export-time gap.
