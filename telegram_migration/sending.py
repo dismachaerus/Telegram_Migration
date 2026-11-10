@@ -378,13 +378,37 @@ async def _send_single_media(client, channel, chunks, media, reply_to, state, so
 async def _do_send(client, channel, chunks, media, reply_to, forward_source,
                    state, annotation, source_id=None, data=None):
     if data and data.get("_inferred_album"):
-        return await _send_album(
-            client, channel, chunks, media, reply_to, state, source_id,
-            force_document=all(kind == "document" for _path, kind in media),
-            album_caption=data.get("_album_caption_text"),
-            album_caption_entities=data.get("_album_caption_entities"),
-            return_all=True,
+        album_caption = data.get("_album_caption_text") or ""
+        album_caption_entities = data.get("_album_caption_entities") or []
+        if exportmedia.album_compatible(media):
+            return await _send_album(
+                client, channel, chunks, media, reply_to, state, source_id,
+                force_document=all(kind == "document" for _path, kind in media),
+                album_caption=album_caption,
+                album_caption_entities=album_caption_entities,
+                return_all=True,
+            )
+
+        # The source records still form one group even when Telegram cannot
+        # represent the media combination as a native album. Preserve every
+        # item in source order, attach the caption to the first captionable
+        # item (or as a prefix for stickers/voice notes), and checkpoint each
+        # destination ID so an interrupted sequence resumes without duplicates.
+        first_caption, continuation = inferred_album_caption_parts(
+            album_caption, album_caption_entities,
         )
+        sequence_chunks = [first_caption] + continuation
+        has_sticker = any(kind in STICKER_KINDS for _path, kind in media)
+        needs_prefix_text = await _send_individual_media(
+            client, channel, sequence_chunks, media, reply_to, state,
+            source_id, has_sticker,
+        )
+        if continuation and not needs_prefix_text:
+            await _send_text_chunks(
+                client, channel, continuation, state["album_id"], state,
+                "album_caption_continuation_prog", source_id,
+            )
+        return list(state.get("multi_media_ids", []))
 
     forwarded_id = await _send_native_forward(
         client, channel, forward_source, reply_to, state, annotation, source_id
