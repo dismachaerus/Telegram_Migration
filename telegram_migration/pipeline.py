@@ -134,6 +134,9 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             mark_completed = bool(source_id)
             return
         source_id = str(data["msg_id"])
+        customemoji.apply_custom_emoji_entities(
+            data, ctx.get("inline_custom_emoji_ids", {})
+        )
 
         if data["sender"]:
             ctx["last_sender"] = data["sender"]
@@ -422,8 +425,13 @@ async def _run_migration():
         await client.disconnect()
         return True
 
+    inline_custom_emoji_ids = await customemoji.prepare_inline_custom_emojis_for_run(
+        client, files, peer=channel, dry_run=config.settings.dry_run
+    )
+
     stats = {"sent": 0, "skipped": 0, "failed": 0, "forwarded": 0, "reaction_notes": 0}
     ctx = {
+        "inline_custom_emoji_ids": inline_custom_emoji_ids,
         "last_sender": "",
         "current_export_date": None,
         "stop": False,
