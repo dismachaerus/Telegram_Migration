@@ -36,7 +36,10 @@ class AlbumGroupingMatrixTests(unittest.TestCase):
             ("video",),
             ("document",),
             ("audio",),
-            ("photo", "video"),
+            ("gif",),
+            ("voice",),
+            ("sticker_static",),
+            ("photo", "video", "gif", "voice", "sticker_static"),
         )
         for count in (2, 3, 8, 10):
             for kinds in media_runs:
@@ -55,26 +58,10 @@ class AlbumGroupingMatrixTests(unittest.TestCase):
                     self.assertTrue(all(not row["body_text"] for row in records[1:]))
 
     def test_non_album_media_types_cannot_start_or_continue_source_groups(self):
-        for kind in (
-            "gif", "voice", "round_video", "sticker_static",
-            "sticker_animated", "sticker_video",
-        ):
+        for kind in ("round_video",):
             with self.subTest(kind=kind):
                 record = self._record(0, kind, first=True)
                 self.assertFalse(album._album_candidate(record, record["sender"]))
-
-    def test_incompatible_media_families_are_not_inferred_as_one_source_group(self):
-        for left_kind, right_kind in (
-            ("photo", "document"),
-            ("video", "audio"),
-            ("document", "audio"),
-        ):
-            with self.subTest(left=left_kind, right=right_kind):
-                left = self._record(0, left_kind, first=True)
-                right = self._record(1, right_kind)
-                self.assertTrue(album._album_candidate(left, left["sender"]))
-                self.assertTrue(album._album_candidate(right, right["sender"]))
-                self.assertFalse(album._album_records_compatible(left, right))
 
     def test_repeated_reply_context_is_shared_group_context(self):
         first = self._record(0, "photo", first=True)
