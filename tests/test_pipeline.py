@@ -1066,6 +1066,24 @@ class PipelineTests(unittest.TestCase):
             )
         fakes.write_export(self.folder.name, records)
 
+        document = html.fromstring(open(self.path("messages.html"), encoding="utf-8").read())
+        debug_rows = []
+        for source_id in (448, 449, 454, 455, 457, 458, 459, 463, 464):
+            elem = document.xpath(f'//*[@id="message{source_id}"]')[0]
+            row = htmlexport.extract_message_data(elem)
+            effective = row.get("sender") or row.get("forward_name", "")
+            row["_album_sender"] = effective
+            debug_rows.append(row)
+            print(
+                "ALBUM_DEBUG", source_id, row["media"], repr(row.get("media_note")),
+                repr(row.get("sender")), repr(row.get("forward_name")),
+                row.get("is_forwarded"), row.get("joined"),
+                row.get("timestamp"), row.get("forward_timestamp"),
+                album._album_candidate(row, effective),
+            )
+        for left, right in zip(debug_rows, debug_rows[1:]):
+            print("ALBUM_PAIR", left["msg_id"], right["msg_id"],
+                  album._album_records_compatible(left, right))
         with config.use_settings(self.settings()):
             groups = htmlexport.infer_media_groups([self.path("messages.html")])
         self.assertEqual(list(groups), ["448", "458"])
