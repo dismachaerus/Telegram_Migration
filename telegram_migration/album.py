@@ -367,6 +367,40 @@ async def _album_message_list(value):
     return [value]
 
 
+def _entity_signature(entity):
+    """Return the semantic fields of a Telegram message entity.
+
+    Telegram's messageEntityBlockquote uses an optional true flag for
+    collapsed. Telethon can therefore represent the same non-collapsed
+    blockquote as either False or None depending on the schema layer.
+    Those values are semantically identical and must not fail verification.
+    """
+    to_dict = getattr(entity, "to_dict", None)
+    if callable(to_dict):
+        signature = dict(to_dict())
+    else:
+        signature = {
+            "_": type(entity).__name__,
+            "offset": getattr(entity, "offset", None),
+            "length": getattr(entity, "length", None),
+        }
+        for name in ("url", "user_id", "language", "document_id", "collapsed"):
+            if hasattr(entity, name):
+                signature[name] = getattr(entity, name)
+
+    if signature.get("_") == "MessageEntityBlockquote":
+        signature["collapsed"] = bool(signature.get("collapsed", False))
+    return signature
+
+
+def _entity_lists_match(actual, expected):
+    """Compare entity meaning while ignoring TL flag encodings of false."""
+    return (
+        [_entity_signature(entity) for entity in (actual or [])]
+        == [_entity_signature(entity) for entity in (expected or [])]
+    )
+
+
 async def _verify_album_delivery(client, channel, messages, captions,
                                  caption_entities, source_id):
     """Verify Telegram created one album and retained every supplied caption.
@@ -400,7 +434,8 @@ async def _verify_album_delivery(client, channel, messages, captions,
                 f"Cannot verify caption for album item {index} "
                 f"(source id={source_id}); Telegram returned no message text field"
             )
-        if actual == expected:
+        actual_entities = getattr(message, "entities", None) or []
+        if actual == expected and _entity_lists_match(actual_entities, entities):
             continue
 
         # Caption text is content, not decoration. If Telegram omitted or
@@ -438,26 +473,39 @@ async def _verify_album_delivery(client, channel, messages, captions,
             if confirmed_text is None:
                 confirmed_text = getattr(confirmed, "text", None)
             confirmed_entities = getattr(confirmed, "entities", None) or []
-            if confirmed_text != expected or list(confirmed_entities) != list(entities or []):
+            if confirmed_text != expected:
                 raise RuntimeError(
                     f"Caption verification failed for album item {index} "
-                    f"(source id={source_id}); Telegram reported no change, but "
-                    "the re-fetched text or formatting entities do not match"
+                    f"(source id={source_id}); Telegram reported no change, "
+                    "but the re-fetched caption text differs"
+                )
+            if not _entity_lists_match(confirmed_entities, entities):
+                raise RuntimeError(
+                    f"Caption verification failed for album item {index} "
+                    f"(source id={source_id}); formatting entities differ "
+                    "after normalizing Telegram's optional blockquote flag"
                 )
             continue
 
         edited_text = getattr(edited, "message", None) if edited is not None else None
-        if edited_text is None:
+        edited_entities = getattr(edited, "entities", None) or [] if edited is not None else []
+        if edited_text != expected or not _entity_lists_match(edited_entities, entities):
             get_messages = getattr(client, "get_messages", None)
             if callable(get_messages):
                 refreshed = await get_messages(channel, ids=message.id)
                 refreshed_list = await _album_message_list(refreshed)
                 if refreshed_list:
                     edited_text = getattr(refreshed_list[0], "message", None)
+                    edited_entities = getattr(refreshed_list[0], "entities", None) or []
         if edited_text != expected:
             raise RuntimeError(
                 f"Caption verification failed for album item {index} "
                 f"(source id={source_id}); expected text was not retained"
+            )
+        if not _entity_lists_match(edited_entities, entities):
+            raise RuntimeError(
+                f"Caption verification failed for album item {index} "
+                f"(source id={source_id}); expected formatting entities were not retained"
             )
 
     return grouped_ids[0]
