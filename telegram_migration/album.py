@@ -152,9 +152,12 @@ def _album_records_compatible(left, right):
         return False
     if left.get("forward_name", "") != right.get("forward_name", ""):
         return False
-    # A reply on the first member belongs to the album; a reply on a
-    # continuation is a boundary and must start a separate source message.
-    if right.get("reply_src_id"):
+    # Telegram Desktop can repeat the same reply preview on every forwarded
+    # continuation in an album. That repeated target is shared album context,
+    # not a boundary. A different reply target on a later item is a boundary.
+    left_reply = left.get("reply_src_id")
+    right_reply = right.get("reply_src_id")
+    if right_reply and right_reply != left_reply:
         return False
 
     left_caption = _caption_signature(left)
