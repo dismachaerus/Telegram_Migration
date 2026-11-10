@@ -382,7 +382,7 @@ class PipelineTests(unittest.TestCase):
             os.path.join(self.folder.name, second_path),
         ])
         self.assertIn("The subject's private channel", kwargs["caption"][0])
-        self.assertIn("Forwarded from espritzeit", kwargs["caption"])
+        self.assertIn("Forwarded from espritzeit", kwargs["caption"][0])
         with config.use_settings(self.settings()):
             self.assertEqual(progress.load_id_map(), {"901": 1001, "902": 1002})
 
