@@ -728,7 +728,8 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(album_files, expected_files)
         self.assertTrue(album_kwargs["force_document"])
         self.assertEqual(album_kwargs["caption"], [""] * 10)
-        self.assertEqual(client.kinds("send_message"), [])
+        self.assertEqual(len(client.texts()), 1)
+        self.assertIn("after the album", client.texts()[0])
 
         with config.use_settings(self.settings()):
             mapped = progress.load_id_map()
@@ -1051,7 +1052,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(album_text_posts), 1)
         self.assertEqual(
             album_text_posts[0],
-            "Paranoid schizophrenia\\nYou want more?\\n\\nDifferent caption on item 459",
+            "Paranoid schizophrenia\nYou want more?\n\nDifferent caption on item 459",
         )
         self.assertNotIn("Forwarded from", album_text_posts[0])
         self.assertNotIn("espritzeit", album_text_posts[0])
