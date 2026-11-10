@@ -738,6 +738,44 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("album 702–711", output)
         self.assertIn("sent=12", output)
 
+    def test_joined_jpg_documents_keep_owner_and_caption_in_one_album(self):
+        records = []
+        expected_files = []
+        clocks = ("10:00:00", "10:31:00", "10:32:00")
+        for index, source_id in enumerate((1201, 1202, 1203)):
+            relative = f"files/grouped-photo-{source_id}.jpg"
+            fakes.write_file(self.folder.name, relative)
+            expected_files.append(os.path.join(self.folder.name, relative))
+            joined = " joined" if index else ""
+            sender = '<div class="from_name">Archive owner</div>' if index == 0 else ""
+            caption = '<div class="text">Original grouped JPG caption</div>' if index == 0 else ""
+            records.append(
+                f'<div class="message default clearfix{joined}" id="message{source_id}">'
+                '<div class="body">'
+                f'<div class="pull_right date details" title="12.03.2023 {clocks[index]} UTC+02:00">t</div>'
+                f'{sender}<div class="media_wrap clearfix">'
+                f'<a class="media clearfix pull_left block_link media_file" href="{relative}"></a>'
+                f'</div>{caption}</div></div>'
+            )
+        records.append(fakes.message(1204, fakes.text("after JPG album"), sender="Archive owner"))
+        fakes.write_export(self.folder.name, records)
+
+        with config.use_settings(self.settings()):
+            groups = htmlexport.infer_media_groups([self.path("messages.html")])
+        self.assertEqual([row["msg_id"] for row in groups["1201"]], ["1201", "1202", "1203"])
+
+        client, _output, _ = self.run_once()
+        calls = client.kinds("send_file")
+        self.assertEqual(len(calls), 1)
+        sent_files, kwargs = calls[0][1], calls[0][2]
+        self.assertEqual(sent_files, expected_files)
+        self.assertTrue(kwargs["force_document"])
+        self.assertEqual(len(kwargs["caption"]), 3)
+        self.assertIn("Archive owner", kwargs["caption"][0])
+        self.assertIn("Original grouped JPG caption", kwargs["caption"][0])
+        self.assertEqual(kwargs["caption"][1:], ["", ""])
+        self.assertFalse(any("Original grouped JPG caption" in text for text in client.texts()))
+
     def test_partially_mapped_inferred_album_stops_instead_of_scattering_remaining_media(self):
         records = []
         for source_id in (2, 3):
