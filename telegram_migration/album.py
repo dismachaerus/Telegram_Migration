@@ -82,7 +82,7 @@ def caption_for_group(group):
         seen.add(body)
         block, block_entities = caption_for_record(record)
         if text:
-            text += "\\n\\n"
+            text += "\n\n"
         offset = u16len(text)
         text += block
         for entity in block_entities:
