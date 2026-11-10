@@ -6,6 +6,7 @@ from telethon.errors import MessageNotModifiedError
 from telethon.tl import types as tl
 
 from . import exportmedia
+from .albumcaption import caption_for_group, caption_for_group_body
 from .htmlutil import css_classes
 
 from .textutil import (
@@ -69,38 +70,8 @@ def caption_for_record(record):
     return strip_with_entities(text, ents)
 
 
-def caption_for_group(group):
-    """Collect distinct source caption text, without per-item archive headers."""
-    entities = []
-    seen = set()
-    text = ""
-    for record in group:
-        raw = record.get("body_text") or ""
-        caption = raw.strip()
-        if not caption or caption in seen:
-            continue
-        seen.add(caption)
-
-        leading = len(raw) - len(raw.lstrip())
-        trim_offset = u16len(raw[:leading])
-        caption_length = u16len(caption)
-        if text:
-            text += "\n\n"
-        base_offset = u16len(text)
-        text += caption
-        for entity in record.get("body_entities") or []:
-            start = int(entity.offset) - trim_offset
-            end = start + int(entity.length)
-            if start < 0 or end > caption_length:
-                continue
-            shifted = copy(entity)
-            shifted.offset = base_offset + start
-            entities.append(shifted)
-    return text, entities
-
-
 def prepare_inferred_group(data, group, id_map, manual_done, partial, persist_id):
-    """Attach a caption-free album payload, recovering mappings after an interrupted send."""
+    """Attach an attributed album payload and recover mappings after interruption."""
     if not group or len(group) < 2:
         return False
 
@@ -108,8 +79,6 @@ def prepare_inferred_group(data, group, id_map, manual_done, partial, persist_id
     saved_state = partial.get(str(data["msg_id"]), {})
     saved_album_ids = saved_state.get("album_message_ids")
     if saved_album_ids and len(saved_album_ids) == len(member_ids):
-        # Recover the media mappings; verify_mapped_album resumes the single
-        # standalone album-caption post from its own checkpoint if necessary.
         for member_id, destination_id in zip(member_ids, saved_album_ids):
             if member_id not in id_map:
                 id_map[member_id] = int(destination_id)
@@ -120,28 +89,25 @@ def prepare_inferred_group(data, group, id_map, manual_done, partial, persist_id
         if member_id in id_map or member_id in manual_done
     ]
     if already_mapped and len(already_mapped) != len(member_ids):
-        # A previous run may have sent some members individually. Never resend
-        # those records as part of a newly inferred album.
         return False
 
-    # Keep every media item caption-free. Any source captions are collected
-    # into one ordinary text message sent after the complete media group.
     album_caption, album_caption_entities = caption_for_group(group)
+    legacy_caption, legacy_caption_entities = caption_for_group_body(group)
     all_media = [item for member in group for item in member["media"]]
 
     data["_inferred_album"] = True
     data["_album_source_ids"] = member_ids
     data["_album_caption_text"] = album_caption
     data["_album_caption_entities"] = album_caption_entities
+    data["_album_caption_legacy_text"] = legacy_caption
+    data["_album_caption_legacy_entities"] = legacy_caption_entities
     data["media"] = all_media
     data["body_text"] = ""
     data["body_entities"] = []
+    # Never let a native-forward shortcut bypass reconstruction of the full group.
     data["forward_source"] = None
-    data["is_forwarded"] = False
-    data["reply_src_id"] = None
+    # Keep the first record's sender, forwarded attribution, and reply target.
     return True
-
-
 def _album_candidate(data, effective_sender):
     """Whether one HTML record can start or continue a conservative album inference.
 
@@ -151,7 +117,7 @@ def _album_candidate(data, effective_sender):
     """
     if len(data.get("media") or []) != 1:
         return False
-    if data.get("reply_src_id") or data.get("reactions") or data.get("media_note"):
+    if data.get("media_note"):
         return False
     path, kind = data["media"][0]
     if kind not in ("photo", "video", "document"):
@@ -184,7 +150,9 @@ def _album_records_compatible(left, right):
         return False
     if left.get("forward_name", "") != right.get("forward_name", ""):
         return False
-    if left.get("reply_src_id") or right.get("reply_src_id"):
+    # A reply on the first member belongs to the album; a reply on a
+    # continuation is a boundary and must start a separate source message.
+    if right.get("reply_src_id"):
         return False
 
     left_caption = _caption_signature(left)
@@ -192,19 +160,16 @@ def _album_records_compatible(left, right):
     same_caption = bool(left_caption and right_caption and left_caption == right_caption)
 
     left_time, right_time = left.get("timestamp"), right.get("timestamp")
-    if left_time is None or right_time is None:
-        return False
-    outer_gap = (right_time - left_time).total_seconds()
-    if outer_gap < 0:
-        return False
+    outer_gap = None
+    if left_time is not None and right_time is not None:
+        outer_gap = (right_time - left_time).total_seconds()
+        if outer_gap < 0:
+            return False
 
-    # Telegram Desktop's "joined" class is strong evidence that this record
-    # continues the preceding visual message. Captions belong to individual
-    # media items, so different non-empty captions must not split an otherwise
-    # consecutive album. Keep the original forwarded timestamps as a separate
-    # boundary signal: a large jump there can indicate a new forwarded album
-    # even when the export timestamps are only a second apart.
-    joined_continuation = bool(right.get("joined") and outer_gap <= 30)
+    # The joined class is Telegram Desktop's explicit continuation marker.
+    # Do not discard that structural evidence because clocks are missing or
+    # differ by more than an arbitrary number of seconds.
+    joined_continuation = bool(right.get("joined"))
     if left_caption and right_caption and not same_caption and not joined_continuation:
         return False
 
@@ -216,12 +181,13 @@ def _album_records_compatible(left, right):
 
     if left_forward_time is not None and right_forward_time is not None:
         forward_gap = (right_forward_time - left_forward_time).total_seconds()
-        if forward_gap < 0 or (forward_gap > 30 and not same_caption):
+        if forward_gap < 0 or (
+            forward_gap > 30 and not (same_caption or joined_continuation)
+        ):
             return False
     elif not (same_caption or joined_continuation):
-        # Without original source timestamps, only accept a short explicit
-        # Desktop continuation. The outer timestamp is the export clock.
-        if not right.get("joined") or outer_gap > 30:
+        # Without original source timestamps, require a short export-time gap.
+        if outer_gap is None or outer_gap > 30:
             return False
 
     return exportmedia.album_compatible(left["media"] + right["media"])
@@ -248,6 +214,7 @@ def infer_media_groups(files, inline_emoji_ids=None):
         pending = []
         overflow = False
         last_sender = ""
+        forward_context = {"last_forward_name": ""}
 
         def flush():
             nonlocal pending, overflow
@@ -267,28 +234,34 @@ def infer_media_groups(files, inline_emoji_ids=None):
                 classes = css_classes(elem)
                 if "service" in classes:
                     flush()
+                    last_sender = ""
+                    forward_context["last_forward_name"] = ""
                     continue
 
                 data = htmlexport.extract_message_data(elem)
                 if data is None:
                     flush()
+                    last_sender = ""
+                    forward_context["last_forward_name"] = ""
                     continue
 
+                htmlexport.inherit_forwarded_sender(data, forward_context)
                 if inline_emoji_ids:
                     from .customemoji import apply_custom_emoji_entities
                     apply_custom_emoji_entities(data, inline_emoji_ids)
 
-                if data.get("sender"):
-                    last_sender = data["sender"]
                 effective_sender = data.get("sender") or (
                     last_sender if data.get("joined") else ""
                 )
-
                 if not _album_candidate(data, effective_sender):
                     flush()
+                    # Sender inheritance is valid only across an uninterrupted
+                    # joined-media sequence, never across an unrelated record.
+                    last_sender = ""
                 else:
                     data["sender"] = effective_sender
                     data["_album_sender"] = effective_sender or data.get("forward_name", "")
+                    last_sender = effective_sender
                     if not pending:
                         pending = [data]
                     elif _album_records_compatible(pending[-1], data):
@@ -298,12 +271,6 @@ def infer_media_groups(files, inline_emoji_ids=None):
                             and not pending[0].get("joined")
                             and all(member.get("joined") for member in pending[1:])
                         ):
-                            # A non-joined media message followed by ten joined
-                            # media records cannot be one Telegram album: albums
-                            # have at most ten items. Keep the leading message
-                            # independent and infer the maximum-size album from
-                            # the joined continuation run. This is based on
-                            # export structure, not message IDs or file names.
                             album_run = pending[1:]
                             groups[album_run[0]["msg_id"]] = album_run[:]
                             pending = []
