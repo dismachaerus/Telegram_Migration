@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from telethon.tl import types as tl
 
-from telegram_migration import album, bigfiles, config, customemoji, htmlexport, mediatools, pipeline, progress
+from telegram_migration import album, bigfiles, config, customemoji, htmlexport, mediatools, pipeline, progress, sending
 from lxml import html
 from telegram_migration.config import Settings
 
@@ -867,11 +867,15 @@ class PipelineTests(unittest.TestCase):
         sent_files, album_kwargs = album_calls[0][1], album_calls[0][2]
         self.assertEqual(sent_files, files)
         self.assertTrue(album_kwargs.get("force_document", False))
-        self.assertEqual(len(album_kwargs["caption"]), 4)
-        self.assertEqual(album_kwargs["caption"], [""] * 4)
+        expected_caption, expected_entities = album.caption_for_group(groups["309"])
+        first_caption, continuation = sending.inferred_album_caption_parts(
+            expected_caption, expected_entities,
+        )
+        self.assertEqual(album_kwargs["caption"], [first_caption[0]] + [""] * 3)
+        self.assertEqual(album_kwargs["formatting_entities"][0], first_caption[1])
         self.assertEqual(
-            [text for text in client.texts() if long_caption.strip() in text],
-            [long_caption.strip()],
+            [text for text in client.texts() if text != "message after the album"],
+            [chunk[0] for chunk in continuation],
         )
         self.assertIn("message after the album", client.texts()[-1])
         self.assertIn("sent=5", output)
@@ -912,14 +916,9 @@ class PipelineTests(unittest.TestCase):
         sent_files, album_kwargs = album_calls[0][1], album_calls[0][2]
         self.assertEqual(sent_files, expected)
         self.assertFalse(album_kwargs.get("force_document", False))
-        self.assertEqual(album_kwargs["caption"], [""] * 3)
-        caption_posts = [text for text in client.texts() if "Shared album description" in text]
-        self.assertEqual(caption_posts, ["Shared album description"])
-        self.assertLess(
-            next(i for i, call in enumerate(client.calls) if call[0] == "send_file"),
-            next(i for i, call in enumerate(client.calls)
-                 if call[0] == "send_message" and call[1] == "Shared album description"),
-        )
+        expected_caption, _entities = album.caption_for_group(groups["401"])
+        self.assertEqual(album_kwargs["caption"], [expected_caption, "", ""])
+        self.assertNotIn("Shared album description", client.texts())
         self.assertIn("after shared-caption album", client.texts()[-1])
         self.assertIn("sent=4", output)
 
@@ -1035,8 +1034,9 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual([row["msg_id"] for row in groups["458"]], list(map(str, range(458, 465))))
         self.assertEqual(groups["458"][0]["body_text"], "Paranoid schizophrenia\nYou want more?")
         self.assertEqual(groups["458"][1]["body_text"], "Different caption on item 459")
-        caption, _entities = album.caption_for_record(groups["458"][0])
+        caption, _entities = album.caption_for_group(groups["458"])
         self.assertIn("Paranoid schizophrenia\nYou want more?", caption)
+        self.assertIn("Forwarded from espritzeit", caption)
 
         client, output, _ = self.run_once()
         album_calls = client.kinds("send_file")
@@ -1047,15 +1047,10 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(second_files, expected_second)
         self.assertEqual(first_kwargs["caption"], [""] * 10)
         self.assertEqual(second_kwargs["caption"], [""] * 7)
-        album_text_posts = [text for text in client.texts()
-                            if "Paranoid schizophrenia\nYou want more?" in text]
-        self.assertEqual(len(album_text_posts), 1)
-        self.assertEqual(
-            album_text_posts[0],
-            "Paranoid schizophrenia\nYou want more?\n\nDifferent caption on item 459",
-        )
-        self.assertNotIn("Forwarded from", album_text_posts[0])
-        self.assertNotIn("espritzeit", album_text_posts[0])
+        self.assertIn("Paranoid schizophrenia\nYou want more?", second_kwargs["caption"][0])
+        self.assertIn("Different caption on item 459", second_kwargs["caption"][0])
+        self.assertIn("Forwarded from espritzeit", second_kwargs["caption"][0])
+        self.assertFalse(any("Paranoid schizophrenia" in text for text in client.texts()))
         grouped_ids = {message.grouped_id for message in client.messages.values()
                        if message.grouped_id is not None}
         self.assertEqual(len(grouped_ids), 2)
@@ -1099,8 +1094,9 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][1], expected)
         self.assertEqual(calls[0][2]["caption"], ["", ""])
-        caption_posts = [text for text in client.texts() if "caption 801" in text]
-        self.assertEqual(caption_posts, ["caption 801"])
+        self.assertIn("caption 801", calls[0][2]["caption"][0])
+        self.assertIn("Forwarded from News Channel", calls[0][2]["caption"][0])
+        self.assertFalse(any("caption 801" in text for text in client.texts()))
 
 
     def test_forwarded_round_video_keeps_attribution_in_same_media_message(self):
