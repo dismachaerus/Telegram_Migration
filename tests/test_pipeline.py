@@ -901,7 +901,10 @@ class PipelineTests(unittest.TestCase):
 
     def test_forwarded_seven_video_album_keeps_caption_from_first_media_item(self):
         """Mirror the export shape of messages 458–464, including the caption."""
-        records = []
+        records = [
+            fakes.message(457, fakes.text("previous sender context"),
+                          sender="⛯⛯", minute=1)
+        ]
         expected_files = []
         forward_clock = (
             "14:38:31", "14:38:32", "14:38:32", "14:38:33",
