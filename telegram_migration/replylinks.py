@@ -2,7 +2,7 @@
 
 import asyncio
 
-from . import config
+from . import config, progress
 
 
 def _reply_id_from_message(msg):
@@ -11,6 +11,29 @@ def _reply_id_from_message(msg):
     if actual is None and msg is not None:
         actual = getattr(msg, "reply_to_msg_id", None)
     return actual
+
+
+def resolve_reply(data, source_id, id_map, pending_replies, ctx):
+    """Resolve, defer, or annotate a source message's reply target."""
+    reply_to = id_map.get(str(data["reply_src_id"])) if data["reply_src_id"] else None
+    reply_fallback = ("", [])
+    if not data["reply_src_id"] or reply_to is not None:
+        return reply_to, reply_fallback, False
+
+    target_src = str(data["reply_src_id"])
+    if target_src in ctx["source_ids"] and target_src not in ctx["processed_source_ids"]:
+        if not config.settings.dry_run:
+            if pending_replies.get(source_id) != target_src:
+                pending_replies[source_id] = target_src
+                progress.save_pending_replies(pending_replies)
+        else:
+            print(f"  [dry] would defer reply id={source_id} until target id={target_src} is migrated")
+        return None, reply_fallback, True
+
+    fallback = f"[Original reply target #{target_src} is unavailable in the destination]\n"
+    if data.get("reply_preview"):
+        fallback += f"Original reply preview: {data['reply_preview']}\n"
+    return None, (fallback + "\n", []), False
 
 
 async def verify_all_reply_links(client, channel, source_reply_map, id_map, audit):
