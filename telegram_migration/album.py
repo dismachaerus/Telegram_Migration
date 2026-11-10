@@ -1,5 +1,6 @@
 """Helpers for inferred media albums reconstructed from Telegram Desktop HTML."""
 
+from telethon.errors import MessageNotModifiedError
 from telethon.tl import types as tl
 
 from . import exportmedia
@@ -410,10 +411,41 @@ async def _verify_album_delivery(client, channel, messages, captions,
                 f"Telegram did not retain caption for album item {index} "
                 f"(source id={source_id}); no edit_message method is available"
             )
-        edited = await edit_message(
-            channel, message.id, expected,
-            formatting_entities=entities or None, parse_mode=None,
-        )
+        try:
+            edited = await edit_message(
+                channel, message.id, expected,
+                formatting_entities=entities or None, parse_mode=None,
+            )
+        except MessageNotModifiedError:
+            # Telegram uses this response when the requested text/entities are
+            # already present. The original response object can be stale, so
+            # confirm the persisted message rather than retrying the whole album.
+            get_messages = getattr(client, "get_messages", None)
+            if not callable(get_messages):
+                raise RuntimeError(
+                    f"Telegram reported an unchanged caption for album item {index} "
+                    f"(source id={source_id}), but the client cannot re-fetch it"
+                )
+            refreshed = await get_messages(channel, ids=message.id)
+            refreshed_list = await _album_message_list(refreshed)
+            if not refreshed_list:
+                raise RuntimeError(
+                    f"Could not re-fetch album item {index} after Telegram reported "
+                    f"its caption was unchanged (source id={source_id})"
+                )
+            confirmed = refreshed_list[0]
+            confirmed_text = getattr(confirmed, "message", None)
+            if confirmed_text is None:
+                confirmed_text = getattr(confirmed, "text", None)
+            confirmed_entities = getattr(confirmed, "entities", None) or []
+            if confirmed_text != expected or list(confirmed_entities) != list(entities or []):
+                raise RuntimeError(
+                    f"Caption verification failed for album item {index} "
+                    f"(source id={source_id}); Telegram reported no change, but "
+                    "the re-fetched text or formatting entities do not match"
+                )
+            continue
+
         edited_text = getattr(edited, "message", None) if edited is not None else None
         if edited_text is None:
             get_messages = getattr(client, "get_messages", None)
