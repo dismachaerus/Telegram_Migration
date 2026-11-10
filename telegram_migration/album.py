@@ -250,14 +250,13 @@ def infer_media_groups(files, inline_emoji_ids=None):
                     from .customemoji import apply_custom_emoji_entities
                     apply_custom_emoji_entities(data, inline_emoji_ids)
 
+                if data.get("sender"):
+                    last_sender = data["sender"]
                 effective_sender = data.get("sender") or (
                     last_sender if data.get("joined") else ""
                 )
                 if not _album_candidate(data, effective_sender):
                     flush()
-                    # Sender inheritance is valid only across an uninterrupted
-                    # joined-media sequence, never across an unrelated record.
-                    last_sender = ""
                 else:
                     data["sender"] = effective_sender
                     data["_album_sender"] = effective_sender or data.get("forward_name", "")
