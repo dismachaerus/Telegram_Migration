@@ -727,7 +727,8 @@ class PipelineTests(unittest.TestCase):
         album_files, album_kwargs = media_calls[1][1], media_calls[1][2]
         self.assertEqual(album_files, expected_files)
         self.assertTrue(album_kwargs["force_document"])
-        self.assertEqual(album_kwargs["caption"], [""] * 10)
+        self.assertTrue(album_kwargs["caption"][0].startswith("Alice\\n12 March 2023"))
+        self.assertEqual(album_kwargs["caption"][1:], [""] * 9)
         self.assertEqual(len(client.texts()), 1)
         self.assertIn("after the album", client.texts()[0])
 
@@ -912,7 +913,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(album_kwargs["caption"], [first_caption[0]] + [""] * 3)
         self.assertEqual(album_kwargs["formatting_entities"][0], first_caption[1])
         self.assertEqual(
-            [text for text in client.texts() if text != "message after the album"],
+            [text for text in client.texts() if "message after the album" not in text],
             [chunk[0] for chunk in continuation],
         )
         self.assertIn("message after the album", client.texts()[-1])
