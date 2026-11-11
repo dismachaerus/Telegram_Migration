@@ -6,7 +6,9 @@ from telethon.errors import MessageNotModifiedError
 from telethon.tl import types as tl
 
 from . import exportmedia
-from .albumcaption import caption_for_group, caption_for_group_body
+from .albumcaption import (
+    caption_for_group, caption_for_group_body, forwarded_reply_context,
+)
 from .htmlutil import css_classes
 
 from .textutil import (
@@ -61,11 +63,13 @@ def caption_for_record(record):
         text, ents = compose_message(
             header, ("", []), (attribution + "\n\n", entities),
             record.get("body_text", ""), record.get("body_entities", []),
+            extra_before_body=forwarded_reply_context([record]),
         )
     else:
         text, ents = compose_message(
             header, ("", []), ("", []),
             record.get("body_text", ""), record.get("body_entities", []),
+            extra_before_body=forwarded_reply_context([record]),
         )
     return strip_with_entities(text, ents)
 

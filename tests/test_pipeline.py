@@ -644,6 +644,11 @@ class PipelineTests(unittest.TestCase):
             }
             self.assertTrue(all(row["reply_src_id"] is None for row in parsed.values()))
             self.assertTrue(all(row["reply_preview"] == "" for row in parsed.values()))
+            self.assertEqual(parsed["106"]["forward_reply_src_id"], "105")
+            self.assertEqual(parsed["106"]["forward_reply_preview"], "In reply to this message")
+            self.assertEqual(parsed["107"]["forward_reply_src_id"], "106")
+            self.assertEqual(parsed["107"]["forward_reply_preview"], "In reply to this message")
+            self.assertEqual(parsed["108"]["forward_reply_preview"], "")
             groups = htmlexport.infer_media_groups([self.path("messages.html")])
 
         self.assertEqual(
@@ -661,8 +666,57 @@ class PipelineTests(unittest.TestCase):
         sticker_call = sticker_calls[-1]
         self.assertEqual(photo_call[2]["caption"], "")
         self.assertIn("Forwarded from Valerie Demian", sticker_call[2]["caption"])
+        self.assertIn("In reply to this message", sticker_call[2]["caption"])
         self.assertIn("The impotent old man and the sea of tears", sticker_call[2]["caption"])
         self.assertEqual(client.texts(), ["Alice\n\nearlier source message"])
+
+    def test_forwarded_voice_note_keeps_its_original_reply_preview_as_context(self):
+        media_path = "voice_messages/forwarded-note.ogg"
+        fakes.write_file(self.folder.name, media_path)
+        forwarded = (
+            '<div class="message default clearfix" id="message800">'
+            '<div class="body">'
+            '<div class="pull_right date details" '
+            'title="08.11.2026 09:28:59 UTC+02:00">09:28</div>'
+            '<div class="from_name">Archive owner</div>'
+            '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
+            '<div class="forwarded body">'
+            '<div class="from_name">Original voice author '
+            '<span class="date details" title="05.11.2026 19:35:11 UTC+02:00">'
+            '05.11.2026 19:35:11</span></div>'
+            '<div class="reply_to details">In reply to '
+            '<a href="#go_to_message799">the earlier conversation</a></div>'
+            '<div class="media_wrap clearfix">'
+            '<a class="media_voice_message" href="' + media_path + '"></a>'
+            '</div></div></div></div>'
+        )
+        fakes.write_export(self.folder.name, [forwarded])
+
+        with config.use_settings(self.settings(native_forward=False)):
+            document = html.fromstring(
+                open(self.path("messages.html"), encoding="utf-8").read()
+            )
+            parsed = htmlexport.extract_message_data(
+                document.xpath('//*[@id="message800"]')[0]
+            )
+        self.assertIsNone(parsed["reply_src_id"])
+        self.assertEqual(parsed["reply_preview"], "")
+        self.assertEqual(parsed["forward_reply_src_id"], "799")
+        self.assertEqual(parsed["forward_reply_preview"], "In reply to the earlier conversation")
+
+        client, _, _ = self.run_once(native_forward=False)
+        self.assertEqual(client.kinds("send_message"), [])
+        calls = client.kinds("send_file")
+        self.assertEqual(len(calls), 1)
+        kwargs = calls[0][2]
+        self.assertTrue(kwargs["voice_note"])
+        self.assertIsNone(kwargs["reply_to"])
+        self.assertIn("Forwarded from Original voice author", kwargs["caption"])
+        self.assertIn("In reply to the earlier conversation", kwargs["caption"])
+        self.assertTrue(any(
+            type(entity).__name__ == "MessageEntityBlockquote"
+            for entity in kwargs["formatting_entities"]
+        ))
 
     def test_oversize_file_stops_cleanly_and_the_next_run_skips_it(self):
         fakes.write_file(self.folder.name, "video_files/big.mp4", size=2 * 1024 * 1024)

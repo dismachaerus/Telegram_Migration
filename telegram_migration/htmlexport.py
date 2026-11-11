@@ -220,6 +220,20 @@ def _find_outer_reply_to(msg_div, forwarded_body=None):
     return None
 
 
+def _find_forward_reply_to(forwarded_body):
+    """Find the reply preview embedded in the forwarded payload itself.
+
+    This is original-source context. Preserve it for display, but never use its
+    referenced message ID to create a reply link in the destination channel.
+    """
+    if forwarded_body is None:
+        return None
+    for el in forwarded_body.iter():
+        if "reply_to" in css_classes(el):
+            return el
+    return None
+
+
 def _extract_reply_source_id(reply_div):
     """Extract the source target from an already-selected outer reply element."""
     if reply_div is None:
@@ -338,6 +352,12 @@ def extract_message_data(msg_div):
     preview = _reply_preview(reply_div)
     reply_src_id = _extract_reply_source_id(reply_div)
 
+    # A reply preview inside the forwarded body belongs to the original
+    # conversation. Preserve it separately from the outer chat's reply link.
+    forward_reply_div = _find_forward_reply_to(fwd_div)
+    forward_reply_preview = _reply_preview(forward_reply_div)
+    forward_reply_src_id = _extract_reply_source_id(forward_reply_div)
+
     # For forwarded messages, read the payload text from the forwarded body
     # itself. Searching the whole message can select an unrelated outer text
     # block first and silently omit the forwarded caption.
@@ -379,6 +399,8 @@ def extract_message_data(msg_div):
         "forward_source": fwd_src,
         "reply_src_id": reply_src_id,
         "reply_preview": preview,
+        "forward_reply_src_id": forward_reply_src_id,
+        "forward_reply_preview": forward_reply_preview,
         "body_text": body_text,
         "body_entities": body_entities,
         "media": media,
