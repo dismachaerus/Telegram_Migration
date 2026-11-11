@@ -180,20 +180,19 @@ def _album_records_compatible(left, right):
 
     left_forward_time = left.get("forward_timestamp")
     right_forward_time = right.get("forward_timestamp")
-    if (left_forward_time is None) != (right_forward_time is None):
-        if not (same_caption or joined_continuation):
+    if left.get("is_forwarded"):
+        # A joined class describes Desktop's visual message layout; it does
+        # not prove that two forwarded messages belong to one media group.
+        # Require each forwarded item to carry its own original-source
+        # timestamp before using timestamp proximity as album evidence.
+        if left_forward_time is None or right_forward_time is None:
             return False
-
-    if left_forward_time is not None and right_forward_time is not None:
         forward_gap = (right_forward_time - left_forward_time).total_seconds()
-        # For forwarded exports, the original source timestamp is the
-        # strongest album boundary. A joined CSS class can span consecutive
-        # forwarded posts, so it must not override a substantial source-time
-        # jump between two distinct original messages.
         if forward_gap < 0 or (forward_gap > 30 and not same_caption):
             return False
     elif not (same_caption or joined_continuation):
-        # Without original source timestamps, require a short export-time gap.
+        # For ordinary messages, a joined continuation plus a short export-time
+        # gap remains the fallback when no stronger caption evidence exists.
         if outer_gap is None or outer_gap > 30:
             return False
 
