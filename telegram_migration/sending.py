@@ -259,9 +259,12 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
     return message_ids if return_all else message_ids[0]
 
 async def _send_individual_media(client, channel, chunks, media, reply_to, state,
-                                 source_id, has_sticker):
+                                 source_id):
     first_text, first_ents = chunks[0]
-    needs_prefix_text = has_sticker or media[0][1] in NO_CAPTION_KINDS
+    # Sticker documents support captions through Telethon's MTProto sendMedia
+    # path. Only media types explicitly listed as non-captionable (voice notes)
+    # need a separate prefix message.
+    needs_prefix_text = media[0][1] in NO_CAPTION_KINDS
     if needs_prefix_text:
         if "prefix_text_id" not in state:
             saved_text_id = state.get("text_id")
@@ -312,7 +315,7 @@ async def _send_multiple_media(client, channel, chunks, media, reply_to, state, 
     )
     if individual:
         needs_prefix_text = await _send_individual_media(
-            client, channel, chunks, media, reply_to, state, source_id, has_sticker
+            client, channel, chunks, media, reply_to, state, source_id
         )
     else:
         await _send_album(client, channel, chunks, media, reply_to, state, source_id)
@@ -392,7 +395,7 @@ async def _do_send(client, channel, chunks, media, reply_to, forward_source,
         # The source records still form one group even when Telegram cannot
         # represent the media combination as a native album. Preserve every
         # item in source order, attach the caption to the first captionable
-        # item (or as a prefix for stickers/voice notes), and checkpoint each
+        # item (or as a prefix for voice notes), and checkpoint each
         # destination ID so an interrupted sequence resumes without duplicates.
         first_caption, continuation = inferred_album_caption_parts(
             album_caption, album_caption_entities,
@@ -401,7 +404,7 @@ async def _do_send(client, channel, chunks, media, reply_to, forward_source,
         has_sticker = any(kind in STICKER_KINDS for _path, kind in media)
         needs_prefix_text = await _send_individual_media(
             client, channel, sequence_chunks, media, reply_to, state,
-            source_id, has_sticker,
+            source_id,
         )
         if continuation and not needs_prefix_text:
             await _send_text_chunks(
