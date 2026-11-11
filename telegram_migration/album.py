@@ -207,8 +207,9 @@ def infer_media_groups(files, inline_emoji_ids=None):
     Desktop HTML does not retain Telegram's grouped_id. Album starts may lack
     the "joined" class, so single-media records are held as possible starts.
     Ordinary continuations still require the joined marker and close export
-    timestamps; forwarded continuations can instead use close original
-    forward timestamps from the same source author. If one standalone
+    timestamps. Forwarded continuations require an original forward timestamp
+    on each item, with close source times from the same author. An inherited
+    author or the joined marker alone is never enough. If one standalone
     non-joined candidate is followed by ten compatible joined candidates,
     the ten-item continuation is inferred as its own album, respecting
     Telegram's hard album limit without relying on source-specific IDs. Other
