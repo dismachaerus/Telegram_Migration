@@ -1134,8 +1134,14 @@ class PipelineTests(unittest.TestCase):
         # JPGs as media_file (documents), not photo_wrap (photos).
         def forwarded_file(message_id, export_second, original_second, relative, joined=False,
                            archive_sender=False):
-            outer_time = f"01.07.2026 21:46:{export_second:02d} UTC+02:00"
-            original_time = f"04.06.2026 09:46:{original_second:02d} UTC+02:00"
+            outer_minute, outer_second = divmod(export_second, 60)
+            source_minute, source_second = divmod(original_second, 60)
+            outer_time = (
+                f"01.07.2026 21:{46 + outer_minute:02d}:{outer_second:02d} UTC+02:00"
+            )
+            original_time = (
+                f"04.06.2026 09:{46 + source_minute:02d}:{source_second:02d} UTC+02:00"
+            )
             classes = "message default clearfix" + (" joined" if joined else "")
             sender = '<div class="from_name">Archive owner</div>' if archive_sender else ""
             return (
