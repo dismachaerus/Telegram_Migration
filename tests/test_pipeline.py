@@ -1067,6 +1067,52 @@ class PipelineTests(unittest.TestCase):
         self.assertIs(result, False)
 
 
+    def test_forwarded_six_joined_file_group_stays_separate_from_preceding_file(self):
+        def forwarded_file(message_id, original_second, relative, joined=False,
+                           archive_sender=False):
+            outer_time = f"01.07.2026 21:46:{original_second:02d} UTC+02:00"
+            original_time = f"04.06.2026 09:46:{original_second:02d} UTC+02:00"
+            classes = "message default clearfix" + (" joined" if joined else "")
+            sender = '<div class="from_name">Archive owner</div>' if archive_sender else ""
+            return (
+                f'<div class="{classes}" id="message{message_id}"><div class="body">'
+                f'<div class="pull_right date details" title="{outer_time}">21:46</div>'
+                f'{sender}'
+                '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
+                '<div class="forwarded body"><div class="from_name">🗝 '
+                f'<span class="date details" title="{original_time}">{original_time}</span>'
+                '</div><div class="media_wrap clearfix">'
+                f'<a class="media clearfix pull_left block_link media_file" href="{relative}">'
+                '<div class="fill pull_left"></div><div class="body">'
+                f'<div class="title bold">{os.path.basename(relative)}</div>'
+                '<div class="status details">250 KB</div></div></a></div></div></div></div>'
+            )
+
+        rows = [(319, 55, "files/preceding.jpg", False)]
+        rows.extend(
+            (message_id, 56 + index, f"files/group-{index:02d}.jpg", True)
+            for index, message_id in enumerate(range(320, 326))
+        )
+        html_rows = []
+        expected_album = []
+        for index, (message_id, second, relative, joined) in enumerate(rows):
+            fakes.write_file(self.folder.name, relative)
+            html_rows.append(forwarded_file(
+                message_id, second, relative, joined=joined, archive_sender=(index == 0),
+            ))
+            if joined:
+                expected_album.append(self.path(relative))
+        fakes.write_export(self.folder.name, html_rows)
+
+        client, _output, _ = self.run_once()
+        media_calls = client.kinds("send_file")
+        self.assertEqual(len(media_calls), 2)
+        self.assertEqual(media_calls[0][1], self.path("files/preceding.jpg"))
+        self.assertEqual(media_calls[1][1], expected_album)
+        self.assertEqual(len(media_calls[1][2]["caption"]), 6)
+        self.assertTrue(all(not caption for caption in media_calls[1][2]["caption"][:-1]))
+        self.assertIn("Forwarded from 🗝", media_calls[1][2]["caption"][-1])
+
     def test_forwarded_ten_jpg_file_group_is_one_album_with_one_attributed_caption(self):
         # Reproduce the user's actual Desktop HTML shape: message 319 is a
         # standalone forwarded file; messages 320-329 are ten joined file
