@@ -1503,7 +1503,7 @@ class PipelineTests(unittest.TestCase):
             )
             self.assertFalse(kwargs.get("force_document", False))
             self.assertEqual(len(kwargs["caption"]), 2)
-            self.assertTrue(kwargs["caption"][0].startswith("Alice\\n12 March 2023"))
+            self.assertTrue(kwargs["caption"][0].startswith("Alice\n12 March 2023"))
             self.assertEqual(kwargs["caption"][1], "")
 
         self.assertEqual(client.kinds("send_message"), [])
