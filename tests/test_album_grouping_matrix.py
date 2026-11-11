@@ -72,6 +72,19 @@ class AlbumGroupingMatrixTests(unittest.TestCase):
         continuation["forward_reply_src_id"] = "901"
         self.assertFalse(album._album_records_compatible(first, continuation))
 
+    def test_forwarded_album_items_need_original_timestamps_individually(self):
+        first = self._record(0, "photo", first=True)
+        continuation = self._record(1, "photo")
+
+        # The records otherwise match: same inherited author, forwarded
+        # status, joined marker, and close export timestamps. A joined class
+        # must not make up for missing original-source timestamp metadata.
+        continuation["forward_timestamp"] = None
+        self.assertFalse(album._album_records_compatible(first, continuation))
+
+        first["forward_timestamp"] = None
+        self.assertFalse(album._album_records_compatible(first, continuation))
+
     def test_native_album_compatibility_is_a_separate_destination_decision(self):
         self.assertTrue(exportmedia.album_compatible([
             ("a.jpg", "photo"), ("b.mp4", "video"),
