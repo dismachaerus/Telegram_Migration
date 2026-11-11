@@ -341,8 +341,8 @@ async def verify_mapped_album(client, channel, data, id_map, partial, source_id)
         data.get("_album_caption_text", ""),
         data.get("_album_caption_entities", []),
     )
-    expected_captions = [first_caption[0]] + [""] * (len(mapped_ids) - 1)
-    expected_entities = [first_caption[1]] + [[] for _ in mapped_ids[1:]]
+    expected_captions = [""] * (len(mapped_ids) - 1) + [first_caption[0]]
+    expected_entities = [[] for _ in mapped_ids[:-1]] + [first_caption[1]]
     grouped_id = await _verify_saved_album(
         client, channel, mapped_ids, expected_captions, expected_entities, source_id
     )
@@ -357,7 +357,7 @@ async def verify_mapped_album(client, channel, data, id_map, partial, source_id)
     )
     await sending.send_inferred_album_caption(
         client, channel, data.get("_album_caption_text", ""),
-        data.get("_album_caption_entities", []), state, source_id, mapped_ids[0],
+        data.get("_album_caption_entities", []), state, source_id, mapped_ids[-1],
     )
 
 

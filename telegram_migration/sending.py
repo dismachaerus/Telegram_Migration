@@ -8,7 +8,7 @@ from telethon.tl import types as tl
 
 from . import album, config, exportmedia, formatfallback, progress, uploads
 from .textutil import clean_invalid_entities, split_with_entities
-from .constants import NO_CAPTION_KINDS, STICKER_KINDS
+from .constants import STICKER_KINDS
 
 
 _native_warned = [False]
@@ -138,7 +138,7 @@ def inferred_album_caption_parts(caption, entities):
 async def send_inferred_album_caption(
     client, channel, caption, entities, state, source_id, album_message_id,
 ):
-    """Send only caption overflow as a reply; the first part belongs to the album."""
+    """Send only caption overflow as a reply to the final item in the album."""
     _first, continuation = inferred_album_caption_parts(caption, entities)
     if not continuation:
         return
@@ -156,18 +156,19 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
     files = [path for path, _kind in media]
     inferred_album = album_caption is not None
     if inferred_album:
-        # Telegram stores an album's one caption on its first media item and
-        # renders it beneath the complete grouped album. Keep every item in
-        # the same group; only overflow beyond the bot caption limit is replied
-        # to the album as continuation text.
-        first_caption, _continuation = inferred_album_caption_parts(
+        # Put the complete message context on the final item of the group.
+        # Telegram accepts one caption per album item; all earlier slots stay
+        # empty so the caption follows the entire media sequence.
+        final_caption, _continuation = inferred_album_caption_parts(
             album_caption, album_caption_entities,
         )
-        captions = [first_caption[0]] + [""] * (len(files) - 1)
-        caption_entities = [first_caption[1]] + [[] for _ in files[1:]]
+        captions = [""] * (len(files) - 1) + [final_caption[0]]
+        caption_entities = [[] for _ in files[:-1]] + [final_caption[1]]
     else:
-        captions = [first_text] + [""] * (len(files) - 1) if captions is None else list(captions)
-        caption_entities = [first_ents] + [[] for _ in files[1:]] if caption_entities is None else list(caption_entities)
+        captions = ([""] * (len(files) - 1) + [first_text]
+                    if captions is None else list(captions))
+        caption_entities = ([[] for _ in files[:-1]] + [first_ents]
+                            if caption_entities is None else list(caption_entities))
     if len(captions) != len(files):
         raise RuntimeError(
             f"Album caption count {len(captions)} does not match media count {len(files)}"
@@ -202,7 +203,7 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
         )
         state["album_grouped_id"] = int(grouped_id)
         progress.save_state(state["src"], state)
-        await send_group_caption(saved_ids[0])
+        await send_group_caption(saved_ids[-1])
         return saved_ids if return_all else saved_ids[0]
     if "album_id" in state:
         # Older partial-state files may contain only the first ID. Guessing
@@ -223,7 +224,7 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
 
     msgs = await formatfallback.with_formatting_fallback(
         lambda **kw: uploads.send_file(client, channel, files, **kw),
-        album_kwargs, captions[0], safe_entity_rows[0], source_id,
+        album_kwargs, captions[-1], safe_entity_rows[-1], source_id,
     )
     if not msgs:
         raise RuntimeError("Album upload returned no messages")
@@ -255,98 +256,56 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
         f"    verified Telegram album for source id={source_id}: "
         f"{len(message_ids)} items, grouped_id={grouped_id}"
     )
-    await send_group_caption(message_ids[0])
+    await send_group_caption(message_ids[-1])
     return message_ids if return_all else message_ids[0]
 
 async def _send_individual_media(client, channel, chunks, media, reply_to, state,
                                  source_id):
+    """Send an ungroupable source media sequence in order, captioning its final item."""
     first_text, first_ents = chunks[0]
-    # Sticker documents support captions through Telethon's MTProto sendMedia
-    # path. Only media types explicitly listed as non-captionable (voice notes)
-    # need a separate prefix message.
-    needs_prefix_text = media[0][1] in NO_CAPTION_KINDS
-    if needs_prefix_text:
-        if "prefix_text_id" not in state:
-            saved_text_id = state.get("text_id")
-            if saved_text_id is not None:
-                state["prefix_text_id"] = saved_text_id
-                progress.save_state(state["src"], state)
-            elif any(text.strip() for text, _entities in chunks):
-                text_id = await _send_text_chunks(
-                    client, channel, chunks, reply_to, state, "prefix_prog", source_id
-                )
-                state["prefix_text_id"] = text_id
-                state["text_id"] = text_id
-                progress.save_state(state["src"], state)
-        media_reply_to = state.get("prefix_text_id") or reply_to
-        caption_first = False
-    else:
-        media_reply_to = reply_to
-        caption_first = True
-
     state.setdefault("multi_media_ids", [])
     while len(state["multi_media_ids"]) < len(media):
         index = len(state["multi_media_ids"])
         path, kind = media[index]
-        caption = first_text if index == 0 and caption_first else ""
-        entities = first_ents if index == 0 and caption_first else None
+        is_final_item = index == len(media) - 1
+        caption = first_text if is_final_item else ""
+        entities = first_ents if is_final_item else None
         sent_msg = await uploads.send_media_item(
-            client, channel, path, kind, media_reply_to, source_id,
+            client, channel, path, kind, reply_to, source_id,
             caption=caption, entities=entities,
         )
         state["multi_media_ids"].append(sent_msg.id)
         progress.save_state(state["src"], state)
     state["album_id"] = state["multi_media_ids"][0]
     progress.save_state(state["src"], state)
-    return needs_prefix_text
+    return False
 
 
 async def _send_multiple_media(client, channel, chunks, media, reply_to, state, source_id):
     has_sticker = any(kind in STICKER_KINDS for _path, kind in media)
-    image_extensions = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
-    has_document_image = any(
-        kind == "document" and os.path.splitext(path)[1].casefold() in image_extensions
-        for path, kind in media
-    )
     individual = (
         has_sticker
         or any(kind in ("gif", "voice", "round_video") for _path, kind in media)
         or not exportmedia.album_compatible(media)
     )
     if individual:
-        needs_prefix_text = await _send_individual_media(
+        await _send_individual_media(
             client, channel, chunks, media, reply_to, state, source_id
         )
     else:
         await _send_album(client, channel, chunks, media, reply_to, state, source_id)
-        needs_prefix_text = False
 
     rest = chunks[1:]
-    if rest and not needs_prefix_text:
+    if rest:
+        group_ids = (
+            state.get("album_message_ids")
+            or state.get("multi_media_ids")
+            or [state["album_id"]]
+        )
         await _send_text_chunks(
-            client, channel, rest, state["album_id"], state, "tail_prog", source_id
+            client, channel, rest, group_ids[-1], state, "tail_prog", source_id
         )
-    if needs_prefix_text:
-        return state.get("prefix_text_id") or state["album_id"]
     return state["album_id"]
-
-
-async def _send_no_caption_media(client, channel, chunks, media, reply_to, state, source_id):
-    path, kind = media[0]
-    text_id = state.get("text_id")
-    if text_id is None and any(text.strip() for text, _entities in chunks):
-        text_id = await _send_text_chunks(
-            client, channel, chunks, reply_to, state, "text_prog", source_id
-        )
-        state["text_id"] = text_id
-        progress.save_state(state["src"], state)
-    if "media_id" not in state:
-        media_msg = await uploads.send_media_item(
-            client, channel, path, kind, text_id or reply_to, source_id
-        )
-        state["media_id"] = media_msg.id
-        progress.save_state(state["src"], state)
-    return text_id or state["media_id"]
 
 
 async def _send_text_only(client, channel, chunks, reply_to, state, source_id):
@@ -401,14 +360,14 @@ async def _do_send(client, channel, chunks, media, reply_to, forward_source,
             album_caption, album_caption_entities,
         )
         sequence_chunks = [first_caption] + continuation
-        has_sticker = any(kind in STICKER_KINDS for _path, kind in media)
-        needs_prefix_text = await _send_individual_media(
+        await _send_individual_media(
             client, channel, sequence_chunks, media, reply_to, state,
             source_id,
         )
-        if continuation and not needs_prefix_text:
+        if continuation:
+            last_media_id = state["multi_media_ids"][-1]
             await _send_text_chunks(
-                client, channel, continuation, state["album_id"], state,
+                client, channel, continuation, last_media_id, state,
                 "album_caption_continuation_prog", source_id,
             )
         return list(state.get("multi_media_ids", []))
@@ -421,10 +380,6 @@ async def _do_send(client, channel, chunks, media, reply_to, forward_source,
 
     if len(media) > 1:
         return await _send_multiple_media(
-            client, channel, chunks, media, reply_to, state, source_id
-        )
-    if media and media[0][1] in NO_CAPTION_KINDS:
-        return await _send_no_caption_media(
             client, channel, chunks, media, reply_to, state, source_id
         )
     if not media:

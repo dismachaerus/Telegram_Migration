@@ -11,7 +11,6 @@ from telethon.tl import types as tl
 from . import album, bigfiles, cli, config, customemoji, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
 from .htmlutil import css_classes
 from .textutil import compose_message, compose_message_header, format_archive_timestamp, split_with_entities, strip_with_entities, u16len
-from .constants import NO_CAPTION_KINDS, STICKER_KINDS
 
 async def process_file(client, channel, path, id_map, partial, pending_replies, stats, ctx,
                       only_pending=False):
@@ -302,10 +301,10 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         annotation = [(annotation_text, annotation_entities)] if annotation_text.strip() else None
 
         kinds = [kind for _path, kind in data["media"]]
-        captionable = bool(kinds) and kinds[0] not in NO_CAPTION_KINDS
-        has_sticker = any(kind in STICKER_KINDS for kind in kinds)
-        first_limit = config.settings.text_limit if has_sticker else (
-            config.settings.caption_limit if (captionable or len(kinds) > 1)
+        # Every supported media type carries its message context as a media
+        # caption. Text-only messages use the larger message limit.
+        first_limit = (
+            config.settings.caption_limit if kinds
             else config.settings.text_limit
         )
         kind_summary = ",".join(kinds) or "text"

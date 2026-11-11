@@ -381,8 +381,9 @@ class PipelineTests(unittest.TestCase):
             os.path.join(self.folder.name, first_path),
             os.path.join(self.folder.name, second_path),
         ])
-        self.assertIn("The subject's private channel", kwargs["caption"][0])
-        self.assertIn("Forwarded from espritzeit", kwargs["caption"][0])
+        self.assertEqual(kwargs["caption"][0], "")
+        self.assertIn("The subject's private channel", kwargs["caption"][1])
+        self.assertIn("Forwarded from espritzeit", kwargs["caption"][1])
         with config.use_settings(self.settings()):
             self.assertEqual(progress.load_id_map(), {"901": 1001, "902": 1002})
 
@@ -655,6 +656,13 @@ class PipelineTests(unittest.TestCase):
         media_calls = client.kinds("send_file")
         self.assertGreaterEqual(len(media_calls), 3)
         self.assertTrue(all(call[2].get("reply_to") is None for call in media_calls))
+        photo_call = next(call for call in media_calls if call[1] == os.path.join(self.folder.name, photo_path))
+        sticker_calls = [call for call in media_calls if call[1] == os.path.join(self.folder.name, sticker_path)]
+        sticker_call = sticker_calls[-1]
+        self.assertEqual(photo_call[2]["caption"], "")
+        self.assertIn("Forwarded from Valerie Demian", sticker_call[2]["caption"])
+        self.assertIn("The impotent old man and the sea of tears", sticker_call[2]["caption"])
+        self.assertEqual(client.kinds("send_message"), [])
 
     def test_oversize_file_stops_cleanly_and_the_next_run_skips_it(self):
         fakes.write_file(self.folder.name, "video_files/big.mp4", size=2 * 1024 * 1024)
@@ -766,6 +774,36 @@ class PipelineTests(unittest.TestCase):
             "🌸",
         )
         self.assertIn("caption before 🌸 after", caption)
+
+    def test_forwarded_voice_note_keeps_attribution_in_the_voice_message(self):
+        media_path = "voice_messages/forwarded-note.ogg"
+        fakes.write_file(self.folder.name, media_path)
+        forwarded = (
+            '<div class="message default clearfix" id="message800">'
+            '<div class="body">'
+            '<div class="pull_right date details" '
+            'title="08.11.2026 09:28:59 UTC+02:00">09:28</div>'
+            '<div class="from_name">Archive owner</div>'
+            '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
+            '<div class="forwarded body">'
+            '<div class="from_name">Original voice author '
+            '<span class="date details" title="05.11.2026 19:35:11 UTC+02:00">'
+            '05.11.2026 19:35:11</span></div>'
+            '<div class="media_wrap clearfix">'
+            '<a class="media_voice_message" href="' + media_path + '"></a>'
+            '</div></div></div></div>'
+        )
+        fakes.write_export(self.folder.name, [forwarded])
+
+        client, _, _ = self.run_once(native_forward=False)
+        self.assertEqual(client.kinds("send_message"), [])
+        calls = client.kinds("send_file")
+        self.assertEqual(len(calls), 1)
+        kwargs = calls[0][2]
+        self.assertTrue(kwargs["voice_note"])
+        self.assertIn("Forwarded from Original voice author", kwargs["caption"])
+        self.assertIn("5 November 2026 · 19:35:11", kwargs["caption"])
+        self.assertIsNone(kwargs["reply_to"])
 
     def test_mp3_with_audio_export_markup_is_sent_as_audio_not_forced_document(self):
         relative = "files/voice-track.mp3"
@@ -894,9 +932,9 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(album_files, expected_group_files)
         self.assertTrue(album_kwargs["force_document"])
         self.assertEqual(len(album_kwargs["caption"]), 10)
-        self.assertIn("Forwarded from 🗝", album_kwargs["caption"][0])
-        self.assertIn("4 June 2026", album_kwargs["caption"][0])
-        self.assertEqual(album_kwargs["caption"][1:], [""] * 9)
+        self.assertEqual(album_kwargs["caption"][:-1], [""] * 9)
+        self.assertIn("Forwarded from 🗝", album_kwargs["caption"][-1])
+        self.assertIn("4 June 2026", album_kwargs["caption"][-1])
         self.assertEqual(client.kinds("send_message"), [])
 
         with config.use_settings(self.settings()):
@@ -944,8 +982,8 @@ class PipelineTests(unittest.TestCase):
         album_files, album_kwargs = media_calls[1][1], media_calls[1][2]
         self.assertEqual(album_files, expected_files)
         self.assertTrue(album_kwargs["force_document"])
-        self.assertTrue(album_kwargs["caption"][0].startswith("Alice\n12 March 2023"))
-        self.assertEqual(album_kwargs["caption"][1:], [""] * 9)
+        self.assertEqual(album_kwargs["caption"][:-1], [""] * 9)
+        self.assertTrue(album_kwargs["caption"][-1].startswith("Alice\n12 March 2023"))
         self.assertEqual(len(client.texts()), 1)
         self.assertIn("after the album", client.texts()[0])
 
@@ -1041,9 +1079,9 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(sent_files, expected_files)
         self.assertTrue(kwargs["force_document"])
         self.assertEqual(len(kwargs["caption"]), 3)
-        self.assertIn("Archive owner", kwargs["caption"][0])
-        self.assertIn("Original grouped JPG caption", kwargs["caption"][0])
-        self.assertEqual(kwargs["caption"][1:], ["", ""])
+        self.assertEqual(kwargs["caption"][:-1], ["", ""])
+        self.assertIn("Archive owner", kwargs["caption"][-1])
+        self.assertIn("Original grouped JPG caption", kwargs["caption"][-1])
         self.assertFalse(any("Original grouped JPG caption" in text for text in client.texts()))
 
     def test_partially_mapped_inferred_album_stops_instead_of_scattering_remaining_media(self):
@@ -1179,8 +1217,8 @@ class PipelineTests(unittest.TestCase):
         first_caption, continuation = sending.inferred_album_caption_parts(
             expected_caption, expected_entities,
         )
-        self.assertEqual(album_kwargs["caption"], [first_caption[0]] + [""] * 3)
-        self.assertEqual(album_kwargs["formatting_entities"][0], first_caption[1])
+        self.assertEqual(album_kwargs["caption"], [""] * 3 + [first_caption[0]])
+        self.assertEqual(album_kwargs["formatting_entities"][-1], first_caption[1])
         self.assertEqual(
             [text for text in client.texts() if "message after the album" not in text],
             [chunk[0] for chunk in continuation],
@@ -1225,7 +1263,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(sent_files, expected)
         self.assertFalse(album_kwargs.get("force_document", False))
         expected_caption, _entities = album.caption_for_group(groups["401"])
-        self.assertEqual(album_kwargs["caption"], [expected_caption, "", ""])
+        self.assertEqual(album_kwargs["caption"], ["", "", expected_caption])
         self.assertNotIn("Shared album description", client.texts())
         self.assertIn("after shared-caption album", client.texts()[-1])
         self.assertIn("sent=4", output)
@@ -1354,11 +1392,11 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(second_files, expected_second)
         first_caption, _first_entities = album.caption_for_group(groups["448"])
         second_caption, _second_entities = album.caption_for_group(groups["458"])
-        self.assertEqual(first_kwargs["caption"], [first_caption] + [""] * 9)
-        self.assertEqual(second_kwargs["caption"], [second_caption] + [""] * 6)
-        self.assertIn("Paranoid schizophrenia\nYou want more?", second_kwargs["caption"][0])
-        self.assertIn("Different caption on item 459", second_kwargs["caption"][0])
-        self.assertIn("Forwarded from espritzeit", second_kwargs["caption"][0])
+        self.assertEqual(first_kwargs["caption"], [""] * 9 + [first_caption])
+        self.assertEqual(second_kwargs["caption"], [""] * 6 + [second_caption])
+        self.assertIn("Paranoid schizophrenia\nYou want more?", second_kwargs["caption"][-1])
+        self.assertIn("Different caption on item 459", second_kwargs["caption"][-1])
+        self.assertIn("Forwarded from espritzeit", second_kwargs["caption"][-1])
         self.assertFalse(any("Paranoid schizophrenia" in text for text in client.texts()))
         grouped_ids = {message.grouped_id for message in client.messages.values()
                        if message.grouped_id is not None}
@@ -1402,9 +1440,9 @@ class PipelineTests(unittest.TestCase):
         calls = client.kinds("send_file")
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][1], expected)
-        self.assertIn("caption 801", calls[0][2]["caption"][0])
-        self.assertEqual(calls[0][2]["caption"][1:], [""])
-        self.assertIn("Forwarded from News Channel", calls[0][2]["caption"][0])
+        self.assertEqual(calls[0][2]["caption"][0], "")
+        self.assertIn("caption 801", calls[0][2]["caption"][1])
+        self.assertIn("Forwarded from News Channel", calls[0][2]["caption"][1])
         self.assertFalse(any("caption 801" in text for text in client.texts()))
 
 
@@ -1505,7 +1543,7 @@ class PipelineTests(unittest.TestCase):
                 with config.use_settings(self.settings()):
                     self.assertEqual(progress.load_id_map(), {"701": 1001})
 
-    def test_multiple_media_with_sticker_first_attaches_forwarded_caption_to_sticker(self):
+    def test_multiple_media_with_sticker_first_attaches_context_to_final_media(self):
         async def scenario():
             calls = []
 
@@ -1532,9 +1570,9 @@ class PipelineTests(unittest.TestCase):
                 )
             self.assertEqual(result, 801)
             self.assertEqual(len(calls), 2)
-            self.assertEqual(calls[0][1]["caption"],
+            self.assertEqual(calls[0][1]["caption"], "")
+            self.assertEqual(calls[1][1]["caption"],
                              "Forwarded from Original sender\\n5 November 2026")
-            self.assertEqual(calls[1][1]["caption"], "")
             self.assertTrue(any(
                 isinstance(attribute, tl.DocumentAttributeSticker)
                 for attribute in calls[0][1]["attributes"]
@@ -1592,8 +1630,8 @@ class PipelineTests(unittest.TestCase):
             )
             self.assertFalse(kwargs.get("force_document", False))
             self.assertEqual(len(kwargs["caption"]), 2)
-            self.assertTrue(kwargs["caption"][0].startswith("Alice\n12 March 2023"))
-            self.assertEqual(kwargs["caption"][1], "")
+            self.assertEqual(kwargs["caption"][0], "")
+            self.assertTrue(kwargs["caption"][1].startswith("Alice\n12 March 2023"))
 
         self.assertEqual(client.kinds("send_message"), [])
         self.assertIn("sent=2", output)
