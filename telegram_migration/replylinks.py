@@ -15,8 +15,9 @@ def _reply_id_from_message(msg):
 
 def source_reply_target(data):
     """Return the source message that should become this destination reply."""
-    if data.get("is_forwarded") and data.get("forward_reply_src_id"):
-        return str(data["forward_reply_src_id"])
+    if data.get("is_forwarded"):
+        target = data.get("forward_reply_src_id")
+        return str(target) if target else None
     target = data.get("reply_src_id")
     return str(target) if target else None
 
