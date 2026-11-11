@@ -78,46 +78,6 @@ def _forward_attribution(record):
     return attribution + "\n\n", entities
 
 
-def forwarded_reply_context(records):
-    """Return original-source reply previews as display-only blockquotes.
-
-    Embedded message IDs remain archival metadata and are never destination
-    reply targets. Distinct previews are kept in source order for flattened albums.
-    """
-    text = ""
-    entities = []
-    seen = set()
-    for record in records or []:
-        preview = (record.get("forward_reply_preview") or "").strip()
-        if not preview:
-            continue
-        source_id = record.get("forward_reply_src_id")
-        key = (str(source_id) if source_id is not None else None, preview)
-        if key in seen:
-            continue
-        seen.add(key)
-        if text:
-            text += "\n\n"
-        offset = u16len(text)
-        text += preview
-        try:
-            quote = tl.MessageEntityBlockquote(
-                offset=offset, length=u16len(preview), collapsed=False
-            )
-        except TypeError:
-            quote = tl.MessageEntityBlockquote(offset=offset, length=u16len(preview))
-        entities.append(quote)
-    return (text + "\n\n", entities) if text else ("", [])
-
-
-def compose_forwarded_reply_context(records, reply_fallback):
-    """Combine a true outer-reply fallback with display-only forwarded context."""
-    return compose_message(
-        ("", []), ("", []), reply_fallback, "", [],
-        extra_before_body=forwarded_reply_context(records),
-    )
-
-
 def caption_for_group(group):
     """Build the album caption: owner/date, forwarding source, then unique captions."""
     if not group:
