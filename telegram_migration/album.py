@@ -235,13 +235,16 @@ def infer_media_groups(files, inline_emoji_ids=None):
                 # because its author and timestamps are compatible. Keep this
                 # boundary rule size-independent: the joined suffix may have
                 # any valid Telegram album size (2–10).
-                forwarded_prefix = (
+                standalone_prefix = (
                     len(pending) >= 3
-                    and pending[0].get("is_forwarded")
                     and not pending[0].get("joined")
                     and all(member.get("joined") for member in pending[1:])
+                    and (
+                        pending[0].get("is_forwarded")
+                        or len(pending) == 11
+                    )
                 )
-                if forwarded_prefix:
+                if standalone_prefix:
                     album_run = pending[1:]
                     if 2 <= len(album_run) <= 10:
                         groups[album_run[0]["msg_id"]] = album_run[:]
@@ -304,7 +307,6 @@ def infer_media_groups(files, inline_emoji_ids=None):
                         # so the same rule also handles smaller albums.
                         if len(pending) > 10 and not (
                             len(pending) == 11
-                            and pending[0].get("is_forwarded")
                             and not pending[0].get("joined")
                             and all(member.get("joined") for member in pending[1:])
                         ):
