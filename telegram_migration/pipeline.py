@@ -50,7 +50,14 @@ async def _send_migrated_message(client, channel, data, source_id, text, entitie
     chunks = split_with_entities(text, entities, first_limit, config.settings.text_limit)
     state = {
         "src": source_id,
-        "force_reconstruction": bool(data["reply_src_id"]),
+        # Either reply relationship requires reconstruction: the outer reply
+        # belongs to the exported chat; the embedded reply belongs to the
+        # original forwarded conversation and must remain visible as context.
+        "force_reconstruction": bool(
+            data.get("reply_src_id")
+            or data.get("forward_reply_src_id")
+            or data.get("forward_reply_preview")
+        ),
     }
     if source_id in partial:
         state.update(partial[source_id])
