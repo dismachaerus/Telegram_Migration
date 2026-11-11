@@ -19,9 +19,9 @@ MIN_TEXT_LIMIT = 4
 # messages.html, messages2.html, ... in a Telegram Desktop HTML export.
 HTML_FILE_PATTERN = r"^messages(\d*)\.html$"
 
-# Sticker files need sticker-specific upload attributes and cannot be captioned like
-# ordinary photos/videos, so their text is sent as a separate message first.
+# Sticker files need sticker-specific upload attributes, but MTProto
+# messages.sendMedia supports a message caption for sticker documents too.
 STICKER_KINDS = ("sticker_static", "sticker_animated", "sticker_video", "sticker_unknown")
-# Round videos are documents in MTProto and can carry message text/caption.
-# Keep only voice notes and stickers on the separate-text path.
-NO_CAPTION_KINDS = ("voice", *STICKER_KINDS)
+# Voice notes remain on the separate-text path; stickers and round videos
+# can carry the reconstructed text as the media message caption.
+NO_CAPTION_KINDS = ("voice",)
