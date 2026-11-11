@@ -570,9 +570,49 @@ class PipelineTests(unittest.TestCase):
         client, _, _ = self.run_once()
         self.assertIn("Original reply target #999 is unavailable", client.texts()[0])
 
-    def test_forwarded_payload_replies_become_native_replies_for_messages_and_albums(self):
-        # Reproduce the user's export records 106–108. Embedded reply targets
-        # become native destination replies for the forwarded messages.
+    def test_reply_to_a_specific_member_of_an_inferred_album_uses_that_member_id(self):
+        first_path = "photos/album-first.jpg"
+        second_path = "photos/album-second.jpg"
+        fakes.write_file(self.folder.name, first_path)
+        fakes.write_file(self.folder.name, second_path)
+        fakes.write_export(self.folder.name, [
+            fakes.message(
+                901, fakes.photo(first_path) + fakes.text("album caption"),
+                sender="Alice", minute=1,
+            ),
+            fakes.message(
+                902, fakes.photo(second_path),
+                sender="", classes="joined", minute=1,
+            ),
+            fakes.message(
+                903, fakes.reply_to(902) + fakes.text("reply to the second album item"),
+                sender="Alice", minute=2,
+            ),
+        ])
+
+        client, _, _ = self.run_once()
+        album_calls = client.kinds("send_file")
+        self.assertEqual(len(album_calls), 1)
+        self.assertEqual(album_calls[0][1], [
+            self.path(first_path),
+            self.path(second_path),
+        ])
+
+        reply_call = next(
+            call for call in client.kinds("send_message")
+            if "reply to the second album item" in call[1]
+        )
+        self.assertEqual(reply_call[2]["reply_to"], 1002)
+        with config.use_settings(self.settings()):
+            self.assertEqual(
+                progress.load_id_map(),
+                {"901": 1001, "902": 1002, "903": 1003},
+            )
+
+    def test_forwarded_message_reply_is_not_transferred_to_adjacent_sticker(self):
+        # Reproduce the user's actual export records 106–108. Message107
+        # explicitly replies to 106; message108 is a separate sticker with
+        # no reply link of its own and must not inherit 107's reply target.
         sticker_path = "video_files/sticker (10).webm"
         photo_path = "photos/photo_7@01-07-2026_21-33-40.jpg"
         fakes.write_file(self.folder.name, sticker_path)
@@ -642,36 +682,37 @@ class PipelineTests(unittest.TestCase):
                 )
                 for source_id in ("106", "107", "108")
             }
-            self.assertTrue(all(row["reply_src_id"] is None for row in parsed.values()))
-            self.assertTrue(all(row["reply_preview"] == "" for row in parsed.values()))
             self.assertEqual(parsed["106"]["forward_reply_src_id"], "105")
-            self.assertEqual(parsed["106"]["forward_reply_preview"], "In reply to this message")
             self.assertEqual(parsed["107"]["forward_reply_src_id"], "106")
-            self.assertEqual(parsed["107"]["forward_reply_preview"], "In reply to this message")
-            self.assertEqual(parsed["108"]["forward_reply_preview"], "")
+            self.assertIsNone(parsed["108"]["forward_reply_src_id"])
             groups = htmlexport.infer_media_groups([self.path("messages.html")])
 
-        self.assertEqual(
-            [row["msg_id"] for row in groups["107"]],
-            ["107", "108"],
-        )
-        self.assertTrue(all(row["reply_src_id"] is None for row in groups["107"]))
+        self.assertEqual(groups, {})
 
         client, _, _ = self.run_once(native_forward=False)
         media_calls = client.kinds("send_file")
-        self.assertGreaterEqual(len(media_calls), 3)
-        first_sticker_call = media_calls[0]
-        photo_call = next(call for call in media_calls if call[1] == os.path.join(self.folder.name, photo_path))
-        sticker_calls = [call for call in media_calls if call[1] == os.path.join(self.folder.name, sticker_path)]
-        final_sticker_call = sticker_calls[-1]
-        self.assertEqual(first_sticker_call[2]["reply_to"], 1001)
+        self.assertEqual(len(media_calls), 3)
+        sticker_calls = [
+            call for call in media_calls
+            if call[1] == os.path.join(self.folder.name, sticker_path)
+        ]
+        photo_call = next(
+            call for call in media_calls
+            if call[1] == os.path.join(self.folder.name, photo_path)
+        )
+        self.assertEqual(len(sticker_calls), 2)
+        self.assertEqual(sticker_calls[0][2]["reply_to"], 1001)
         self.assertEqual(photo_call[2]["reply_to"], 1002)
-        self.assertEqual(final_sticker_call[2]["reply_to"], 1002)
-        self.assertEqual(photo_call[2]["caption"], "")
-        self.assertIn("Forwarded from Valerie Demian", final_sticker_call[2]["caption"])
-        self.assertNotIn("In reply to this message", final_sticker_call[2]["caption"])
-        self.assertIn("The impotent old man and the sea of tears", final_sticker_call[2]["caption"])
+        self.assertIsNone(sticker_calls[1][2]["reply_to"])
+        self.assertIn("Forwarded from Valerie Demian", sticker_calls[1][2]["caption"])
+        self.assertNotIn("The impotent old man and the sea", sticker_calls[1][2]["caption"])
+        self.assertIn("The impotent old man and the sea", photo_call[2]["caption"])
         self.assertEqual(client.texts(), ["Alice\n\nearlier source message"])
+        with config.use_settings(self.settings()):
+            self.assertEqual(
+                progress.load_id_map(),
+                {"105": 1001, "106": 1002, "107": 1003, "108": 1004},
+            )
 
     def test_original_forwarded_reply_context_disables_native_forward_for_all_media_kinds(self):
         cases = [
