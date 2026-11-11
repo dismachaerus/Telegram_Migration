@@ -336,7 +336,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(sent[1][bold.offset:bold.offset + bold.length], "hello")
         self.assertEqual(sent[1][italic.offset:italic.offset + italic.length], "world")
 
-    def test_forwarded_photo_album_with_repeated_reply_context_is_grouped(self):
+    def test_forwarded_photo_album_with_repeated_reply_target_is_grouped(self):
         first_path = "photos/first.jpg"
         second_path = "photos/second.jpg"
         fakes.write_file(self.folder.name, first_path)
@@ -384,6 +384,8 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(kwargs["caption"][0], "")
         self.assertIn("The subject's private channel", kwargs["caption"][1])
         self.assertIn("Forwarded from espritzeit", kwargs["caption"][1])
+        self.assertNotIn("this message", kwargs["caption"][1])
+        self.assertIsNone(kwargs["reply_to"])
         with config.use_settings(self.settings()):
             self.assertEqual(progress.load_id_map(), {"901": 1001, "902": 1002})
 
@@ -568,11 +570,9 @@ class PipelineTests(unittest.TestCase):
         client, _, _ = self.run_once()
         self.assertIn("Original reply target #999 is unavailable", client.texts()[0])
 
-    def test_forwarded_payload_reply_previews_do_not_link_the_message_or_its_album(self):
-        # Reproduce the user's export records 106–108. Message 107 contains a
-        # photo and caption; message 108 is its joined sticker continuation.
-        # Both reply_to blocks are inside forwarded.body and belong to the
-        # original forwarded conversation, not to the destination channel.
+    def test_forwarded_payload_replies_become_native_replies_for_messages_and_albums(self):
+        # Reproduce the user's export records 106–108. Embedded reply targets
+        # become native destination replies for the forwarded messages.
         sticker_path = "video_files/sticker (10).webm"
         photo_path = "photos/photo_7@01-07-2026_21-33-40.jpg"
         fakes.write_file(self.folder.name, sticker_path)
@@ -660,14 +660,17 @@ class PipelineTests(unittest.TestCase):
         client, _, _ = self.run_once(native_forward=False)
         media_calls = client.kinds("send_file")
         self.assertGreaterEqual(len(media_calls), 3)
-        self.assertTrue(all(call[2].get("reply_to") is None for call in media_calls))
+        first_sticker_call = media_calls[0]
         photo_call = next(call for call in media_calls if call[1] == os.path.join(self.folder.name, photo_path))
         sticker_calls = [call for call in media_calls if call[1] == os.path.join(self.folder.name, sticker_path)]
-        sticker_call = sticker_calls[-1]
+        final_sticker_call = sticker_calls[-1]
+        self.assertEqual(first_sticker_call[2]["reply_to"], 1001)
+        self.assertEqual(photo_call[2]["reply_to"], 1002)
+        self.assertEqual(final_sticker_call[2]["reply_to"], 1002)
         self.assertEqual(photo_call[2]["caption"], "")
-        self.assertIn("Forwarded from Valerie Demian", sticker_call[2]["caption"])
-        self.assertIn("In reply to this message", sticker_call[2]["caption"])
-        self.assertIn("The impotent old man and the sea of tears", sticker_call[2]["caption"])
+        self.assertIn("Forwarded from Valerie Demian", final_sticker_call[2]["caption"])
+        self.assertNotIn("In reply to this message", final_sticker_call[2]["caption"])
+        self.assertIn("The impotent old man and the sea of tears", final_sticker_call[2]["caption"])
         self.assertEqual(client.texts(), ["Alice\n\nearlier source message"])
 
     def test_original_forwarded_reply_context_disables_native_forward_for_all_media_kinds(self):
@@ -731,7 +734,7 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual(len(calls), 1)
                 kwargs = calls[0][2]
                 self.assertIn("Forwarded from News Channel", kwargs["caption"])
-                self.assertIn("In reply to the original conversation", kwargs["caption"])
+                self.assertNotIn("In reply to the original conversation", kwargs["caption"])
                 self.assertIsNone(kwargs["reply_to"])
                 self.assertEqual(client.kinds("send_message"), [])
                 if expected_kind == "voice":
@@ -743,7 +746,7 @@ class PipelineTests(unittest.TestCase):
                         for entity in kwargs["formatting_entities"])
                 )
 
-    def test_outer_reply_and_forwarded_original_reply_remain_independent(self):
+    def test_forwarded_original_reply_takes_priority_over_outer_reply(self):
         media_path = "audio_files/forwarded-track.mp3"
         fakes.write_file(self.folder.name, media_path)
         forwarded = (
@@ -770,11 +773,12 @@ class PipelineTests(unittest.TestCase):
         calls = client.kinds("send_file")
         self.assertEqual(len(calls), 1)
         kwargs = calls[0][2]
-        self.assertEqual(kwargs["reply_to"], 1001)
-        self.assertIn("In reply to the original conversation", kwargs["caption"])
+        self.assertIsNone(kwargs["reply_to"])
+        self.assertNotIn("In reply to the original conversation", kwargs["caption"])
+        self.assertNotIn("destination-channel message", kwargs["caption"])
         self.assertNotIn("Original reply target #4320 is unavailable", kwargs["caption"])
 
-    def test_forwarded_voice_note_keeps_its_original_reply_preview_as_context(self):
+    def test_forwarded_voice_note_does_not_render_reply_preview_as_caption(self):
         media_path = "voice_messages/forwarded-note.ogg"
         fakes.write_file(self.folder.name, media_path)
         forwarded = (
@@ -816,11 +820,11 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(kwargs["voice_note"])
         self.assertIsNone(kwargs["reply_to"])
         self.assertIn("Forwarded from Original voice author", kwargs["caption"])
-        self.assertIn("In reply to the earlier conversation", kwargs["caption"])
+        self.assertNotIn("In reply to the earlier conversation", kwargs["caption"])
         self.assertTrue(any(
             type(entity).__name__ == "MessageEntityBlockquote"
             for entity in kwargs["formatting_entities"]
-        ))
+        ))  # The remaining blockquote is the forwarded-from attribution.
 
     def test_oversize_file_stops_cleanly_and_the_next_run_skips_it(self):
         fakes.write_file(self.folder.name, "video_files/big.mp4", size=2 * 1024 * 1024)
