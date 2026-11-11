@@ -662,7 +662,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(photo_call[2]["caption"], "")
         self.assertIn("Forwarded from Valerie Demian", sticker_call[2]["caption"])
         self.assertIn("The impotent old man and the sea of tears", sticker_call[2]["caption"])
-        self.assertEqual(client.kinds("send_message"), [])
+        self.assertEqual(client.texts(), ["Alice\\n\\nearlier source message"])
 
     def test_oversize_file_stops_cleanly_and_the_next_run_skips_it(self):
         fakes.write_file(self.folder.name, "video_files/big.mp4", size=2 * 1024 * 1024)

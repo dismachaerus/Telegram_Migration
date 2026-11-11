@@ -981,8 +981,9 @@ class AsyncSendTests(unittest.TestCase):
                 )
             self.assertEqual(result, [701, 702])
             self.assertEqual([call[0] for call in calls], [item[0] for item in media])
-            self.assertEqual(calls[0][1]["caption"], "source caption")
+            self.assertEqual(calls[0][1]["caption"], "")
             self.assertTrue(calls[1][1]["voice_note"])
+            self.assertEqual(calls[1][1]["caption"], "source caption")
             self.assertEqual(state["multi_media_ids"], [701, 702])
         asyncio.run(scenario())
 
@@ -1121,8 +1122,8 @@ class AsyncSendTests(unittest.TestCase):
                 self.assertIn("formatting_entities", kwargs)
                 ents = kwargs["formatting_entities"]
                 self.assertEqual(len(ents), 2)
-                self.assertEqual(ents[0], [bold])
-                self.assertEqual(ents[1], [])
+                self.assertEqual(ents[0], [])
+                self.assertEqual(ents[1], [bold])
         asyncio.run(scenario())
 
     def test_inferred_album_attaches_caption_and_resumes_overflow_below(self):
@@ -1135,10 +1136,10 @@ class AsyncSendTests(unittest.TestCase):
 
                 async def send_file(channel, files, **kwargs):
                     album_calls.append((files, kwargs))
-                    self.assertEqual(kwargs.get("caption"), ["H" * 1024, ""])
+                    self.assertEqual(kwargs.get("caption"), ["", "H" * 1024])
                     sent_messages[:] = [
-                        SimpleNamespace(id=501, grouped_id=77, message="H" * 1024),
-                        SimpleNamespace(id=502, grouped_id=77, message=""),
+                        SimpleNamespace(id=501, grouped_id=77, message=""),
+                        SimpleNamespace(id=502, grouped_id=77, message="H" * 1024),
                     ]
                     return sent_messages[:]
 
@@ -1174,7 +1175,7 @@ class AsyncSendTests(unittest.TestCase):
                             state, None, "77", data,
                         )
                     self.assertEqual(len(album_calls), 1)
-                    self.assertEqual(album_calls[0][1]["caption"], ["H" * 1024, ""])
+                    self.assertEqual(album_calls[0][1]["caption"], ["", "H" * 1024])
                     self.assertEqual(state["album_message_ids"], [501, 502])
 
                     result = await sending._do_send(
@@ -1186,7 +1187,7 @@ class AsyncSendTests(unittest.TestCase):
                 self.assertEqual(len(album_calls), 1)
                 self.assertEqual([text for text, _kwargs in caption_calls],
                                  ["H" * 3976, "H" * 3976])
-                self.assertEqual(caption_calls[0][1]["reply_to"], 501)
+                self.assertEqual(caption_calls[0][1]["reply_to"], 502)
                 self.assertEqual(state["album_caption_continuation_prog"]["done"], 1)
         asyncio.run(scenario())
 
