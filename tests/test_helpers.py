@@ -649,8 +649,22 @@ class MediaTests(unittest.TestCase):
             "voice",
         )
         self.assertEqual(exportmedia._classify("round_video_messages/a.mp4", "media_wrap", "/tmp/a.mp4"), "round_video")
+        # media_video is a generic thumbnail class; a video note needs
+        # its dedicated wrapper or round_video_messages export path.
         self.assertEqual(
             exportmedia._classify("files/a.mp4", "media_wrap", "/tmp/a.mp4", ("media_video",), ""),
+            "video",
+        )
+        self.assertEqual(
+            exportmedia._classify(
+                "video_files/a.mp4", "media_wrap", "/tmp/a.mp4", ("media_video",), ""
+            ),
+            "video",
+        )
+        self.assertEqual(
+            exportmedia._classify(
+                "round_video_messages/a.mp4", "media_wrap", "/tmp/a.mp4", ("media_video",), ""
+            ),
             "round_video",
         )
         self.assertEqual(

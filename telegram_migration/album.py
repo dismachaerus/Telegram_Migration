@@ -119,13 +119,11 @@ def _album_candidate(data, effective_sender):
         return False
     if data.get("media_note"):
         return False
-    # Source grouping is independent of destination album support. GIFs,
-    # audio/voice, round videos and stickers can be part of the same inferred
-    # source run; sending.py chooses native album vs ordered individual posts.
-    # Group reconstruction must not depend on whether sender names are
-    # configured for display or whether this export retained its date field.
-    # Adjacency, joined markers, sender/forward context and media compatibility
-    # are evaluated together before a run is accepted as an album.
+    # A round-video note is its own Telegram message type, not an album
+    # continuation. Telegram Desktop may still apply the visual "joined" class
+    # to adjacent notes, so never infer a source album from that layout marker.
+    if data["media"][0][1] == "round_video":
+        return False
     if data.get("is_forwarded") and not data.get("forward_name"):
         return False
     return True
@@ -197,9 +195,9 @@ def _album_records_compatible(left, right):
         if outer_gap is None or outer_gap > 30:
             return False
 
-    # Do not use Telegram's destination album compatibility here. These
-    # records may still be one source group even when Telegram cannot represent
-    # the combination as a native media group (GIF/voice/sticker mixtures).
+    # Source grouping is deliberately independent of destination album
+    # support. The sender decides whether a confirmed source run can be sent
+    # natively or must be preserved as ordered individual messages.
     return True
 
 def infer_media_groups(files, inline_emoji_ids=None):
