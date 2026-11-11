@@ -1090,7 +1090,7 @@ class PipelineTests(unittest.TestCase):
 
         rows = [(319, 55, "files/preceding.jpg", False)]
         rows.extend(
-            (message_id, 56 + index, f"files/group-{index:02d}.jpg", True)
+            (message_id, 56 + index // 2, f"files/group-{index:02d}.jpg", True)
             for index, message_id in enumerate(range(320, 326))
         )
         html_rows = []
