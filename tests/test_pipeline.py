@@ -1373,10 +1373,11 @@ class PipelineTests(unittest.TestCase):
     def test_forwarded_static_and_video_stickers_keep_attribution_in_media_caption(self):
         # Exercise HTML reconstruction through the actual send_file call for
         # both sticker formats that previously emitted a separate text message.
-        for extension in (".webp", ".webm"):
+        for extension in (".webp", ".tgs", ".webm"):
             with self.subTest(extension=extension):
                 self.folder.cleanup()
                 self.folder = tempfile.TemporaryDirectory()
+                self.addCleanup(self.folder.cleanup)
                 relative = "stickers/forwarded" + extension
                 fakes.write_file(self.folder.name, relative)
                 forwarded = (
