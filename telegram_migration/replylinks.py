@@ -13,14 +13,24 @@ def _reply_id_from_message(msg):
     return actual
 
 
-def resolve_reply(data, source_id, id_map, pending_replies, ctx):
-    """Resolve, defer, or annotate a source message's reply target."""
-    reply_to = id_map.get(str(data["reply_src_id"])) if data["reply_src_id"] else None
-    reply_fallback = ("", [])
-    if not data["reply_src_id"] or reply_to is not None:
-        return reply_to, reply_fallback, False
+def source_reply_target(data):
+    """Return the source message that should become this destination reply."""
+    if data.get("is_forwarded") and data.get("forward_reply_src_id"):
+        return str(data["forward_reply_src_id"])
+    target = data.get("reply_src_id")
+    return str(target) if target else None
 
-    target_src = str(data["reply_src_id"])
+
+def resolve_reply(data, source_id, id_map, pending_replies, ctx):
+    """Resolve or defer the source reply that should become Telegram's native reply."""
+    target_src = source_reply_target(data)
+    reply_fallback = ("", [])
+    if not target_src:
+        return None, reply_fallback, False
+
+    reply_to = id_map.get(target_src)
+    if reply_to is not None:
+        return reply_to, reply_fallback, False
     if target_src in ctx["source_ids"] and target_src not in ctx["processed_source_ids"]:
         if not config.settings.dry_run:
             if pending_replies.get(source_id) != target_src:
@@ -29,6 +39,9 @@ def resolve_reply(data, source_id, id_map, pending_replies, ctx):
         else:
             print(f"  [dry] would defer reply id={source_id} until target id={target_src} is migrated")
         return None, reply_fallback, True
+
+    if data.get("is_forwarded") and data.get("forward_reply_src_id"):
+        return None, reply_fallback, False
 
     fallback = f"[Original reply target #{target_src} is unavailable in the destination]\n"
     if data.get("reply_preview"):
