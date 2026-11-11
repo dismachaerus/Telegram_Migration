@@ -167,13 +167,18 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             data["body_text"].strip() or data["media"] or data.get("is_forwarded")
         )
         if not has_content:
-            stats["skipped"] += 1
-            was_pending = source_id in pending_replies
-            pending_replies.pop(source_id, None)
-            if was_pending and not config.settings.dry_run:
-                progress.save_pending_replies(pending_replies)
-            mark_completed = True
-            return
+            # Telegram Desktop can export a real message shell with its ID,
+            # sender, and date but no text, media, or forwarding markup. Do not
+            # silently drop that source record: preserve its place in the
+            # archive with an explicit placeholder. The HTML contains no
+            # missing forwarding attribution, so never invent one here.
+            data["body_text"] = (
+                "[Empty message in source export; no text or media were included]"
+            )
+            print(
+                f"  empty source message id={source_id}: "
+                "preserving as an archival placeholder"
+            )
 
         timestamp = data["timestamp"]
         if data.get("service_event"):
