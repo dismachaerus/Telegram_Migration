@@ -228,8 +228,25 @@ def infer_media_groups(files, inline_emoji_ids=None):
 
         def flush():
             nonlocal pending, overflow
-            if not overflow and 2 <= len(pending) <= 10:
-                groups[pending[0]["msg_id"]] = pending[:]
+            if not overflow:
+                # Forwarded Desktop exports can place a standalone forwarded
+                # post immediately before a run of joined records that form
+                # an album. The preceding post must not be absorbed merely
+                # because its author and timestamps are compatible. Keep this
+                # boundary rule size-independent: the joined suffix may have
+                # any valid Telegram album size (2–10).
+                forwarded_prefix = (
+                    len(pending) >= 3
+                    and pending[0].get("is_forwarded")
+                    and not pending[0].get("joined")
+                    and all(member.get("joined") for member in pending[1:])
+                )
+                if forwarded_prefix:
+                    album_run = pending[1:]
+                    if 2 <= len(album_run) <= 10:
+                        groups[album_run[0]["msg_id"]] = album_run[:]
+                elif 2 <= len(pending) <= 10:
+                    groups[pending[0]["msg_id"]] = pending[:]
             pending = []
             overflow = False
 
@@ -281,15 +298,16 @@ def infer_media_groups(files, inline_emoji_ids=None):
                         pending = [data]
                     elif _album_records_compatible(pending[-1], data):
                         pending.append(data)
-                        if (
+                        # One non-joined forwarded predecessor plus a
+                        # maximum-size joined album is a valid 11-record
+                        # pending window. Defer the split until the run ends
+                        # so the same rule also handles smaller albums.
+                        if len(pending) > 10 and not (
                             len(pending) == 11
+                            and pending[0].get("is_forwarded")
                             and not pending[0].get("joined")
                             and all(member.get("joined") for member in pending[1:])
                         ):
-                            album_run = pending[1:]
-                            groups[album_run[0]["msg_id"]] = album_run[:]
-                            pending = []
-                        elif len(pending) > 10:
                             overflow = True
                     else:
                         flush()
