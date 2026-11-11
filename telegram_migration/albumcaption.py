@@ -110,6 +110,14 @@ def forwarded_reply_context(records):
     return (text + "\n\n", entities) if text else ("", [])
 
 
+def compose_forwarded_reply_context(records, reply_fallback):
+    """Combine a true outer-reply fallback with display-only forwarded context."""
+    return compose_message(
+        ("", []), ("", []), reply_fallback, "", [],
+        extra_before_body=forwarded_reply_context(records),
+    )
+
+
 def caption_for_group(group):
     """Build the album caption: owner/date, forwarding source, then unique captions."""
     if not group:

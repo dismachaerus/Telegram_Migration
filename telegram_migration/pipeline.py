@@ -11,7 +11,7 @@ from telethon.tl import types as tl
 from . import album, bigfiles, cli, config, customemoji, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
 from .htmlutil import css_classes
 from .textutil import compose_message, compose_message_header, format_archive_timestamp, split_with_entities, strip_with_entities, u16len
-from .albumcaption import forwarded_reply_context
+from .albumcaption import compose_forwarded_reply_context
 
 async def process_file(client, channel, path, id_map, partial, pending_replies, stats, ctx,
                       only_pending=False):
@@ -267,15 +267,6 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         if deferred:
             return
 
-        # A reply preview embedded in forwarded content is display-only
-        # context. Keep it in the reconstructed caption, never as a destination
-        # reply link. The outer reply_fallback remains independently meaningful.
-        forwarded_reply_part = forwarded_reply_context([data])
-        extra_before_body = compose_message(
-            ("", []), ("", []), reply_fallback, "", [],
-            extra_before_body=forwarded_reply_part,
-        )
-
         if is_forwarded:
             # Keep sender/date header, quoted forward attribution, and the
             # forwarded text in one destination message (or media caption).
@@ -284,14 +275,14 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             attribution_part = (attribution_text + "\n\n", attribution_entities)
             text, entities = compose_message(
                 header, ("", []), attribution_part, body_text, body_entities,
-                extra_before_body=extra_before_body,
+                extra_before_body=compose_forwarded_reply_context([data], reply_fallback),
             )
             text, entities = strip_with_entities(text, entities)
             preview_text, preview_entities = text, entities
         else:
             text, entities = compose_message(
                 header, ("", []), ("", []), body_text, body_entities,
-                extra_before_body=extra_before_body,
+                extra_before_body=compose_forwarded_reply_context([data], reply_fallback),
             )
             text, entities = strip_with_entities(text, entities)
             preview_text, preview_entities = text, entities
