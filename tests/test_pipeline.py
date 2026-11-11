@@ -1370,5 +1370,87 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(groups, {})
 
 
+    def test_forwarded_static_and_video_stickers_keep_attribution_in_media_caption(self):
+        # Exercise HTML reconstruction through the actual send_file call for
+        # both sticker formats that previously emitted a separate text message.
+        for extension in (".webp", ".webm"):
+            with self.subTest(extension=extension):
+                self.folder.cleanup()
+                self.folder = tempfile.TemporaryDirectory()
+                relative = "stickers/forwarded" + extension
+                fakes.write_file(self.folder.name, relative)
+                forwarded = (
+                    '<div class="message default clearfix" id="message701">'
+                    '<div class="body">'
+                    '<div class="pull_right date details" '
+                    'title="08.11.2026 09:28:59 UTC+02:00">09:28</div>'
+                    '<div class="from_name">Archive sender</div>'
+                    '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
+                    '<div class="forwarded body">'
+                    '<div class="from_name">Original sender '
+                    '<span class="date details" '
+                    'title="05.11.2026 19:35:11 UTC+02:00">05.11.2026 19:35:11</span>'
+                    '</div>'
+                    '<div class="sticker_wrap">'
+                    f'<a href="{relative}"></a>'
+                    '</div>'
+                    '</div></div></div>'
+                )
+                fakes.write_export(self.folder.name, [forwarded])
+                client, _, _ = self.run_once()
+
+                self.assertEqual(client.kinds("send_message"), [])
+                calls = client.kinds("send_file")
+                self.assertEqual(len(calls), 1)
+                sent_path, kwargs = calls[0][1], calls[0][2]
+                self.assertEqual(sent_path, os.path.join(self.folder.name, relative))
+                self.assertIn("Forwarded from Original sender", kwargs["caption"])
+                self.assertIn("5 November 2026 · 19:35:11", kwargs["caption"])
+                self.assertIsNone(kwargs["reply_to"])
+                self.assertTrue(kwargs["force_document"])
+                self.assertTrue(any(
+                    isinstance(attribute, tl.DocumentAttributeSticker)
+                    for attribute in kwargs["attributes"]
+                ))
+                with config.use_settings(self.settings()):
+                    self.assertEqual(progress.load_id_map(), {"701": 1001})
+
+    def test_multiple_media_with_sticker_first_attaches_forwarded_caption_to_sticker(self):
+        async def scenario():
+            calls = []
+
+            async def send_file(channel, path, **kwargs):
+                calls.append((path, kwargs))
+                return type("Sent", (), {"id": 800 + len(calls)})()
+
+            async def send_message(channel, text, **kwargs):
+                raise AssertionError("caption must not be emitted as a separate text message")
+
+            client = type("Client", (), {})()
+            client.send_file = send_file
+            client.send_message = send_message
+            state = {"src": "702"}
+            media = [
+                ("stickers/first.webp", "sticker_static"),
+                ("photos/second.jpg", "photo"),
+            ]
+            with patch.object(progress, "save_state"):
+                result = await sending._send_multiple_media(
+                    client, "channel",
+                    [("Forwarded from Original sender\\n5 November 2026", [])],
+                    media, None, state, "702",
+                )
+            self.assertEqual(result, 801)
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(calls[0][1]["caption"],
+                             "Forwarded from Original sender\\n5 November 2026")
+            self.assertEqual(calls[1][1]["caption"], "")
+            self.assertTrue(any(
+                isinstance(attribute, tl.DocumentAttributeSticker)
+                for attribute in calls[0][1]["attributes"]
+            ))
+        asyncio.run(scenario())
+
+
 if __name__ == "__main__":
     unittest.main()
