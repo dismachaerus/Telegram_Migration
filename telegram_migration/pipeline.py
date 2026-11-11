@@ -11,7 +11,6 @@ from telethon.tl import types as tl
 from . import album, bigfiles, cli, config, customemoji, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
 from .htmlutil import css_classes
 from .textutil import compose_message, compose_message_header, format_archive_timestamp, split_with_entities, strip_with_entities, u16len
-from .albumcaption import compose_forwarded_reply_context
 
 async def process_file(client, channel, path, id_map, partial, pending_replies, stats, ctx,
                       only_pending=False):
@@ -34,7 +33,7 @@ async def process_file(client, channel, path, id_map, partial, pending_replies, 
 def _print_dry_run(source_id, data, text, entities, first_limit, reply_to,
                    kind_summary, stats, pending_replies):
     chunks = split_with_entities(text, entities, first_limit, config.settings.text_limit)
-    flag = "↪" if reply_to else ("?" if data["reply_src_id"] else " ")
+    flag = "↪" if reply_to else ("?" if replylinks.source_reply_target(data) else " ")
     fwd = "F" if data["forward_source"] else " "
     preview = text[:80].replace("\n", "⏎")
     extra = f" +{len(chunks) - 1} part(s)" if len(chunks) > 1 else ""
@@ -50,7 +49,7 @@ async def _send_migrated_message(client, channel, data, source_id, text, entitie
     chunks = split_with_entities(text, entities, first_limit, config.settings.text_limit)
     state = {
         "src": source_id,
-        "force_reconstruction": bool(data["reply_src_id"] or data.get("forward_reply_src_id") or data.get("forward_reply_preview")),
+        "force_reconstruction": bool(replylinks.source_reply_target(data)),
     }
     if source_id in partial:
         state.update(partial[source_id])
@@ -92,10 +91,11 @@ async def _send_migrated_message(client, channel, data, source_id, text, entitie
         return int(new_id)
 
     stats["failed"] += 1
-    if data["reply_src_id"]:
+    reply_target = replylinks.source_reply_target(data)
+    if reply_target:
         ctx["audit"].append({
             "src": source_id,
-            "source_reply_to": str(data["reply_src_id"]),
+            "source_reply_to": reply_target,
             "verified": False,
             "status": "send_failed",
         })
@@ -169,8 +169,11 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
                 ctx["stop"] = True
                 return
 
-        if data["reply_src_id"]:
-            ctx["reply_map"][source_id] = str(data["reply_src_id"])
+        reply_records = inferred_group if prepared_album else [data]
+        for reply_record in reply_records:
+            reply_target = replylinks.source_reply_target(reply_record)
+            if reply_target:
+                ctx["reply_map"][str(reply_record["msg_id"])] = reply_target
         if data.get("reactions") and source_id not in ctx["reaction_map"]:
             ctx["reaction_map"][source_id] = data["reactions"]
 
@@ -275,14 +278,14 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             attribution_part = (attribution_text + "\n\n", attribution_entities)
             text, entities = compose_message(
                 header, ("", []), attribution_part, body_text, body_entities,
-                extra_before_body=compose_forwarded_reply_context([data], reply_fallback),
+                extra_before_body=reply_fallback,
             )
             text, entities = strip_with_entities(text, entities)
             preview_text, preview_entities = text, entities
         else:
             text, entities = compose_message(
                 header, ("", []), ("", []), body_text, body_entities,
-                extra_before_body=compose_forwarded_reply_context([data], reply_fallback),
+                extra_before_body=reply_fallback,
             )
             text, entities = strip_with_entities(text, entities)
             preview_text, preview_entities = text, entities
