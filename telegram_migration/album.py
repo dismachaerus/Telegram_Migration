@@ -6,9 +6,7 @@ from telethon.errors import MessageNotModifiedError
 from telethon.tl import types as tl
 
 from . import exportmedia
-from .albumcaption import (
-    caption_for_group, caption_for_group_body, forwarded_reply_context,
-)
+from .albumcaption import caption_for_group, caption_for_group_body
 from .htmlutil import css_classes
 
 from .textutil import (
@@ -63,13 +61,13 @@ def caption_for_record(record):
         text, ents = compose_message(
             header, ("", []), (attribution + "\n\n", entities),
             record.get("body_text", ""), record.get("body_entities", []),
-            extra_before_body=forwarded_reply_context([record]),
+            
         )
     else:
         text, ents = compose_message(
             header, ("", []), ("", []),
             record.get("body_text", ""), record.get("body_entities", []),
-            extra_before_body=forwarded_reply_context([record]),
+            
         )
     return strip_with_entities(text, ents)
 
@@ -157,8 +155,8 @@ def _album_records_compatible(left, right):
     # Telegram Desktop can repeat the same reply preview on every forwarded
     # continuation in an album. That repeated target is shared album context,
     # not a boundary. A different reply target on a later item is a boundary.
-    left_reply = left.get("reply_src_id")
-    right_reply = right.get("reply_src_id")
+    left_reply = left.get("forward_reply_src_id") if left.get("is_forwarded") else left.get("reply_src_id")
+    right_reply = right.get("forward_reply_src_id") if right.get("is_forwarded") else right.get("reply_src_id")
     if right_reply and right_reply != left_reply:
         return False
 
