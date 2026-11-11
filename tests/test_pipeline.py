@@ -1453,5 +1453,66 @@ class PipelineTests(unittest.TestCase):
         asyncio.run(scenario())
 
 
+    def test_single_html_record_keeps_mixed_photo_video_media_together_in_source_order(self):
+        # Each source message contains multiple media anchors inside one
+        # media_wrap. This is distinct from inferring an album across adjacent
+        # HTML message records: each record must become its own native album.
+        records = []
+        expected_groups = [
+            [
+                ("photos/first.png", "photo"),
+                ("video_files/second.mov", "video"),
+            ],
+            [
+                ("video_files/third.mp4", "video"),
+                ("photos/fourth.jpg", "photo"),
+            ],
+        ]
+        for index, group in enumerate(expected_groups, start=1):
+            anchors = []
+            for relative, kind in group:
+                fakes.write_file(self.folder.name, relative)
+                if kind == "photo":
+                    anchors.append(
+                        f'<a class="photo_wrap clearfix pull_left" href="{relative}">'
+                        f'<img class="photo" src="{relative}"></a>'
+                    )
+                else:
+                    anchors.append(
+                        f'<a class="video_file_wrap clearfix pull_left" href="{relative}">'
+                        '<div class="video_play_bg"></div></a>'
+                    )
+            inner = (
+                '<div class="media_wrap clearfix">'
+                + "".join(anchors)
+                + '</div>'
+                + fakes.text(f"mixed media message {index}")
+            )
+            records.append(fakes.message(880 + index, inner, sender="Alice", minute=10 + index))
+
+        fakes.write_export(self.folder.name, records)
+        client, output, _ = self.run_once()
+
+        album_calls = client.kinds("send_file")
+        self.assertEqual(len(album_calls), 2)
+        for call, expected in zip(album_calls, expected_groups):
+            files, kwargs = call[1], call[2]
+            self.assertEqual(
+                files,
+                [os.path.join(self.folder.name, relative) for relative, _kind in expected],
+            )
+            self.assertFalse(kwargs.get("force_document", False))
+            self.assertEqual(len(kwargs["caption"]), 2)
+            self.assertTrue(kwargs["caption"][0].startswith("Alice\\n12 March 2023"))
+            self.assertEqual(kwargs["caption"][1], "")
+
+        self.assertEqual(client.kinds("send_message"), [])
+        self.assertIn("sent=2", output)
+        self.assertIn("failed=0", output)
+        with config.use_settings(self.settings()):
+            mapped = progress.load_id_map()
+        self.assertEqual(set(mapped), {"881", "882"})
+
+
 if __name__ == "__main__":
     unittest.main()
