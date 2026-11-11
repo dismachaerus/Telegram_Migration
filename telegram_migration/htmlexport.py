@@ -203,8 +203,25 @@ def _reply_preview(reply_div):
     return text[:500]
 
 
-def _extract_reply_source_id(msg_div):
-    reply_div = find_first(msg_div, "reply_to")
+def _find_outer_reply_to(msg_div, forwarded_body=None):
+    """Find a reply attached to the exported chat message, not its forwarded payload.
+
+    Telegram Desktop can include a reply preview inside the forwarded body.
+    That preview belongs to the message being forwarded; it is not a reply in
+    the current chat. Exclude the complete forwarded subtree for every payload
+    type so photos, videos, stickers, documents, and audio are treated alike.
+    """
+    forwarded_nodes = set(forwarded_body.iter()) if forwarded_body is not None else set()
+    for el in msg_div.iter():
+        if el is msg_div or el in forwarded_nodes:
+            continue
+        if "reply_to" in css_classes(el):
+            return el
+    return None
+
+
+def _extract_reply_source_id(reply_div):
+    """Extract the source target from an already-selected outer reply element."""
     if reply_div is None:
         return None
     a = next(reply_div.iter("a"), None)
@@ -314,9 +331,12 @@ def extract_message_data(msg_div):
     forward_header = f"Forwarded from {forward_name}\n" if forward_name else ""
     fwd_src = extract_forward_source(msg_div) if config.settings.native_forward else None
 
-    reply_div = find_first(msg_div, "reply_to")
+    # A reply nested inside the forwarded payload describes the original
+    # forwarded conversation. Only an outer message-level reply belongs to
+    # the current export chat and may become a destination reply link.
+    reply_div = _find_outer_reply_to(msg_div, fwd_div)
     preview = _reply_preview(reply_div)
-    reply_src_id = _extract_reply_source_id(msg_div)
+    reply_src_id = _extract_reply_source_id(reply_div)
 
     # For forwarded messages, read the payload text from the forwarded body
     # itself. Searching the whole message can select an unrelated outer text
