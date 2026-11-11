@@ -170,10 +170,10 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
                 return
 
         reply_records = inferred_group if prepared_album else [data]
-        for reply_record in reply_records:
-            reply_target = replylinks.source_reply_target(reply_record)
-            if reply_target:
-                ctx["reply_map"][str(reply_record["msg_id"])] = reply_target
+        group_reply_target = replylinks.source_reply_target(reply_records[0]) if reply_records else None
+        if group_reply_target:
+            for reply_record in reply_records:
+                ctx["reply_map"][str(reply_record["msg_id"])] = group_reply_target
         if data.get("reactions") and source_id not in ctx["reaction_map"]:
             ctx["reaction_map"][source_id] = data["reactions"]
 
