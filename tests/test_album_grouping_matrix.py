@@ -26,7 +26,8 @@ class AlbumGroupingMatrixTests(unittest.TestCase):
             "forward_timestamp": base,
             "timestamp": base + timedelta(seconds=index),
             "joined": not first,
-            "reply_src_id": "900",
+            "reply_src_id": None,
+            "forward_reply_src_id": "900",
             "body_text": "synthetic caption" if first else "",
         }
 
@@ -63,12 +64,12 @@ class AlbumGroupingMatrixTests(unittest.TestCase):
                 record = self._record(0, kind, first=True)
                 self.assertFalse(album._album_candidate(record, record["sender"]))
 
-    def test_repeated_reply_context_is_shared_group_context(self):
+    def test_repeated_forwarded_reply_target_is_shared_group_context(self):
         first = self._record(0, "photo", first=True)
         continuation = self._record(1, "voice")
         self.assertTrue(album._album_records_compatible(first, continuation))
 
-        continuation["reply_src_id"] = "901"
+        continuation["forward_reply_src_id"] = "901"
         self.assertFalse(album._album_records_compatible(first, continuation))
 
     def test_native_album_compatibility_is_a_separate_destination_decision(self):
