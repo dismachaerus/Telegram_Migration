@@ -670,6 +670,110 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("The impotent old man and the sea of tears", sticker_call[2]["caption"])
         self.assertEqual(client.texts(), ["Alice\n\nearlier source message"])
 
+    def test_original_forwarded_reply_context_disables_native_forward_for_all_media_kinds(self):
+        cases = [
+            ("photo", "photos/forwarded.jpg",
+             '<div class="media_wrap clearfix"><a class="photo_wrap" href="photos/forwarded.jpg">'
+             '<img class="photo" src="photos/forwarded.jpg"/></a></div>'),
+            ("video", "video_files/forwarded.mp4",
+             '<div class="media_wrap clearfix"><a class="video_file_wrap" href="video_files/forwarded.mp4"></a></div>'),
+            ("audio", "audio_files/forwarded.mp3",
+             '<div class="media_wrap clearfix"><a class="media_audio_file" href="audio_files/forwarded.mp3"></a></div>'),
+            ("voice", "voice_messages/forwarded.ogg",
+             '<div class="media_wrap clearfix"><a class="media_voice_message" href="voice_messages/forwarded.ogg"></a></div>'),
+            ("gif", "video_files/forwarded.gif",
+             '<div class="media_wrap clearfix"><a class="video_file_wrap" href="video_files/forwarded.gif"></a></div>'),
+            ("document", "files/forwarded.pdf",
+             '<div class="media_wrap clearfix"><a class="media_file" href="files/forwarded.pdf"></a></div>'),
+            ("sticker_static", "stickers/forwarded.webp",
+             '<div class="sticker_wrap"><a href="stickers/forwarded.webp"></a></div>'),
+            ("sticker_animated", "stickers/forwarded.tgs",
+             '<div class="sticker_wrap"><a href="stickers/forwarded.tgs"></a></div>'),
+            ("sticker_video", "stickers/forwarded.webm",
+             '<div class="sticker_wrap"><a href="stickers/forwarded.webm"></a></div>'),
+            ("round_video", "round_video_messages/forwarded.mp4",
+             '<div class="roundvideo_file_wrap"><a href="round_video_messages/forwarded.mp4"></a></div>'),
+        ]
+
+        for index, (expected_kind, media_path, media_html) in enumerate(cases, start=1):
+            with self.subTest(kind=expected_kind):
+                self.folder.cleanup()
+                self.folder = tempfile.TemporaryDirectory()
+                self.addCleanup(self.folder.cleanup)
+                fakes.write_file(self.folder.name, media_path)
+
+                forwarded = (
+                    f'<div class="message default clearfix" id="message{900 + index}">'
+                    '<div class="body">'
+                    '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
+                    '<div class="forwarded body">'
+                    '<div class="from_name"><a href="https://t.me/NewsChannel/4321">'
+                    'News Channel</a></div>'
+                    '<div class="reply_to details">In reply to '
+                    '<a href="#go_to_message4320">the original conversation</a></div>'
+                    f'{media_html}'
+                    '</div></div></div>'
+                )
+                fakes.write_export(self.folder.name, [forwarded])
+
+                native_calls = []
+
+                async def native_forward(_client, _channel, peer_hint, source_msg_id,
+                                         archive_source_id=None):
+                    native_calls.append((peer_hint, source_msg_id))
+                    return 777
+
+                with patch.object(pipeline.sending, "_try_native_forward", new=native_forward):
+                    client, _, _ = self.run_once()
+
+                self.assertEqual(native_calls, [])
+                calls = client.kinds("send_file")
+                self.assertEqual(len(calls), 1)
+                kwargs = calls[0][2]
+                self.assertIn("Forwarded from News Channel", kwargs["caption"])
+                self.assertIn("In reply to the original conversation", kwargs["caption"])
+                self.assertIsNone(kwargs["reply_to"])
+                self.assertEqual(client.kinds("send_message"), [])
+                if expected_kind == "voice":
+                    self.assertTrue(kwargs["voice_note"])
+                if expected_kind == "round_video":
+                    self.assertNotIn("video_note", kwargs)
+                self.assertTrue(
+                    any(type(entity).__name__ == "MessageEntityBlockquote"
+                        for entity in kwargs["formatting_entities"])
+                )
+
+    def test_outer_reply_and_forwarded_original_reply_remain_independent(self):
+        media_path = "audio_files/forwarded-track.mp3"
+        fakes.write_file(self.folder.name, media_path)
+        forwarded = (
+            '<div class="message default clearfix" id="message2">'
+            '<div class="body">'
+            '<div class="reply_to details">In reply to '
+            '<a href="#go_to_message1">this destination-channel message</a></div>'
+            '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
+            '<div class="forwarded body">'
+            '<div class="from_name"><a href="https://t.me/NewsChannel/4321">'
+            'News Channel</a></div>'
+            '<div class="reply_to details">In reply to '
+            '<a href="#go_to_message4320">the original conversation</a></div>'
+            '<div class="media_wrap clearfix">'
+            f'<a class="media_audio_file" href="{media_path}"></a>'
+            '</div></div></div></div>'
+        )
+        fakes.write_export(self.folder.name, [
+            fakes.message(1, fakes.text("destination reply target")),
+            forwarded,
+        ])
+
+        client, _, _ = self.run_once()
+        calls = client.kinds("send_file")
+        self.assertEqual(len(calls), 1)
+        kwargs = calls[0][2]
+        self.assertEqual(kwargs["reply_to"], 1001)
+        self.assertIn("In reply to the original conversation", kwargs["caption"])
+        self.assertNotIn("Original reply target #4320 is unavailable", kwargs["caption"])
+
     def test_forwarded_voice_note_keeps_its_original_reply_preview_as_context(self):
         media_path = "voice_messages/forwarded-note.ogg"
         fakes.write_file(self.folder.name, media_path)
