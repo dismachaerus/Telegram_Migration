@@ -567,6 +567,95 @@ class PipelineTests(unittest.TestCase):
         client, _, _ = self.run_once()
         self.assertIn("Original reply target #999 is unavailable", client.texts()[0])
 
+    def test_forwarded_payload_reply_previews_do_not_link_the_message_or_its_album(self):
+        # Reproduce the user's export records 106–108. Message 107 contains a
+        # photo and caption; message 108 is its joined sticker continuation.
+        # Both reply_to blocks are inside forwarded.body and belong to the
+        # original forwarded conversation, not to the destination channel.
+        sticker_path = "video_files/sticker (10).webm"
+        photo_path = "photos/photo_7@01-07-2026_21-33-40.jpg"
+        fakes.write_file(self.folder.name, sticker_path)
+        fakes.write_file(self.folder.name, photo_path)
+
+        first_forward = (
+            '<div class="message default clearfix" id="message106">'
+            '<div class="body">'
+            '<div class="pull_right date details" title="01.07.2026 21:33:39 UTC+02:00">21:33</div>'
+            '<div class="from_name">Archive owner</div>'
+            '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
+            '<div class="forwarded body">'
+            '<div class="from_name">Valerie Demian '
+            '<span class="date details" title="03.05.2026 20:27:41 UTC+02:00">'
+            '03.05.2026 20:27:41</span></div>'
+            '<div class="reply_to details">In reply to '
+            '<a href="#go_to_message105">this message</a></div>'
+            '<div class="media_wrap clearfix">'
+            '<a class="media clearfix pull_left block_link media_photo" href="' + sticker_path + '">'
+            '<div class="body"><div class="title bold">Sticker</div>'
+            '<div class="status details">🧐</div></div></a>'
+            '</div></div></div></div>'
+        )
+        photo_forward = (
+            '<div class="message default clearfix joined" id="message107">'
+            '<div class="body">'
+            '<div class="pull_right date details" title="01.07.2026 21:33:40 UTC+02:00">21:33</div>'
+            '<div class="pull_left forwarded userpic_wrap"><div class="userpic"></div></div>'
+            '<div class="forwarded body">'
+            '<div class="from_name">Valerie Demian '
+            '<span class="date details" title="03.05.2026 20:43:50 UTC+02:00">'
+            '03.05.2026 20:43:50</span></div>'
+            '<div class="reply_to details">In reply to '
+            '<a href="#go_to_message106">this message</a></div>'
+            '<div class="media_wrap clearfix">'
+            '<a class="photo_wrap clearfix pull_left" href="' + photo_path + '">'
+            '<img class="photo" src="' + photo_path + '_thumb.jpg"/></a>'
+            '</div>'
+            '<div class="text">The impotent old man and the sea of tears</div>'
+            '</div></div></div>'
+        )
+        repeated_sticker = (
+            '<div class="message default clearfix joined" id="message108">'
+            '<div class="body">'
+            '<div class="pull_right date details" title="01.07.2026 21:33:40 UTC+02:00">21:33</div>'
+            '<div class="forwarded body">'
+            '<div class="media_wrap clearfix">'
+            '<a class="media clearfix pull_left block_link media_photo" href="' + sticker_path + '">'
+            '<div class="body"><div class="title bold">Sticker</div>'
+            '<div class="status details">🧐</div></div></a>'
+            '</div></div></div></div>'
+        )
+        fakes.write_export(self.folder.name, [
+            fakes.message(105, fakes.text("earlier source message")),
+            first_forward,
+            photo_forward,
+            repeated_sticker,
+        ])
+
+        with config.use_settings(self.settings(native_forward=False)):
+            document = html.fromstring(
+                open(self.path("messages.html"), encoding="utf-8").read()
+            )
+            parsed = {
+                source_id: htmlexport.extract_message_data(
+                    document.xpath('//*[@id="message' + source_id + '"]')[0]
+                )
+                for source_id in ("106", "107", "108")
+            }
+            self.assertTrue(all(row["reply_src_id"] is None for row in parsed.values()))
+            self.assertTrue(all(row["reply_preview"] == "" for row in parsed.values()))
+            groups = htmlexport.infer_media_groups([self.path("messages.html")])
+
+        self.assertEqual(
+            [row["msg_id"] for row in groups["107"]],
+            ["107", "108"],
+        )
+        self.assertTrue(all(row["reply_src_id"] is None for row in groups["107"]))
+
+        client, _, _ = self.run_once(native_forward=False)
+        media_calls = client.kinds("send_file")
+        self.assertGreaterEqual(len(media_calls), 3)
+        self.assertTrue(all(call[2].get("reply_to") is None for call in media_calls))
+
     def test_oversize_file_stops_cleanly_and_the_next_run_skips_it(self):
         fakes.write_file(self.folder.name, "video_files/big.mp4", size=2 * 1024 * 1024)
         fakes.write_export(self.folder.name, [
