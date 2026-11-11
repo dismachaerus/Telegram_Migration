@@ -1067,7 +1067,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIs(result, False)
 
 
-    def test_forwarded_six_joined_file_group_stays_separate_from_preceding_file(self):
+    def test_forwarded_joined_file_groups_of_every_valid_size_stay_separate_from_prelude(self):
         def forwarded_file(message_id, original_second, relative, joined=False,
                            archive_sender=False):
             outer_time = f"01.07.2026 21:46:{original_second:02d} UTC+02:00"
@@ -1088,30 +1088,44 @@ class PipelineTests(unittest.TestCase):
                 '<div class="status details">250 KB</div></div></a></div></div></div></div>'
             )
 
-        rows = [(319, 55, "files/preceding.jpg", False)]
-        rows.extend(
-            (message_id, 56 + index // 2, f"files/group-{index:02d}.jpg", True)
-            for index, message_id in enumerate(range(320, 326))
-        )
-        html_rows = []
-        expected_album = []
-        for index, (message_id, second, relative, joined) in enumerate(rows):
-            fakes.write_file(self.folder.name, relative)
-            html_rows.append(forwarded_file(
-                message_id, second, relative, joined=joined, archive_sender=(index == 0),
-            ))
-            if joined:
-                expected_album.append(self.path(relative))
-        fakes.write_export(self.folder.name, html_rows)
+        # Telegram media albums support 2–10 items. Exercise every valid size:
+        # the preceding non-joined forwarded file must never be absorbed.
+        for album_size in range(2, 11):
+            with self.subTest(album_size=album_size):
+                self.setUp()
+                try:
+                    rows = [(319, 40, "files/preceding.jpg", False)]
+                    rows.extend(
+                        (320 + index, 41 + index // 2,
+                         f"files/group-{index:02d}.jpg", True)
+                        for index in range(album_size)
+                    )
+                    html_rows = []
+                    expected_album = []
+                    for index, (message_id, second, relative, joined) in enumerate(rows):
+                        fakes.write_file(self.folder.name, relative)
+                        html_rows.append(forwarded_file(
+                            message_id, second, relative, joined=joined,
+                            archive_sender=(index == 0),
+                        ))
+                        if joined:
+                            expected_album.append(self.path(relative))
+                    fakes.write_export(self.folder.name, html_rows)
 
-        client, _output, _ = self.run_once()
-        media_calls = client.kinds("send_file")
-        self.assertEqual(len(media_calls), 2)
-        self.assertEqual(media_calls[0][1], self.path("files/preceding.jpg"))
-        self.assertEqual(media_calls[1][1], expected_album)
-        self.assertEqual(len(media_calls[1][2]["caption"]), 6)
-        self.assertTrue(all(not caption for caption in media_calls[1][2]["caption"][:-1]))
-        self.assertIn("Forwarded from 🗝", media_calls[1][2]["caption"][-1])
+                    client, _output, _ = self.run_once()
+                    media_calls = client.kinds("send_file")
+                    self.assertEqual(len(media_calls), 2)
+                    self.assertEqual(media_calls[0][1], self.path("files/preceding.jpg"))
+                    self.assertEqual(media_calls[1][1], expected_album)
+                    self.assertEqual(len(media_calls[1][2]["caption"]), album_size)
+                    self.assertTrue(all(
+                        not caption for caption in media_calls[1][2]["caption"][:-1]
+                    ))
+                    self.assertIn(
+                        "Forwarded from 🗝", media_calls[1][2]["caption"][-1]
+                    )
+                finally:
+                    self.tearDown()
 
     def test_forwarded_ten_jpg_file_group_is_one_album_with_one_attributed_caption(self):
         # Reproduce the user's actual Desktop HTML shape: message 319 is a
