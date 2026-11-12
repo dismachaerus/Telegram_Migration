@@ -1028,6 +1028,138 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse(calls[0][2].get("force_document", False))
         self.assertTrue(calls[0][2]["caption"].endswith("audio caption"))
 
+    def test_only_tgs_stickers_use_separate_sender_attribution(self):
+        cases = (
+            (".tgs", "sticker_animated", "application/x-tgsticker"),
+            (".webp", "sticker_static", "image/webp"),
+            (".webm", "sticker_video", "video/webm"),
+        )
+        for extension, expected_kind, expected_mime in cases:
+            with self.subTest(extension=extension):
+                self.folder.cleanup()
+                self.folder = tempfile.TemporaryDirectory()
+                self.addCleanup(self.folder.cleanup)
+                relative = "stickers/sample" + extension
+                fakes.write_file(self.folder.name, relative)
+                sticker = (
+                    '<div class="media_wrap clearfix">'
+                    f'<a class="media clearfix pull_left block_link media_photo" href="{relative}">'
+                    '<div class="body"><div class="title bold">Sticker</div>'
+                    '<div class="status details">👋</div></div></a></div>'
+                )
+                fakes.write_export(self.folder.name, [
+                    fakes.message(810, sticker, sender="Sticker sender", minute=10)
+                ])
+
+                client, _, _ = self.run_once(native_forward=False)
+                calls = client.kinds("send_file")
+                self.assertEqual(len(calls), 1)
+                kwargs = calls[0][2]
+                self.assertEqual(kwargs["mime_type"], expected_mime)
+                self.assertTrue(kwargs["force_document"])
+                self.assertEqual(
+                    type(kwargs["attributes"][0]).__name__,
+                    "DocumentAttributeSticker",
+                )
+
+                if extension == ".tgs":
+                    self.assertEqual(kwargs["caption"], "")
+                    attribution = client.kinds("send_discussion_reply")
+                    self.assertEqual(len(attribution), 1)
+                    self.assertIn("Sticker sender\\n12 March 2023 · 10:10", attribution[0][1].message)
+                    self.assertIn("👋", attribution[0][1].message)
+                    self.assertEqual(attribution[0][1].reply_to.reply_to_msg_id, 1001)
+                    self.assertEqual(client.kinds("send_channel_attribution"), [])
+                else:
+                    self.assertIn("Sticker sender\\n12 March 2023 · 10:10", kwargs["caption"])
+                    self.assertNotIn("👋", kwargs["caption"])
+                    self.assertEqual(client.kinds("send_discussion_reply"), [])
+                    self.assertEqual(client.kinds("send_channel_attribution"), [])
+                self.assertEqual(client.kinds("send_message"), [])
+
+    def test_tgs_attribution_without_discussion_group_is_the_next_channel_post(self):
+        relative = "stickers/no-discussion.tgs"
+        fakes.write_file(self.folder.name, relative)
+        sticker = (
+            '<div class="media_wrap clearfix">'
+            f'<a class="media clearfix pull_left block_link media_photo" href="{relative}">'
+            '<div class="body"><div class="title bold">Sticker</div>'
+            '<div class="status details">👋</div></div></a></div>'
+        )
+        fakes.write_export(self.folder.name, [
+            fakes.message(811, sticker, sender="Sticker sender", minute=11)
+        ])
+
+        with patch.object(FakeTelegram, "linked_chat_id_default", None):
+            client, _, _ = self.run_once(native_forward=False)
+
+        posts = client.kinds("send_channel_attribution")
+        self.assertEqual(len(posts), 1)
+        request = posts[0][1]
+        self.assertEqual(request.peer.channel_id, 1)
+        self.assertIsNone(request.reply_to)
+        self.assertIn("Sticker sender\\n12 March 2023 · 10:11", request.message)
+        self.assertIn("👋", request.message)
+        self.assertEqual(client.kinds("send_discussion_reply"), [])
+        self.assertEqual(len(client.kinds("send_file")), 1)
+        self.assertEqual(client.kinds("send_file")[0][2]["caption"], "")
+
+    def test_emoji_only_text_keeps_emoji_as_post_and_places_sender_in_attribution_reply(self):
+        fakes.write_export(self.folder.name, [
+            fakes.message(812, fakes.text("💙"), sender="Emoji sender", minute=12)
+        ])
+        client, _, _ = self.run_once(native_forward=False)
+
+        self.assertEqual(client.texts(), ["💙"])
+        attribution = client.kinds("send_discussion_reply")
+        self.assertEqual(len(attribution), 1)
+        self.assertIn("Emoji sender\\n12 March 2023 · 10:12", attribution[0][1].message)
+        self.assertEqual(attribution[0][1].reply_to.reply_to_msg_id, 1001)
+        self.assertEqual(client.kinds("send_file"), [])
+
+    def test_consecutive_audio_media_are_one_album_with_one_shared_author_caption(self):
+        paths = ("audio_files/track-one.mp3", "audio_files/track-two.mp3")
+        records = []
+        for index, relative in enumerate(paths):
+            fakes.write_file(self.folder.name, relative)
+            markup = (
+                '<div class="media_wrap clearfix">'
+                f'<a class="media clearfix pull_left block_link media_audio_file" href="{relative}">'
+                f'<div class="title bold">{os.path.basename(relative)}</div>'
+                '<div class="status details">00:30</div></a></div>'
+            )
+            records.append(
+                fakes.message(
+                    820 + index, markup,
+                    sender="Alice" if index == 0 else "",
+                    classes="" if index == 0 else "joined",
+                    minute=20 + index,
+                )
+            )
+        fakes.write_export(self.folder.name, records)
+
+        client, output, _ = self.run_once(native_forward=False)
+        calls = client.kinds("send_file")
+        self.assertEqual(len(calls), 1)
+        files, kwargs = calls[0][1], calls[0][2]
+        self.assertEqual(
+            files,
+            [os.path.join(self.folder.name, path) for path in paths],
+        )
+        self.assertEqual(kwargs["caption"][0], "")
+        self.assertIn("Alice\\n12 March 2023 · 10:20", kwargs["caption"][-1])
+        self.assertEqual(len(kwargs["caption"]), 2)
+        self.assertEqual(client.kinds("send_message"), [])
+        self.assertEqual(client.kinds("send_discussion_reply"), [])
+        self.assertEqual(client.kinds("send_channel_attribution"), [])
+        self.assertIn("sent=2", output)
+        self.assertIn("failed=0", output)
+        with config.use_settings(self.settings()):
+            self.assertEqual(
+                progress.load_id_map(),
+                {"820": 1001, "821": 1002},
+            )
+
     def test_batch_limit_stops_the_run(self):
         fakes.write_export(self.folder.name, [fakes.message(i, fakes.text(f"m{i}")) for i in range(1, 6)])
         client, output, _ = self.run_once(batch_limit=2)
