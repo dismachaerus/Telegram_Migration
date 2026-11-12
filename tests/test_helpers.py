@@ -3,7 +3,7 @@
 These tests never sign in to Telegram and never call the live API. They use
 real Telethon entity objects when dependencies are installed by requirements.txt.
 """
-from __future__ import annotations.
+from __future__ import annotations
 
 import asyncio
 import json
