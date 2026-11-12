@@ -219,9 +219,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             text, entities = strip_with_entities(text, entities)
             preview_text, preview_entities = text, entities
 
-        attribution.prepare_message_attribution(
-            data, header, text, entities, reply_fallback
-        )
+        attribution.prepare_message_attribution(data, text, entities)
 
         oversize = bigfiles.find_oversize_media(data["media"])
         if oversize:
