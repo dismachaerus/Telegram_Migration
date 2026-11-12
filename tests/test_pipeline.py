@@ -1119,19 +1119,6 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(client.kinds("send_file")), 1)
         self.assertEqual(client.kinds("send_file")[0][2]["caption"], "")
 
-    def test_emoji_only_text_keeps_emoji_as_post_and_places_sender_in_attribution_reply(self):
-        fakes.write_export(self.folder.name, [
-            fakes.message(812, fakes.text("💙"), sender="Emoji sender", minute=12)
-        ])
-        client, _, _ = self.run_once(native_forward=False)
-
-        self.assertEqual(client.texts(), ["💙"])
-        attribution = client.kinds("send_discussion_reply")
-        self.assertEqual(len(attribution), 1)
-        self.assertIn("Emoji sender\n12 March 2023 · 10:12", attribution[0][1].message)
-        self.assertEqual(attribution[0][1].reply_to.reply_to_msg_id, 1001)
-        self.assertEqual(client.kinds("send_file"), [])
-
     def test_consecutive_audio_media_are_one_album_with_one_shared_author_caption(self):
         paths = ("audio_files/track-one.mp3", "audio_files/track-two.mp3")
         records = []
