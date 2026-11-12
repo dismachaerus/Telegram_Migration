@@ -7,9 +7,7 @@ from telethon.errors import FloodWaitError
 from telethon.tl import types as tl
 
 from . import album, config, exportmedia, formatfallback, progress, uploads
-from .attribution import (
-    _send_emoji_with_attribution, _send_tgs_sticker_with_attribution,
-)
+from .attribution import _send_tgs_sticker_with_attribution
 from .textutil import clean_invalid_entities, split_with_entities
 from .constants import STICKER_KINDS
 
@@ -342,11 +340,6 @@ async def _send_single_media(client, channel, chunks, media, reply_to, state, so
 
 async def _do_send(client, channel, chunks, media, reply_to, forward_source,
                    state, annotation, source_id=None, data=None):
-    if data and data.get("_emoji_only_attribution"):
-        return await _send_emoji_with_attribution(
-            client, channel, data, reply_to, state, source_id,
-        )
-
     if data and data.get("_tgs_sticker_attribution"):
         if (
             len(media) != 1
