@@ -6,7 +6,31 @@ from telethon.tl import functions as fn
 from telethon.tl import types as tl
 
 from . import formatfallback, progress, uploads
-from .textutil import clean_invalid_entities
+from .textutil import clean_invalid_entities, is_emoji_only_text
+
+
+def prepare_message_attribution(data, header, text, entities, reply_fallback):
+    """Mark only standalone TGS/emoji posts for separate sender/date attribution."""
+    media_items = data.get("media") or []
+    if len(media_items) == 1:
+        media_path, media_kind = media_items[0]
+        if (
+            media_kind == "sticker_animated"
+            and str(media_path).casefold().endswith(".tgs")
+        ):
+            data["_tgs_sticker_attribution"] = True
+            data["_tgs_attribution_text"] = text
+            data["_tgs_attribution_entities"] = entities
+
+    if (
+        not media_items
+        and not data.get("is_forwarded")
+        and not data.get("service_event")
+        and is_emoji_only_text(data.get("body_text", ""))
+        and not (reply_fallback and reply_fallback[0])
+    ):
+        data["_emoji_only_attribution"] = True
+        data["_emoji_reply_header"] = header
 
 
 def _sent_message_id_from_updates(result, random_id):
