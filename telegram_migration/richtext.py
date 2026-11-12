@@ -1,6 +1,6 @@
 """Convert the rich text of an exported message (HTML) into text plus Telegram entities."""
 
-from urllib.parse import urlparse.
+from urllib.parse import urlparse
 
 from telethon.tl import types as tl
 
