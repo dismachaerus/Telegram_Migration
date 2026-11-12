@@ -766,6 +766,13 @@ class MediaTests(unittest.TestCase):
             options = uploads._sticker_upload_options("sticker.webm", "sticker_video")
         self.assertEqual(options["mime_type"], "video/webm")
         self.assertTrue(options["nosound_video"])
+        self.assertTrue(options["force_document"])
+
+    def test_tgs_sticker_upload_keeps_original_native_sticker_options(self):
+        options = uploads._sticker_upload_options("sticker.tgs", "sticker_animated")
+        self.assertTrue(options["force_document"])
+        self.assertEqual(options["mime_type"], "application/x-tgsticker")
+        self.assertIsInstance(options["attributes"][0], tl.DocumentAttributeSticker)
         video = next(a for a in options["attributes"] if isinstance(a, tl.DocumentAttributeVideo))
         self.assertEqual((video.w, video.h, video.duration), (256, 128, 2.5))
 
