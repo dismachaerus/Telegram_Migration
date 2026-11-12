@@ -1066,12 +1066,12 @@ class PipelineTests(unittest.TestCase):
                     self.assertEqual(kwargs["caption"], "")
                     attribution = client.kinds("send_discussion_reply")
                     self.assertEqual(len(attribution), 1)
-                    self.assertIn("Sticker sender\\n12 March 2023 · 10:10", attribution[0][1].message)
+                    self.assertIn("Sticker sender\n12 March 2023 · 10:10", attribution[0][1].message)
                     self.assertIn("👋", attribution[0][1].message)
                     self.assertEqual(attribution[0][1].reply_to.reply_to_msg_id, 1001)
                     self.assertEqual(client.kinds("send_channel_attribution"), [])
                 else:
-                    self.assertIn("Sticker sender\\n12 March 2023 · 10:10", kwargs["caption"])
+                    self.assertIn("Sticker sender\n12 March 2023 · 10:10", kwargs["caption"])
                     self.assertNotIn("👋", kwargs["caption"])
                     self.assertEqual(client.kinds("send_discussion_reply"), [])
                     self.assertEqual(client.kinds("send_channel_attribution"), [])
@@ -1098,7 +1098,7 @@ class PipelineTests(unittest.TestCase):
         request = posts[0][1]
         self.assertEqual(request.peer.channel_id, 1)
         self.assertIsNone(request.reply_to)
-        self.assertIn("Sticker sender\\n12 March 2023 · 10:11", request.message)
+        self.assertIn("Sticker sender\n12 March 2023 · 10:11", request.message)
         self.assertIn("👋", request.message)
         self.assertEqual(client.kinds("send_discussion_reply"), [])
         self.assertEqual(len(client.kinds("send_file")), 1)
@@ -1113,7 +1113,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(client.texts(), ["💙"])
         attribution = client.kinds("send_discussion_reply")
         self.assertEqual(len(attribution), 1)
-        self.assertIn("Emoji sender\\n12 March 2023 · 10:12", attribution[0][1].message)
+        self.assertIn("Emoji sender\n12 March 2023 · 10:12", attribution[0][1].message)
         self.assertEqual(attribution[0][1].reply_to.reply_to_msg_id, 1001)
         self.assertEqual(client.kinds("send_file"), [])
 
@@ -1147,7 +1147,7 @@ class PipelineTests(unittest.TestCase):
             [os.path.join(self.folder.name, path) for path in paths],
         )
         self.assertEqual(kwargs["caption"][0], "")
-        self.assertIn("Alice\\n12 March 2023 · 10:20", kwargs["caption"][-1])
+        self.assertIn("Alice\n12 March 2023 · 10:20", kwargs["caption"][-1])
         self.assertEqual(len(kwargs["caption"]), 2)
         self.assertEqual(client.kinds("send_message"), [])
         self.assertEqual(client.kinds("send_discussion_reply"), [])
@@ -1181,7 +1181,7 @@ class PipelineTests(unittest.TestCase):
         files, kwargs = calls[0][1], calls[0][2]
         self.assertEqual(files, [os.path.join(self.folder.name, p) for p in paths])
         self.assertEqual(kwargs["caption"][0], "")
-        self.assertIn("Audio author\\n12 March 2023 · 10:22", kwargs["caption"][-1])
+        self.assertIn("Audio author\n12 March 2023 · 10:22", kwargs["caption"][-1])
         self.assertEqual(client.kinds("send_message"), [])
         self.assertEqual(client.kinds("send_discussion_reply"), [])
         self.assertEqual(client.kinds("send_channel_attribution"), [])
