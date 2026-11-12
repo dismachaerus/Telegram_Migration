@@ -8,9 +8,9 @@ from lxml import etree
 from telethon import TelegramClient
 from telethon.tl import types as tl
 
-from . import album, bigfiles, cli, config, customemoji, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
+from . import attribution, album, bigfiles, cli, config, customemoji, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
 from .htmlutil import css_classes
-from .textutil import compose_message, compose_message_header, format_archive_timestamp, is_emoji_only_text, split_with_entities, strip_with_entities, u16len
+from .textutil import compose_message, compose_message_header, format_archive_timestamp, split_with_entities, strip_with_entities, u16len
 
 async def process_file(client, channel, path, id_map, partial, pending_replies, stats, ctx,
                       only_pending=False):
@@ -224,24 +224,6 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         else:
             header = compose_message_header(timestamp, data["sender"])
 
-        media_items = data.get("media") or []
-        if len(media_items) == 1:
-            media_path, media_kind = media_items[0]
-            if (
-                media_kind == "sticker_animated"
-                and str(media_path).casefold().endswith(".tgs")
-            ):
-                data["_tgs_sticker_attribution"] = True
-
-        if (
-            not media_items
-            and not data.get("is_forwarded")
-            and not data.get("service_event")
-            and is_emoji_only_text(data.get("body_text", ""))
-        ):
-            data["_emoji_only_attribution"] = True
-            data["_emoji_reply_header"] = header
-
         body_text = data["body_text"]
         body_entities = list(data["body_entities"])
         is_forwarded = bool(data.get("is_forwarded"))
@@ -307,14 +289,9 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             text, entities = strip_with_entities(text, entities)
             preview_text, preview_entities = text, entities
 
-        if data.get("_tgs_sticker_attribution"):
-            data["_tgs_attribution_text"] = text
-            data["_tgs_attribution_entities"] = entities
-
-        # If a reply target cannot be resolved, keep its textual fallback in
-        # the same emoji post rather than dropping it when splitting attribution.
-        if data.get("_emoji_only_attribution") and reply_fallback:
-            data.pop("_emoji_only_attribution", None)
+        attribution.prepare_message_attribution(
+            data, header, text, entities, reply_fallback
+        )
 
         oversize = bigfiles.find_oversize_media(data["media"])
         if oversize:
