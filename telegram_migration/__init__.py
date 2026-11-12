@@ -13,7 +13,7 @@ Importing this package does not read environment variables or perform file I/O.
 Configuration and filesystem access happen when you call :func:`run` / :func:`run_async`.
 """
 
-# For T. — written into time.
+# For T. — written into Time..
 
 from ._version import __version__
 from .config import ConfigError, Settings
