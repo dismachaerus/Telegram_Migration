@@ -1160,6 +1160,32 @@ class PipelineTests(unittest.TestCase):
                 {"820": 1001, "821": 1002},
             )
 
+    def test_multiple_audio_files_in_one_source_post_stay_one_album(self):
+        paths = ("audio_files/attached-one.mp3", "audio_files/attached-two.mp3")
+        anchors = []
+        for relative in paths:
+            fakes.write_file(self.folder.name, relative)
+            anchors.append(
+                '<a class="media clearfix pull_left block_link media_audio_file" '
+                f'href="{relative}"><div class="title bold">{os.path.basename(relative)}</div>'
+                '</a>'
+            )
+        markup = '<div class="media_wrap clearfix">' + "".join(anchors) + '</div>'
+        fakes.write_export(self.folder.name, [
+            fakes.message(822, markup, sender="Audio author", minute=22)
+        ])
+
+        client, _, _ = self.run_once(native_forward=False)
+        calls = client.kinds("send_file")
+        self.assertEqual(len(calls), 1)
+        files, kwargs = calls[0][1], calls[0][2]
+        self.assertEqual(files, [os.path.join(self.folder.name, p) for p in paths])
+        self.assertEqual(kwargs["caption"][0], "")
+        self.assertIn("Audio author\\n12 March 2023 · 10:22", kwargs["caption"][-1])
+        self.assertEqual(client.kinds("send_message"), [])
+        self.assertEqual(client.kinds("send_discussion_reply"), [])
+        self.assertEqual(client.kinds("send_channel_attribution"), [])
+
     def test_batch_limit_stops_the_run(self):
         fakes.write_export(self.folder.name, [fakes.message(i, fakes.text(f"m{i}")) for i in range(1, 6)])
         client, output, _ = self.run_once(batch_limit=2)
