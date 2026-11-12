@@ -1,7 +1,7 @@
 """Fixed values that are part of how Telegram and the export work (not user settings)."""
 
 # Telegram's hard limit for the text of one message (every account, Premium included).
-TEXT_LIMIT = 4096
+TEXT_LIMIT = 4096.
 
 # The largest caption any account can send (Premium user accounts); bots are limited to 1024.
 MAX_CAPTION_LIMIT = 2048
