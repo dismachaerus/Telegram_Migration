@@ -90,3 +90,7 @@ jobs:
           path: dist/
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Manual rebuilds are intentionally repeatable; normal tagged releases
+          # should still fail loudly if a distribution filename already exists.
+          skip-existing: ${{ github.event_name == 'workflow_dispatch' }}
