@@ -774,18 +774,33 @@ class PipelineTests(unittest.TestCase):
                 calls = client.kinds("send_file")
                 self.assertEqual(len(calls), 1)
                 kwargs = calls[0][2]
-                self.assertIn("Forwarded from News Channel", kwargs["caption"])
                 self.assertNotIn("In reply to the original conversation", kwargs["caption"])
                 self.assertIsNone(kwargs["reply_to"])
                 self.assertEqual(client.kinds("send_message"), [])
+                if expected_kind == "sticker_animated":
+                    self.assertEqual(kwargs["caption"], "")
+                    attribution = client.kinds("send_discussion_reply")
+                    self.assertEqual(len(attribution), 1)
+                    self.assertIn("Forwarded from News Channel", attribution[0][1].message)
+                    self.assertNotIn(
+                        "In reply to the original conversation",
+                        attribution[0][1].message,
+                    )
+                    self.assertTrue(any(
+                        type(entity).__name__ == "MessageEntityBlockquote"
+                        for entity in attribution[0][1].entities
+                    ))
+                else:
+                    self.assertIn("Forwarded from News Channel", kwargs["caption"])
+                    self.assertEqual(client.kinds("send_discussion_reply"), [])
+                    self.assertTrue(
+                        any(type(entity).__name__ == "MessageEntityBlockquote"
+                            for entity in kwargs["formatting_entities"])
+                    )
                 if expected_kind == "voice":
                     self.assertTrue(kwargs["voice_note"])
                 if expected_kind == "round_video":
                     self.assertNotIn("video_note", kwargs)
-                self.assertTrue(
-                    any(type(entity).__name__ == "MessageEntityBlockquote"
-                        for entity in kwargs["formatting_entities"])
-                )
 
     def test_forwarded_original_reply_takes_priority_over_outer_reply(self):
         media_path = "audio_files/forwarded-track.mp3"
@@ -2009,14 +2024,32 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual(len(calls), 1)
                 sent_path, kwargs = calls[0][1], calls[0][2]
                 self.assertEqual(sent_path, os.path.join(self.folder.name, relative))
-                self.assertIn("Forwarded from Original sender", kwargs["caption"])
-                self.assertIn("5 November 2026 · 19:35:11", kwargs["caption"])
                 self.assertIsNone(kwargs["reply_to"])
                 self.assertTrue(kwargs["force_document"])
                 self.assertTrue(any(
                     isinstance(attribute, tl.DocumentAttributeSticker)
                     for attribute in kwargs["attributes"]
                 ))
+                if extension == ".tgs":
+                    self.assertEqual(kwargs["caption"], "")
+                    attribution = client.kinds("send_discussion_reply")
+                    self.assertEqual(len(attribution), 1)
+                    self.assertIn(
+                        "Forwarded from Original sender",
+                        attribution[0][1].message,
+                    )
+                    self.assertIn(
+                        "5 November 2026 · 19:35:11",
+                        attribution[0][1].message,
+                    )
+                    self.assertTrue(any(
+                        isinstance(entity, tl.MessageEntityBlockquote)
+                        for entity in attribution[0][1].entities
+                    ))
+                else:
+                    self.assertIn("Forwarded from Original sender", kwargs["caption"])
+                    self.assertIn("5 November 2026 · 19:35:11", kwargs["caption"])
+                    self.assertEqual(client.kinds("send_discussion_reply"), [])
                 with config.use_settings(self.settings()):
                     self.assertEqual(progress.load_id_map(), {"701": 1001})
 
