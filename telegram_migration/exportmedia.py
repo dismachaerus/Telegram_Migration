@@ -279,6 +279,32 @@ def find_missing_media(msg):
     return missing
 
 
+def sticker_emoji_text(msg_div, media=None):
+    """Return the fallback emoji label for an exported TGS sticker only."""
+    if not any(
+        kind == "sticker_animated" and str(path).casefold().endswith(".tgs")
+        for path, kind in (media or [])
+    ):
+        return ""
+
+    found = []
+    for _wrap_class, wrap in _media_wrappers(msg_div):
+        export_label = "\\n".join(
+            value.strip() for value in wrap.itertext() if value and value.strip()
+        )
+        if not _label_says_sticker(export_label):
+            continue
+        for element in wrap.iter():
+            if not isinstance(element.tag, str):
+                continue
+            if "status" not in css_classes(element):
+                continue
+            value = "".join(element.itertext()).strip()
+            if value:
+                found.append(value)
+    return " ".join(found)
+
+
 def media_note(msg_div):
     wrap = find_first(msg_div, "media_wrap")
     if wrap is None:
