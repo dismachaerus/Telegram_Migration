@@ -7,7 +7,7 @@ The rich-text parser then uses those IDs to create MessageEntityCustomEmoji
 entities at the original UTF-16 offsets.
 """
 
-from __future__ import annotations.
+from __future__ import annotations
 
 import hashlib
 from functools import lru_cache
