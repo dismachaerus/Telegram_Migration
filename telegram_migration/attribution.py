@@ -1,4 +1,4 @@
-"""Durable sender/date attribution for TGS stickers and standalone emoji posts."""
+"""Durable sender/date attribution for standalone TGS stickers."""
 
 import secrets
 
@@ -6,11 +6,11 @@ from telethon.tl import functions as fn
 from telethon.tl import types as tl
 
 from . import formatfallback, progress, uploads
-from .textutil import clean_invalid_entities, is_emoji_only_text
+from .textutil import clean_invalid_entities
 
 
-def prepare_message_attribution(data, header, text, entities, reply_fallback):
-    """Mark only standalone TGS/emoji posts for separate sender/date attribution."""
+def prepare_message_attribution(data, text, entities):
+    """Mark only standalone TGS sticker posts for separate sender/date attribution."""
     media_items = data.get("media") or []
     if len(media_items) == 1:
         media_path, media_kind = media_items[0]
@@ -22,15 +22,6 @@ def prepare_message_attribution(data, header, text, entities, reply_fallback):
             data["_tgs_attribution_text"] = text
             data["_tgs_attribution_entities"] = entities
 
-    if (
-        not media_items
-        and not data.get("is_forwarded")
-        and not data.get("service_event")
-        and is_emoji_only_text(data.get("body_text", ""))
-        and not (reply_fallback and reply_fallback[0])
-    ):
-        data["_emoji_only_attribution"] = True
-        data["_emoji_reply_header"] = header
 
 
 def _sent_message_id_from_updates(result, random_id):
@@ -207,32 +198,3 @@ async def _send_tgs_sticker_with_attribution(
         "tgs_sticker_attribution",
     )
     return int(state["tgs_sticker_message_id"])
-
-
-async def _send_emoji_with_attribution(
-    client, channel, data, reply_to, state, source_id,
-):
-    """Post an emoji-only text message, then attach sender/date attribution."""
-    if "emoji_message_id" not in state:
-        body = data.get("body_text") or ""
-        entities = list(data.get("body_entities") or [])
-        sent = await formatfallback.with_formatting_fallback(
-            lambda **kw: client.send_message(channel, body, **kw),
-            {
-                "reply_to": reply_to,
-                "formatting_entities": entities or None,
-                "parse_mode": None,
-            },
-            body, entities, source_id,
-        )
-        state["emoji_message_id"] = int(sent.id)
-        progress.save_state(state["src"], state)
-
-    header_text, header_entities = data.get("_emoji_reply_header", ("", []))
-    header_text = (header_text or "").rstrip()
-    await _send_attribution_reply(
-        client, channel, state["emoji_message_id"],
-        header_text, header_entities or [], state, source_id,
-        "emoji_attribution",
-    )
-    return int(state["emoji_message_id"])
