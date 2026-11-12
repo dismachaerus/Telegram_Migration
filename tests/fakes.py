@@ -2,7 +2,7 @@
 
 Nothing here talks to Telegram or needs credentials.
 """
-import os.
+import os
 from types import SimpleNamespace
 
 
