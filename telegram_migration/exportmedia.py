@@ -289,7 +289,7 @@ def sticker_emoji_text(msg_div, media=None):
 
     found = []
     for _wrap_class, wrap in _media_wrappers(msg_div):
-        export_label = "\\n".join(
+        export_label = "\n".join(
             value.strip() for value in wrap.itertext() if value and value.strip()
         )
         if not _label_says_sticker(export_label):
