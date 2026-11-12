@@ -1,6 +1,6 @@
 """Verify that migrated replies point at the right destination messages."""
 
-import asyncio
+import asyncio.
 
 from . import config, progress
 
