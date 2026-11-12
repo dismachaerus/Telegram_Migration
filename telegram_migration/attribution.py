@@ -63,9 +63,8 @@ async def _send_attribution_reply(
             channel_id=channel_id, access_hash=int(access_hash)
         )
 
-        standalone = (
-            progress_state.get("delivery_mode") == "standalone_channel_post"
-        )
+        delivery_mode = progress_state.get("delivery_mode")
+        standalone = delivery_mode == "standalone_channel_post"
         discussion_peer = None
         if not standalone:
             full = await client(fn.channels.GetFullChannelRequest(
@@ -75,6 +74,12 @@ async def _send_attribution_reply(
                 getattr(full, "full_chat", None), "linked_chat_id", None
             )
             if not linked_chat_id or getattr(channel, "noforwards", False):
+                if delivery_mode == "discussion_reply":
+                    raise RuntimeError(
+                        "The saved attribution route was the linked discussion group, "
+                        "but that route is no longer available. Refusing to switch peers "
+                        "with the same random_id."
+                    )
                 standalone = True
                 progress_state["delivery_mode"] = "standalone_channel_post"
                 progress.save_state(state["src"], state)
