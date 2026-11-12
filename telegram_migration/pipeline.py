@@ -8,19 +8,15 @@ from lxml import etree
 from telethon import TelegramClient
 from telethon.tl import types as tl
 
-from . import bigfiles, cli, config, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
+from . import album, bigfiles, cli, config, customemoji, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
 from .htmlutil import css_classes
-from .textutil import (compose_message, compose_message_header, format_archive_timestamp,
-                       split_with_entities, strip_with_entities, u16len)
-from .constants import NO_CAPTION_KINDS, STICKER_KINDS
-
+from .textutil import compose_message, compose_message_header, format_archive_timestamp, split_with_entities, strip_with_entities, u16len
 
 async def process_file(client, channel, path, id_map, partial, pending_replies, stats, ctx,
                       only_pending=False):
     print(("Retrying deferred replies in " if only_pending else "Streaming ") + os.path.basename(path) + " ...")
-    # A new HTML page starts a new export slice. Do not carry a date from the
-    # previous file if this page has no divider or is malformed.
     ctx["current_export_date"] = None
+    ctx["last_forward_name"] = ""
     with open(path, "rb") as export_file:
         context = etree.iterparse(export_file, events=("end",), tag="div", html=True, encoding="utf-8")
         for _event, elem in context:
@@ -34,32 +30,10 @@ async def process_file(client, channel, path, id_map, partial, pending_replies, 
     return ctx["stop"]
 
 
-def _resolve_reply(data, source_id, id_map, pending_replies, ctx):
-    reply_to = id_map.get(str(data["reply_src_id"])) if data["reply_src_id"] else None
-    reply_fallback = ("", [])
-    if not data["reply_src_id"] or reply_to is not None:
-        return reply_to, reply_fallback, False
-
-    target_src = str(data["reply_src_id"])
-    if target_src in ctx["source_ids"] and target_src not in ctx["processed_source_ids"]:
-        if not config.settings.dry_run:
-            if pending_replies.get(source_id) != target_src:
-                pending_replies[source_id] = target_src
-                progress.save_pending_replies(pending_replies)
-        else:
-            print(f"  [dry] would defer reply id={source_id} until target id={target_src} is migrated")
-        return None, reply_fallback, True
-
-    fallback = f"[Original reply target #{target_src} is unavailable in the destination]\n"
-    if data.get("reply_preview"):
-        fallback += f"Original reply preview: {data['reply_preview']}\n"
-    return None, (fallback + "\n", []), False
-
-
 def _print_dry_run(source_id, data, text, entities, first_limit, reply_to,
                    kind_summary, stats, pending_replies):
     chunks = split_with_entities(text, entities, first_limit, config.settings.text_limit)
-    flag = "↪" if reply_to else ("?" if data["reply_src_id"] else " ")
+    flag = "↪" if reply_to else ("?" if replylinks.source_reply_target(data) else " ")
     fwd = "F" if data["forward_source"] else " "
     preview = text[:80].replace("\n", "⏎")
     extra = f" +{len(chunks) - 1} part(s)" if len(chunks) > 1 else ""
@@ -75,7 +49,7 @@ async def _send_migrated_message(client, channel, data, source_id, text, entitie
     chunks = split_with_entities(text, entities, first_limit, config.settings.text_limit)
     state = {
         "src": source_id,
-        "force_reconstruction": bool(data["reply_src_id"]),
+        "force_reconstruction": bool(replylinks.source_reply_target(data)),
     }
     if source_id in partial:
         state.update(partial[source_id])
@@ -84,6 +58,25 @@ async def _send_migrated_message(client, channel, data, source_id, text, entitie
         client, channel, data, chunks, reply_to, state, annotation, source_id,
     )
     if new_id:
+        if isinstance(new_id, (list, tuple)):
+            source_ids = data.get("_album_source_ids") or [source_id]
+            primary_id = album.map_destination_ids(
+                source_ids, new_id, id_map, progress.append_id_map
+            )
+            ctx["last_dest_id"] = primary_id
+            stats["sent"] += len(source_ids)
+            for member_src in source_ids:
+                was_pending = str(member_src) in pending_replies
+                pending_replies.pop(str(member_src), None)
+                if was_pending:
+                    progress.save_pending_replies(pending_replies)
+            print(
+                f"  [{stats['sent']:>4}] album "
+                f"{source_ids[0]}–{source_ids[-1]} → {primary_id} "
+                f"({len(source_ids)} media items)  {when}"
+            )
+            return primary_id
+
         id_map[source_id] = int(new_id)
         ctx["last_dest_id"] = int(new_id)
         progress.append_id_map(source_id, new_id)
@@ -95,13 +88,14 @@ async def _send_migrated_message(client, channel, data, source_id, text, entitie
         if was_pending:
             progress.save_pending_replies(pending_replies)
         print(f"  [{stats['sent']:>4}] id={source_id:<6} → {new_id:<7}  ({kind_summary})  {when}")
-        return
+        return int(new_id)
 
     stats["failed"] += 1
-    if data["reply_src_id"]:
+    reply_target = replylinks.source_reply_target(data)
+    if reply_target:
         ctx["audit"].append({
             "src": source_id,
-            "source_reply_to": str(data["reply_src_id"]),
+            "source_reply_to": reply_target,
             "verified": False,
             "status": "send_failed",
         })
@@ -115,14 +109,15 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         raw_elem_id = elem.get("id", "")
         if raw_elem_id.startswith("message") and raw_elem_id[7:].isdigit():
             source_id = raw_elem_id[7:]
+        if source_id and source_id in ctx["processed_source_ids"]:
+            mark_completed = True
+            return
         classes = css_classes(elem)
         if "service" in classes:
-            # Telegram Desktop uses negative-ID service blocks as date dividers
-            # (e.g. message-1). Keep their date for subsequent real service events,
-            # but do not import the divider as a separate message.
             date_separator = htmlexport.extract_date_separator(elem)
             if date_separator is not None:
                 ctx["current_export_date"] = date_separator
+                ctx["last_forward_name"] = ""
                 return
             data = (htmlexport.extract_service_event_data(
                 elem, ctx.get("current_export_date")
@@ -131,23 +126,67 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             data = htmlexport.extract_message_data(elem)
 
         if data is None:
+            ctx["last_forward_name"] = ""
             if "service" in classes and source_id:
                 stats["skipped"] += 1
             mark_completed = bool(source_id)
             return
         source_id = str(data["msg_id"])
+        customemoji.apply_custom_emoji_entities(data, ctx["inline_custom_emoji_ids"])
 
         if data["sender"]:
             ctx["last_sender"] = data["sender"]
         elif data["joined"] and config.settings.preserve_sender_names:
             data["sender"] = ctx["last_sender"]
 
-        if data["reply_src_id"]:
-            ctx["reply_map"][source_id] = str(data["reply_src_id"])
+        htmlexport.inherit_forwarded_sender(data, ctx)
+
+        inferred_group = ctx.get("inferred_groups", {}).get(source_id)
+        prepared_album = album.prepare_inferred_group(
+            data, inferred_group,
+            id_map, ctx["manual_done"], partial, progress.append_id_map,
+        )
+        if inferred_group and not prepared_album:
+            member_ids = [str(member["msg_id"]) for member in inferred_group]
+            mapped_ids = [
+                member_id for member_id in member_ids
+                if member_id in id_map or member_id in ctx["manual_done"]
+            ]
+            if mapped_ids and len(mapped_ids) != len(member_ids):
+                # Some members were already migrated individually (or marked
+                # manually complete). Sending the remaining members normally
+                # would scatter the source album across separate Telegram posts.
+                # Do not guess, duplicate, or silently fall back to individual
+                # uploads: stop here and require an explicit repair decision.
+                reason = (
+                    f"Cannot reconstruct inferred album {member_ids[0]}–{member_ids[-1]}: "
+                    f"{len(mapped_ids)} of {len(member_ids)} source messages are already "
+                    "mapped/completed. Refusing to scatter the remaining media."
+                )
+                print("    album recovery conflict: " + reason)
+                progress.log_failure("album:" + member_ids[0], reason)
+                stats["failed"] += 1
+                ctx["stop"] = True
+                return
+
+        reply_records = inferred_group if prepared_album else [data]
+        group_reply_target = replylinks.source_reply_target(reply_records[0]) if reply_records else None
+        if group_reply_target: ctx["reply_map"].update({str(row["msg_id"]): group_reply_target for row in reply_records})
         if data.get("reactions") and source_id not in ctx["reaction_map"]:
             ctx["reaction_map"][source_id] = data["reactions"]
 
         if only_pending and source_id not in pending_replies:
+            return
+
+        if data.get("_inferred_album") and all(
+                member_id in id_map or member_id in ctx["manual_done"]
+                for member_id in data["_album_source_ids"]
+        ):
+            if all(member_id in id_map for member_id in data["_album_source_ids"]):
+                await album.verify_mapped_album(
+                    client, channel, data, id_map, partial, source_id
+                )
+            mark_completed = True
             return
 
         if source_id in id_map or source_id in ctx["manual_done"]:
@@ -158,7 +197,9 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             mark_completed = True
             return
 
-        if stats["sent"] + stats["failed"] >= config.settings.batch_limit:
+        batch_cost = len(data.get("_album_source_ids", [])) or 1
+        batch_progress = stats["sent"] + stats["failed"]
+        if batch_progress and batch_progress + batch_cost > config.settings.batch_limit:
             print(f"Batch limit reached ({config.settings.batch_limit}). Restart to continue.")
             ctx["stop"] = True
             return
@@ -167,11 +208,6 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             data["body_text"].strip() or data["media"] or data.get("is_forwarded")
         )
         if not has_content:
-            # Telegram Desktop can export a real message shell with its ID,
-            # sender, and date but no text, media, or forwarding markup. Do not
-            # silently drop that source record: preserve its place in the
-            # archive with an explicit placeholder. The HTML contains no
-            # missing forwarding attribution, so never invent one here.
             data["body_text"] = (
                 "[Empty message in source export; no text or media were included]"
             )
@@ -182,8 +218,6 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
 
         timestamp = data["timestamp"]
         if data.get("service_event"):
-            # HTML service-event blocks inherit only the day from the preceding
-            # negative-ID date divider; they do not carry an individual clock time.
             header = compose_message_header(
                 timestamp, "Telegram service event", date_only=True
             )
@@ -218,8 +252,6 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
                     offset=date_start, length=u16len(forward_date)
                 ))
 
-            # The left quote bar belongs only to the forwarding attribution.
-            # The forwarded text/media remains in this same message, below it.
             try:
                 blockquote = tl.MessageEntityBlockquote(
                     offset=0, length=u16len(attribution_text), collapsed=False
@@ -230,7 +262,7 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
                 )
             attribution_entities.append(blockquote)
 
-        reply_to, reply_fallback, deferred = _resolve_reply(
+        reply_to, reply_fallback, deferred = replylinks.resolve_reply(
             data, source_id, id_map, pending_replies, ctx
         )
         if deferred:
@@ -271,28 +303,40 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         annotation = [(annotation_text, annotation_entities)] if annotation_text.strip() else None
 
         kinds = [kind for _path, kind in data["media"]]
-        captionable = bool(kinds) and kinds[0] not in NO_CAPTION_KINDS
-        has_sticker = any(kind in STICKER_KINDS for kind in kinds)
-        first_limit = config.settings.text_limit if has_sticker else (
-            config.settings.caption_limit if (captionable or len(kinds) > 1)
+        # Every supported media type carries its message context as a media
+        # caption. Text-only messages use the larger message limit.
+        first_limit = (
+            config.settings.caption_limit if kinds
             else config.settings.text_limit
         )
         kind_summary = ",".join(kinds) or "text"
         when = timestamp.strftime("%Y-%m-%d %H:%M") if timestamp else "?"
 
         if config.settings.dry_run:
-            _print_dry_run(
-                source_id, data, preview_text, preview_entities, first_limit, reply_to,
-                kind_summary, stats, pending_replies,
-            )
+            if data.get("_inferred_album"):
+                print(
+                    f"  [dry] album ids={','.join(data['_album_source_ids'])} "
+                    f"({len(data['media'])} media items)"
+                )
+                stats["sent"] += len(data["_album_source_ids"])
+                for member_id in data["_album_source_ids"]:
+                    pending_replies.pop(member_id, None)
+            else:
+                _print_dry_run(
+                    source_id, data, preview_text, preview_entities, first_limit, reply_to,
+                    kind_summary, stats, pending_replies,
+                )
             mark_completed = True
             return
 
-        await _send_migrated_message(
+        if not await _send_migrated_message(
             client, channel, data, source_id, text, entities, first_limit,
             reply_to, annotation, partial, pending_replies, id_map, stats,
             ctx, kind_summary, when,
-        )
+        ):
+            if data.get("_inferred_album"):
+                album.stop_after_failed_album(ctx, source_id)
+            return
         mark_completed = True
         await asyncio.sleep(config.settings.send_delay_seconds)
     except Exception as exc:
@@ -300,10 +344,13 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         print(f"    failed {mid}: {type(exc).__name__}: {exc}")
         progress.log_failure(mid, f"{type(exc).__name__}: {exc}")
         stats["failed"] += 1
-        mark_completed = True
+        if "data" in locals() and data and data.get("_inferred_album"):
+            album.stop_after_failed_album(ctx, source_id)
     finally:
         if source_id and mark_completed:
             ctx["processed_source_ids"].add(source_id)
+            if "data" in locals() and data and data.get("_inferred_album"):
+                ctx["processed_source_ids"].update(data["_album_source_ids"])
         elem.clear()
         while elem.getprevious() is not None:
             del elem.getparent()[0]
@@ -375,8 +422,10 @@ async def _run_migration():
         await client.disconnect()
         return True
 
+    inline_custom_emoji_ids = await customemoji.prepare_inline_custom_emojis_for_run(client, files, peer=channel, dry_run=config.settings.dry_run)
     stats = {"sent": 0, "skipped": 0, "failed": 0, "forwarded": 0, "reaction_notes": 0}
     ctx = {
+        "inline_custom_emoji_ids": inline_custom_emoji_ids,
         "last_sender": "",
         "current_export_date": None,
         "stop": False,
@@ -389,6 +438,7 @@ async def _run_migration():
         "halt": [],
         "oversize_report": [],
         "last_dest_id": None,
+        "inferred_groups": htmlexport.infer_media_groups(files),
     }
 
     for path in files:

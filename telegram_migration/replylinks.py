@@ -2,7 +2,7 @@
 
 import asyncio
 
-from . import config
+from . import config, progress
 
 
 def _reply_id_from_message(msg):
@@ -11,6 +11,43 @@ def _reply_id_from_message(msg):
     if actual is None and msg is not None:
         actual = getattr(msg, "reply_to_msg_id", None)
     return actual
+
+
+def source_reply_target(data):
+    """Return the source message that should become this destination reply."""
+    if data.get("is_forwarded"):
+        target = data.get("forward_reply_src_id")
+        return str(target) if target else None
+    target = data.get("reply_src_id")
+    return str(target) if target else None
+
+
+def resolve_reply(data, source_id, id_map, pending_replies, ctx):
+    """Resolve or defer the source reply that should become Telegram's native reply."""
+    target_src = source_reply_target(data)
+    reply_fallback = ("", [])
+    if not target_src:
+        return None, reply_fallback, False
+
+    reply_to = id_map.get(target_src)
+    if reply_to is not None:
+        return reply_to, reply_fallback, False
+    if target_src in ctx["source_ids"] and target_src not in ctx["processed_source_ids"]:
+        if not config.settings.dry_run:
+            if pending_replies.get(source_id) != target_src:
+                pending_replies[source_id] = target_src
+                progress.save_pending_replies(pending_replies)
+        else:
+            print(f"  [dry] would defer reply id={source_id} until target id={target_src} is migrated")
+        return None, reply_fallback, True
+
+    if data.get("is_forwarded") and data.get("forward_reply_src_id"):
+        return None, reply_fallback, False
+
+    fallback = f"[Original reply target #{target_src} is unavailable in the destination]\n"
+    if data.get("reply_preview"):
+        fallback += f"Original reply preview: {data['reply_preview']}\n"
+    return None, (fallback + "\n", []), False
 
 
 async def verify_all_reply_links(client, channel, source_reply_map, id_map, audit):

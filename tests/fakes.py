@@ -7,8 +7,11 @@ from types import SimpleNamespace
 
 
 class FakeMessage:
-    def __init__(self, message_id):
+    def __init__(self, message_id, grouped_id=None, message=""):
         self.id = message_id
+        self.grouped_id = grouped_id
+        self.message = message
+        self.text = message
 
 
 class FakeTelegram:
@@ -19,6 +22,8 @@ class FakeTelegram:
     def __init__(self, *args, **kwargs):
         self.calls = []
         self.next_id = 1000
+        self.next_grouped_id = -1
+        self.messages = {}
         self.disconnected = False
         self.reject_formatting = None       # set to an Exception to reject any message with entities
         FakeTelegram.instances.append(self)
@@ -44,19 +49,50 @@ class FakeTelegram:
 
     async def get_messages(self, channel, ids=None):
         self.calls.append(("get_messages", ids))
-        return []
+        if isinstance(ids, (list, tuple)):
+            return [self.messages.get(int(message_id)) for message_id in ids]
+        return self.messages.get(int(ids)) if ids is not None else None
+
+    async def edit_message(self, channel, message, text, **kwargs):
+        message_id = message.id if hasattr(message, "id") else int(message)
+        existing = self.messages.get(message_id)
+        if existing is None:
+            return None
+        existing.message = text
+        existing.text = text
+        self.calls.append(("edit_message", message_id, text, kwargs))
+        return existing
 
     async def send_message(self, channel, text, **kwargs):
         if self.reject_formatting and kwargs.get("formatting_entities"):
             raise self.reject_formatting
         self.calls.append(("send_message", text, kwargs))
-        return FakeMessage(self._new_id())
+        message = FakeMessage(self._new_id(), message=text)
+        self.messages[message.id] = message
+        return message
 
     async def send_file(self, channel, files, **kwargs):
         self.calls.append(("send_file", files, kwargs))
+        captions = kwargs.get("caption") or ""
         if isinstance(files, list):
-            return [FakeMessage(self._new_id()) for _ in files]
-        return FakeMessage(self._new_id())
+            if not isinstance(captions, (list, tuple)):
+                captions = [captions] * len(files)
+            grouped_id = self.next_grouped_id
+            self.next_grouped_id -= 1
+            messages = [
+                FakeMessage(self._new_id(), grouped_id=grouped_id,
+                            message=captions[index] if index < len(captions) else "")
+                for index, _file in enumerate(files)
+            ]
+            for message in messages:
+                self.messages[message.id] = message
+            return messages
+        message = FakeMessage(
+            self._new_id(),
+            message=captions if isinstance(captions, str) else (captions[0] if captions else ""),
+        )
+        self.messages[message.id] = message
+        return message
 
     # convenience --------------------------------------------------------------------------
     def texts(self):
