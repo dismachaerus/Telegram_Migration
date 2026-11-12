@@ -206,14 +206,11 @@ def infer_media_groups(files, inline_emoji_ids=None):
 
     Desktop HTML does not retain Telegram's grouped_id. Album starts may lack
     the "joined" class, so single-media records are held as possible starts.
-    Ordinary continuations still require the joined marker and close export
-    timestamps. Forwarded continuations require an original forward timestamp
-    on each item, with close source times from the same author. An inherited
-    author or the joined marker alone is never enough. If one standalone
-    non-joined candidate is followed by ten compatible joined candidates,
-    the ten-item continuation is inferred as its own album, respecting
-    Telegram's hard album limit without relying on source-specific IDs. Other
-    ambiguous runs longer than ten are rejected rather than guessed.
+    Group membership is inferred from the sender/forward context, captions,
+    joined layout markers, and source timestamps. A missing "joined" class
+    does not make a record a standalone prelude. Compatible consecutive runs
+    are emitted in source order, in batches of at most Telegram's ten-item
+    album limit; any remainder of 2–10 records becomes the next group.
     """
     from lxml import etree
 
@@ -222,36 +219,14 @@ def infer_media_groups(files, inline_emoji_ids=None):
     groups = {}
     for page in files:
         pending = []
-        overflow = False
         last_sender = ""
         forward_context = {"last_forward_name": ""}
 
         def flush():
-            nonlocal pending, overflow
-            if not overflow:
-                # Forwarded Desktop exports can place a standalone forwarded
-                # post immediately before a run of joined records that form
-                # an album. The preceding post must not be absorbed merely
-                # because its author and timestamps are compatible. Keep this
-                # boundary rule size-independent: the joined suffix may have
-                # any valid Telegram album size (2–10).
-                standalone_prefix = (
-                    len(pending) >= 3
-                    and not pending[0].get("joined")
-                    and all(member.get("joined") for member in pending[1:])
-                    and (
-                        pending[0].get("is_forwarded")
-                        or len(pending) == 11
-                    )
-                )
-                if standalone_prefix:
-                    album_run = pending[1:]
-                    if 2 <= len(album_run) <= 10:
-                        groups[album_run[0]["msg_id"]] = album_run[:]
-                elif 2 <= len(pending) <= 10:
-                    groups[pending[0]["msg_id"]] = pending[:]
+            nonlocal pending
+            if 2 <= len(pending) <= 10:
+                groups[pending[0]["msg_id"]] = pending[:]
             pending = []
-            overflow = False
 
         with open(page, "rb") as export_file:
             context = etree.iterparse(
@@ -301,16 +276,13 @@ def infer_media_groups(files, inline_emoji_ids=None):
                         pending = [data]
                     elif _album_records_compatible(pending[-1], data):
                         pending.append(data)
-                        # One non-joined forwarded predecessor plus a
-                        # maximum-size joined album is a valid 11-record
-                        # pending window. Defer the split until the run ends
-                        # so the same rule also handles smaller albums.
-                        if len(pending) > 10 and not (
-                            len(pending) == 11
-                            and not pending[0].get("joined")
-                            and all(member.get("joined") for member in pending[1:])
-                        ):
-                            overflow = True
+                        # Preserve source order when a compatible run exceeds
+                        # Telegram's ten-item album limit. The first ten stay
+                        # together; the remainder starts the next batch.
+                        if len(pending) == 11:
+                            album_run = pending[:10]
+                            groups[album_run[0]["msg_id"]] = album_run
+                            pending = pending[10:]
                     else:
                         flush()
                         pending = [data]

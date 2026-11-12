@@ -1094,7 +1094,9 @@ class PipelineTests(unittest.TestCase):
             with self.subTest(album_size=album_size):
                 self.setUp()
                 try:
-                    rows = [(319, 40, "files/preceding.jpg", False)]
+                    # A real 31-second source-time gap, not merely a missing
+                    # joined marker, separates this standalone prelude.
+                    rows = [(319, 10, "files/preceding.jpg", False)]
                     rows.extend(
                         (320 + index, 41 + index // 2,
                          f"files/group-{index:02d}.jpg", True)
@@ -1127,11 +1129,11 @@ class PipelineTests(unittest.TestCase):
                 finally:
                     self.tearDown()
 
-    def test_forwarded_ten_jpg_file_group_is_one_album_with_one_attributed_caption(self):
-        # Reproduce the user's actual Desktop HTML shape: message 319 is a
-        # standalone forwarded file; messages 320-329 are ten joined file
-        # attachments from one forwarded source post. Desktop exports these
-        # JPGs as media_file (documents), not photo_wrap (photos).
+    def test_eleven_forwarded_jpg_files_keep_first_ten_together_in_source_order(self):
+        # Reproduce the user's actual Desktop HTML shape: messages 319-329
+        # are one compatible source-order run. Telegram permits ten media
+        # items per album, so 319-328 must stay together and 329 follows alone.
+        # Desktop exports these JPGs as media_file (documents), not photo_wrap.
         def forwarded_file(message_id, export_second, original_second, relative, joined=False,
                            archive_sender=False):
             outer_minute, outer_second = divmod(export_second, 60)
@@ -1176,45 +1178,47 @@ class PipelineTests(unittest.TestCase):
         ]
         html_rows = []
         expected_group_files = []
+        final_file = None
         for index, (message_id, export_second, original_second, relative, joined) in enumerate(source_rows):
             fakes.write_file(self.folder.name, relative)
             html_rows.append(forwarded_file(
                 message_id, export_second, original_second, relative,
                 joined=joined, archive_sender=(index == 0),
             ))
-            if message_id >= 320:
+            if index < 10:
                 expected_group_files.append(self.path(relative))
+            else:
+                final_file = self.path(relative)
         fakes.write_export(self.folder.name, html_rows)
 
-        client, _, _ = self.run_once()
+        client, output, _ = self.run_once()
         media_calls = client.kinds("send_file")
         self.assertEqual(len(media_calls), 2)
 
-        # The prelude remains an independent message.
-        self.assertEqual(media_calls[0][1], self.path("files/preceding.jpg"))
-        self.assertTrue(media_calls[0][2]["force_document"])
-        self.assertIn("Forwarded from 🗝", media_calls[0][2]["caption"])
-
-        # The ten joined JPG attachments are sent together as one document
-        # album, with the forwarded attribution attached to its first item.
-        album_files, album_kwargs = media_calls[1][1], media_calls[1][2]
+        # The first ten HTML records remain together in their original order.
+        album_files, album_kwargs = media_calls[0][1], media_calls[0][2]
         self.assertEqual(album_files, expected_group_files)
         self.assertTrue(album_kwargs["force_document"])
         self.assertEqual(len(album_kwargs["caption"]), 10)
         self.assertEqual(album_kwargs["caption"][:-1], [""] * 9)
         self.assertIn("Forwarded from 🗝", album_kwargs["caption"][-1])
         self.assertIn("4 June 2026", album_kwargs["caption"][-1])
+
+        # The eleventh file is not moved in front of the album or absorbed.
+        self.assertEqual(media_calls[1][1], final_file)
+        self.assertIn("Forwarded from 🗝", media_calls[1][2]["caption"])
         self.assertEqual(client.kinds("send_message"), [])
+        self.assertIn("album 319–328", output)
 
         with config.use_settings(self.settings()):
             mapped = progress.load_id_map()
         self.assertEqual(set(mapped), {str(row[0]) for row in source_rows})
-        self.assertEqual(len({mapped[str(i)] for i in range(320, 330)}), 10)
+        self.assertEqual(len({mapped[str(i)] for i in range(319, 329)}), 10)
 
-    def test_ten_joined_file_media_after_standalone_same_type_form_one_album(self):
-        # Synthetic IDs: the leading attachment is a separate non-joined
-        # message, followed by ten compatible joined records. The importer
-        # must not absorb item 701 into the maximum-size album 702–711.
+    def test_eleven_consecutive_file_media_are_chunked_first_ten_then_one(self):
+        # A non-joined first record can be the first album item. Ten items
+        # stay together in source order; item eleven becomes the next
+        # one-item remainder rather than causing the first item to be dropped.
         preceding = "files/prelude.jpg"
         fakes.write_file(self.folder.name, preceding)
         preceding_markup = (
@@ -1225,11 +1229,15 @@ class PipelineTests(unittest.TestCase):
         records = [
             fakes.message(701, preceding_markup, sender="Alice", minute=2)
         ]
-        expected_files = []
+        expected_files = [os.path.join(self.folder.name, preceding)]
+        final_file = None
         for source_id in range(702, 712):
             relative = f"files/document-{source_id}.pdf"
             fakes.write_file(self.folder.name, relative)
-            expected_files.append(os.path.join(self.folder.name, relative))
+            if source_id <= 710:
+                expected_files.append(os.path.join(self.folder.name, relative))
+            else:
+                final_file = os.path.join(self.folder.name, relative)
             attachment = (
                 '<div class="media_wrap clearfix">'
                 f'<a class="media clearfix pull_left block_link media_file" href="{relative}">'
@@ -1246,21 +1254,22 @@ class PipelineTests(unittest.TestCase):
 
         media_calls = client.kinds("send_file")
         self.assertEqual(len(media_calls), 2)
-        self.assertEqual(media_calls[0][1], os.path.join(self.folder.name, preceding))
-        self.assertTrue(media_calls[0][2]["force_document"])
-        album_files, album_kwargs = media_calls[1][1], media_calls[1][2]
+        album_files, album_kwargs = media_calls[0][1], media_calls[0][2]
         self.assertEqual(album_files, expected_files)
         self.assertTrue(album_kwargs["force_document"])
+        self.assertEqual(len(album_kwargs["caption"]), 10)
         self.assertEqual(album_kwargs["caption"][:-1], [""] * 9)
         self.assertTrue(album_kwargs["caption"][-1].startswith("Alice\n12 March 2023"))
+
+        self.assertEqual(media_calls[1][1], final_file)
         self.assertEqual(len(client.texts()), 1)
         self.assertIn("after the album", client.texts()[0])
 
         with config.use_settings(self.settings()):
             mapped = progress.load_id_map()
         self.assertEqual(set(mapped), {str(i) for i in range(701, 713)})
-        self.assertEqual(len({mapped[str(i)] for i in range(702, 712)}), 10)
-        self.assertIn("album 702–711", output)
+        self.assertEqual(len({mapped[str(i)] for i in range(701, 711)}), 10)
+        self.assertIn("album 701–710", output)
         self.assertIn("sent=12", output)
 
     def test_source_group_inference_is_type_agnostic_for_every_supported_size(self):
@@ -1314,6 +1323,41 @@ class PipelineTests(unittest.TestCase):
         for first_id, count in expected.items():
             self.assertEqual(len(groups[first_id]), count)
             self.assertTrue(all(len(member["media"]) == 1 for member in groups[first_id]))
+
+    def test_long_compatible_runs_are_chunked_in_source_order_at_ten_items(self):
+        records = []
+        expected = {}
+        next_id = 3000
+        for count in (11, 15, 16, 20):
+            first_id = next_id
+            expected_sizes = [10] + ([count - 10] if count - 10 >= 2 else [])
+            expected[first_id] = expected_sizes
+            for index in range(count):
+                relative = f"files/long-run-{count}-{index}.jpg"
+                fakes.write_file(self.folder.name, relative)
+                records.append(fakes.message(
+                    next_id, fakes.photo(relative), sender="Alice",
+                    classes="" if index == 0 else "joined", minute=5,
+                ))
+                next_id += 1
+            records.append(fakes.message(
+                next_id, fakes.text("group boundary"), sender="Alice", minute=6,
+            ))
+            next_id += 1
+
+        fakes.write_export(self.folder.name, records)
+        with config.use_settings(self.settings()):
+            groups = htmlexport.infer_media_groups([self.path("messages.html")])
+
+        self.assertEqual(set(groups), {str(first_id) for first_id in expected})
+        for first_id, sizes in expected.items():
+            actual = []
+            cursor = first_id
+            while str(cursor) in groups:
+                group = groups[str(cursor)]
+                actual.append(len(group))
+                cursor += len(group)
+            self.assertEqual(actual, sizes)
 
     def test_joined_jpg_documents_keep_owner_and_caption_in_one_album(self):
         records = []
