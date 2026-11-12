@@ -9,7 +9,7 @@ on:
       wheel_build_number:
         description: "Build number for an additional wheel of the current release (use 1 for this rebuild)."
         required: true
-        default: "1"
+        default: "2"
         type: string
 
 jobs:
