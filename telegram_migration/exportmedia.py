@@ -24,6 +24,15 @@ def _label_says_gif(label):
     return False
 
 
+def _label_says_sticker(label):
+    """Recognize Telegram Desktop's explicit standalone Sticker media label."""
+    for line in str(label or "").splitlines():
+        value = line.strip().casefold()
+        if value == "sticker" or value.startswith(("sticker |", "sticker,", "sticker:")):
+            return True
+    return False
+
+
 def _is_gif(path, anchor_classes=(), export_label=""):
     """Identify GIFs only from explicit export metadata or a .gif filename.
 
@@ -40,17 +49,18 @@ def _is_gif(path, anchor_classes=(), export_label=""):
 
 
 def _classify(rel, wrap_class, full, anchor_classes=(), export_label=""):
-    """Classify export media using both wrapper/anchor markup and file extension."""
+    """Classify media by explicit Desktop markup first, extension only as fallback."""
     rel = rel.replace("\\", "/")
     lower_rel = rel.casefold()
     classes = {str(c).casefold() for c in anchor_classes}
+    ext = os.path.splitext(lower_rel)[1]
+
     is_sticker = (
         wrap_class == "sticker_wrap"
         or "sticker_wrap" in classes
         or "stickers/" in lower_rel
+        or _label_says_sticker(export_label)
     )
-    ext = os.path.splitext(lower_rel)[1]
-
     if is_sticker:
         if ext in (".webp", ".png"):
             return "sticker_static"
@@ -60,24 +70,101 @@ def _classify(rel, wrap_class, full, anchor_classes=(), export_label=""):
             return "sticker_video"
         return "sticker_unknown"
 
+    # Generic media_video is used for exported video thumbnails in more than
+    # one context. A round video note has dedicated wrapper/path markers;
+    # the generic class alone must not override an ordinary video extension.
     if wrap_class == "roundvideo_file_wrap" or "round_video_messages" in lower_rel:
         return "round_video"
-    if "voice_messages" in lower_rel:
+    if "voice_messages" in lower_rel or "media_voice_message" in classes:
         return "voice"
-    if ext == ".gif":
-        return "gif"
-    if "video_files" in lower_rel or ext in (".mp4", ".mov", ".m4v", ".avi"):
+
+    # Explicit media wrappers and labels distinguish audio/stickers from
+    # generic files. An MP3 marked media_audio_file is an audio track, not
+    # an arbitrary document attachment.
+    if "audio_files/" in lower_rel or "media_audio_file" in classes:
+        return "audio"
+
+    video_extensions = {
+        ".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".mpeg",
+        ".mpg", ".3gp", ".wmv", ".flv", ".m2ts", ".mts",
+    }
+    explicit_video = (
+        "video_files/" in lower_rel
+        or wrap_class == "video_file_wrap"
+        or "video_file_wrap" in classes
+    )
+    if explicit_video:
         return "gif" if _is_gif(full, anchor_classes, export_label) else "video"
-    # Telegram Desktop distinguishes actual photos by their photos/ export path
-    # and/or photo-specific markup. Do not infer "photo" solely from .jpg/.png:
-    # those extensions can also be ordinary files whose document form matters.
+
     photo_markup = any(
-        c in {"photo", "photo_wrap", "photo_file_wrap"} or c.startswith("photo_")
+        c in {"photo", "photo_wrap", "photo_file_wrap", "media_photo"}
+        or c.startswith("photo_")
         for c in classes
     )
     if "photos/" in lower_rel or photo_markup:
         return "photo"
+
+    # Telegram Desktop uses media_file for attachments deliberately sent as
+    # files. Preserve that presentation even when the filename ends in an
+    # image/video extension. Photo/video/audio-specific markup above wins.
+    if "media_file" in classes:
+        return "document"
+
+    if ext == ".gif":
+        return "gif"
+    if ext in video_extensions:
+        return "gif" if _is_gif(full, anchor_classes, export_label) else "video"
+
+    audio_extensions = {
+        ".mp3", ".m4a", ".aac", ".flac", ".wav", ".ogg", ".opus", ".wma",
+    }
+    if ext in audio_extensions:
+        return "audio"
+
+    image_extensions = {
+        ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff",
+        ".heic", ".heif", ".avif",
+    }
+    if ext in image_extensions:
+        return "photo"
     return "document"
+
+
+def is_inline_sticker_reference(reference):
+    """Recognize Telegram Desktop's sticker-file links inside rich-text blocks."""
+    if not _is_local_media_reference(reference):
+        return False
+    relative = unquote(urlsplit(str(reference)).path).replace("\\", "/")
+    parts = relative.split("/")
+    if len(parts) < 2:
+        return False
+    if parts[0].casefold() == "stickers":
+        return True
+    # Video stickers may be represented as ordinary links in the text HTML
+    # rather than as a standalone media wrapper.
+    return (
+        parts[0].casefold() == "video_files"
+        and os.path.basename(relative).casefold().startswith("sticker")
+        and os.path.splitext(relative)[1].casefold() == ".webm"
+    )
+
+
+def resolve_inline_sticker(reference):
+    """Resolve an inline sticker link to its exported file and upload kind.
+
+    A missing file is returned as a reference-only record so rich-text parsing
+    can keep the visible fallback emoji and report the missing asset.
+    """
+    if not is_inline_sticker_reference(reference):
+        return None
+    path = _resolve_media_path(reference)
+    if path is None:
+        label = unquote(str(reference)).replace("\\", "/")
+        while label.startswith("./"):
+            label = label[2:]
+        return {"missing": label}
+    kind = _classify(reference, "media_wrap", path, (), "Sticker")
+    return {"path": path, "kind": kind}
 
 
 def _resolve_media_path(relative):
@@ -204,10 +291,16 @@ def media_note(msg_div):
 
 
 def album_compatible(media):
-    """Telegram albums hold photos/videos together, or documents together. Nothing else."""
+    """Whether Telegram can send this complete media set as one native album.
+
+    Photos and videos may be mixed. Documents and audio files each form
+    homogeneous albums, but cannot be mixed with each other. Animations,
+    voice notes, round videos and stickers are valid media items, but not
+    members of Telegram's native sendMediaGroup album type.
+    """
     kinds = {kind for _path, kind in media}
+    if len(kinds) == 0:
+        return False
     if kinds <= {"photo", "video"}:
         return True
-    if kinds == {"document"}:
-        return True
-    return False
+    return len(kinds) == 1 and next(iter(kinds)) in {"document", "audio"}

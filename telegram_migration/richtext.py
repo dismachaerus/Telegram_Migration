@@ -4,6 +4,7 @@ from urllib.parse import urlparse
 
 from telethon.tl import types as tl
 
+from . import exportmedia
 from .htmlutil import css_classes
 from .textutil import sanitize_text, strip_with_entities, u16len
 
@@ -25,11 +26,12 @@ def _make_entity(name, **kwargs):
             return None
 
 
-def parse_rich_text(root):
+def _parse_rich_text(root, *, extract_stickers=False):
     if root is None:
-        return "", []
+        return "", [], [], []
 
     parts, entities, pos = [], [], [0]
+    inline_stickers, missing_stickers = [], []
     pre_depth = [0]
 
     def add(s):
@@ -68,19 +70,38 @@ def parse_rich_text(root):
 
             elif tag == "a" and child.get("href"):
                 href = child.get("href")
+                sticker = exportmedia.resolve_inline_sticker(href) if extract_stickers else None
                 start = pos[0]
                 walk(child)
                 end = pos[0]
-                if href.startswith("tg://user?id="):
-                    try:
-                        uid = int(href.split("id=", 1)[1])
-                        emit("MessageEntityMentionName", start, end, user_id=uid)
-                    except (ValueError, IndexError):
-                        pass
-                elif href.startswith("mailto:"):
-                    emit("MessageEntityEmail", start, end)
-                elif urlparse(href).scheme.lower() in _URL_SCHEMES:
-                    emit("MessageEntityTextUrl", start, end, url=href)
+                if sticker and "path" in sticker:
+                    alt = sanitize_text("".join(child.itertext()))
+                    if alt and end - start == u16len(alt):
+                        # Keep the ordinary fallback emoji in the text. It is
+                        # the exact character range that MessageEntityCustomEmoji
+                        # must cover once the sticker has been added to a pack.
+                        inline_stickers.append({
+                            "path": sticker["path"],
+                            "kind": sticker["kind"],
+                            "alt": alt,
+                            "offset": start,
+                            "length": end - start,
+                        })
+                    # Otherwise keep the fallback text, but do not invent a
+                    # URL entity for a local file inside the export folder.
+                else:
+                    if sticker and sticker.get("missing"):
+                        missing_stickers.append(sticker["missing"])
+                    if href.startswith("tg://user?id="):
+                        try:
+                            uid = int(href.split("id=", 1)[1])
+                            emit("MessageEntityMentionName", start, end, user_id=uid)
+                        except (ValueError, IndexError):
+                            pass
+                    elif href.startswith("mailto:"):
+                        emit("MessageEntityEmail", start, end)
+                    elif urlparse(href).scheme.lower() in _URL_SCHEMES:
+                        emit("MessageEntityTextUrl", start, end, url=href)
 
             elif tag in ("b", "strong"):
                 span(child, "MessageEntityBold")
@@ -127,4 +148,25 @@ def parse_rich_text(root):
                 add(child.tail)
 
     walk(root)
-    return strip_with_entities("".join(parts), entities)
+    raw_text = "".join(parts)
+    leading_units = u16len(raw_text) - u16len(raw_text.lstrip())
+    text, entities = strip_with_entities(raw_text, entities)
+    kept_stickers = []
+    text_length = u16len(text)
+    for sticker in inline_stickers:
+        offset = sticker["offset"] - leading_units
+        if offset < 0 or offset + sticker["length"] > text_length:
+            continue
+        kept_stickers.append({**sticker, "offset": offset})
+    return text, entities, kept_stickers, list(dict.fromkeys(missing_stickers))
+
+
+def parse_rich_text(root):
+    """Convert HTML rich text to Telegram text and entities."""
+    text, entities, _stickers, _missing = _parse_rich_text(root)
+    return text, entities
+
+
+def parse_rich_text_with_stickers(root):
+    """Parse rich text while extracting actual inline sticker files in order."""
+    return _parse_rich_text(root, extract_stickers=True)

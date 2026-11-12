@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 from . import config, exportmedia
 from .htmlutil import css_classes, find_first, inner_text, text_without
-from .richtext import parse_rich_text
+from .richtext import parse_rich_text, parse_rich_text_with_stickers
 from .textutil import sanitize_text
 from .constants import HTML_FILE_PATTERN
 
@@ -203,8 +203,39 @@ def _reply_preview(reply_div):
     return text[:500]
 
 
-def _extract_reply_source_id(msg_div):
-    reply_div = find_first(msg_div, "reply_to")
+def _find_outer_reply_to(msg_div, forwarded_body=None):
+    """Find a reply attached to the exported chat message, not its forwarded payload.
+
+    Telegram Desktop can include a reply preview inside the forwarded body.
+    That preview belongs to the message being forwarded; it is not a reply in
+    the current chat. Exclude the complete forwarded subtree for every payload
+    type so photos, videos, stickers, documents, and audio are treated alike.
+    """
+    forwarded_nodes = set(forwarded_body.iter()) if forwarded_body is not None else set()
+    for el in msg_div.iter():
+        if el is msg_div or el in forwarded_nodes:
+            continue
+        if "reply_to" in css_classes(el):
+            return el
+    return None
+
+
+def _find_forward_reply_to(forwarded_body):
+    """Find the reply preview embedded in the forwarded payload itself.
+
+    This is original-source context. Preserve it for display, but never use its
+    referenced message ID to create a reply link in the destination channel.
+    """
+    if forwarded_body is None:
+        return None
+    for el in forwarded_body.iter():
+        if "reply_to" in css_classes(el):
+            return el
+    return None
+
+
+def _extract_reply_source_id(reply_div):
+    """Extract the source target from an already-selected outer reply element."""
     if reply_div is None:
         return None
     a = next(reply_div.iter("a"), None)
@@ -314,12 +345,28 @@ def extract_message_data(msg_div):
     forward_header = f"Forwarded from {forward_name}\n" if forward_name else ""
     fwd_src = extract_forward_source(msg_div) if config.settings.native_forward else None
 
-    reply_div = find_first(msg_div, "reply_to")
+    # A reply nested inside the forwarded payload describes the original
+    # forwarded conversation. Only an outer message-level reply belongs to
+    # the current export chat and may become a destination reply link.
+    reply_div = _find_outer_reply_to(msg_div, fwd_div)
     preview = _reply_preview(reply_div)
-    reply_src_id = _extract_reply_source_id(msg_div)
+    reply_src_id = _extract_reply_source_id(reply_div)
 
-    text_div = find_first(msg_div, "text")
-    body_text, body_entities = parse_rich_text(text_div)
+    # A reply preview inside the forwarded body belongs to the original
+    # conversation. Preserve it separately from the outer chat's reply link.
+    forward_reply_div = _find_forward_reply_to(fwd_div)
+    forward_reply_preview = _reply_preview(forward_reply_div)
+    forward_reply_src_id = _extract_reply_source_id(forward_reply_div)
+
+    # For forwarded messages, read the payload text from the forwarded body
+    # itself. Searching the whole message can select an unrelated outer text
+    # block first and silently omit the forwarded caption.
+    text_root = find_first(fwd_div, "text") if fwd_div is not None else None
+    if text_root is None:
+        text_root = find_first(msg_div, "text")
+    body_text, body_entities, inline_stickers, missing_stickers = (
+        parse_rich_text_with_stickers(text_root)
+    )
 
     media = exportmedia.find_media(msg_div)
     missing_media = exportmedia.find_missing_media(msg_div)
@@ -329,6 +376,12 @@ def extract_message_data(msg_div):
         note = "\n".join(f"[Media not found: {reference}]" for reference in missing_media)
     else:
         note = "" if media else exportmedia.media_note(msg_div)
+    if missing_stickers:
+        sticker_note = "\n".join(
+            f"[Sticker file not found: {reference}]"
+            for reference in missing_stickers
+        )
+        note = (note + "\n" if note else "") + sticker_note
     if note:
         body_text = (body_text + "\n\n" if body_text else "") + note
 
@@ -346,9 +399,32 @@ def extract_message_data(msg_div):
         "forward_source": fwd_src,
         "reply_src_id": reply_src_id,
         "reply_preview": preview,
+        "forward_reply_src_id": forward_reply_src_id,
+        "forward_reply_preview": forward_reply_preview,
         "body_text": body_text,
         "body_entities": body_entities,
         "media": media,
+        "inline_stickers": inline_stickers,
         "media_note": note,
         "reactions": _extract_html_reactions(msg_div),
     }
+
+
+
+def infer_media_groups(files, inline_emoji_ids=None):
+    """Compatibility entry point for the album inference helper."""
+    from .album import infer_media_groups as infer
+    return infer(files, inline_emoji_ids)
+
+
+def inherit_forwarded_sender(data, context):
+    """Restore a forwarded author omitted from joined continuation messages."""
+    if not data.get("is_forwarded"):
+        context["last_forward_name"] = ""
+    elif data.get("forward_name"):
+        context["last_forward_name"] = data["forward_name"]
+    elif data.get("joined") and context.get("last_forward_name"):
+        data["forward_name"] = context["last_forward_name"]
+        data["forward_header"] = f"Forwarded from {data['forward_name']}\n"
+    else:
+        context["last_forward_name"] = ""
