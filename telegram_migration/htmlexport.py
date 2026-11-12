@@ -371,7 +371,7 @@ def extract_message_data(msg_div):
     media = exportmedia.find_media(msg_div)
     sticker_emoji = exportmedia.sticker_emoji_text(msg_div, media)
     if sticker_emoji:
-        body_text = (body_text + "\\n\\n" if body_text else "") + sticker_emoji
+        body_text = (body_text + "\n\n" if body_text else "") + sticker_emoji
     missing_media = exportmedia.find_missing_media(msg_div)
     if missing_media:
         # Keep the message even when one or more referenced attachments are
