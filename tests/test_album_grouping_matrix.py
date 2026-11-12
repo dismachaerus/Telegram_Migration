@@ -64,6 +64,22 @@ class AlbumGroupingMatrixTests(unittest.TestCase):
                 record = self._record(0, kind, first=True)
                 self.assertFalse(album._album_candidate(record, record["sender"]))
 
+    def test_only_tgs_stickers_are_excluded_from_source_album_candidates(self):
+        cases = (
+            ("sticker_animated", "stickers/one.tgs", False),
+            ("sticker_static", "stickers/one.webp", True),
+            ("sticker_video", "stickers/one.webm", True),
+            ("audio", "audio_files/one.mp3", True),
+        )
+        for kind, path, expected in cases:
+            with self.subTest(kind=kind):
+                record = self._record(0, kind, first=True)
+                record["media"] = [(path, kind)]
+                self.assertEqual(
+                    album._album_candidate(record, record["sender"]),
+                    expected,
+                )
+
     def test_repeated_forwarded_reply_target_is_shared_group_context(self):
         first = self._record(0, "photo", first=True)
         continuation = self._record(1, "voice")
