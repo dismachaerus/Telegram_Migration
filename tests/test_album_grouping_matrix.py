@@ -173,18 +173,21 @@ class TelegramDesktopHtmlGroupingTests(unittest.TestCase):
             with patch.object(config.get_settings(), "base_dir", temp):
                 return album.infer_media_groups([str(html_path)])
 
-    def test_ten_joined_file_attachments_form_one_group_after_preceding_post(self):
+    def test_eleven_consecutive_file_attachments_keep_first_ten_in_one_group(self):
         messages = [("files/preceding.jpg", "document")]
         messages.extend(
             (f"files/group_{index}.jpg", "document")
             for index in range(10)
         )
         groups = self._infer(messages)
-        self.assertEqual(list(groups), ["320"])
+        self.assertEqual(list(groups), ["319"])
         self.assertEqual(
-            [item["msg_id"] for item in groups["320"]],
-            [str(value) for value in range(320, 330)],
+            [item["msg_id"] for item in groups["319"]],
+            [str(value) for value in range(319, 329)],
         )
+        # The eleventh record is the one-item remainder, not a prefix
+        # discarded from the first album.
+
 
     def test_joined_round_video_notes_remain_independent_posts(self):
         groups = self._infer([

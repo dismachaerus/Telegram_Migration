@@ -1349,15 +1349,18 @@ class PipelineTests(unittest.TestCase):
         with config.use_settings(self.settings()):
             groups = htmlexport.infer_media_groups([self.path("messages.html")])
 
-        self.assertEqual(set(groups), {str(first_id) for first_id in expected})
+        expected_groups = {}
         for first_id, sizes in expected.items():
-            actual = []
-            cursor = first_id
-            while str(cursor) in groups:
-                group = groups[str(cursor)]
-                actual.append(len(group))
-                cursor += len(group)
-            self.assertEqual(actual, sizes)
+            expected_groups[str(first_id)] = sizes[0]
+            if len(sizes) > 1:
+                expected_groups[str(first_id + sizes[0])] = sizes[1]
+        self.assertEqual(set(groups), set(expected_groups))
+        for first_id, size in expected_groups.items():
+            self.assertEqual(len(groups[first_id]), size)
+            self.assertEqual(
+                [row["msg_id"] for row in groups[first_id]],
+                [str(i) for i in range(int(first_id), int(first_id) + size)],
+            )
 
     def test_joined_jpg_documents_keep_owner_and_caption_in_one_album(self):
         records = []
@@ -1791,7 +1794,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("Forwarded from HLI8IOS", kwargs["caption"])
         self.assertIn("forwarded round-video caption", kwargs["caption"])
 
-    def test_inferred_album_rejects_runs_longer_than_ten_items(self):
+    def test_inferred_run_longer_than_ten_is_split_into_ordered_albums(self):
         records = [fakes.message(1, fakes.text("sender"), sender="Alice", minute=1)]
         for source_id in range(2, 14):
             relative = f"files/document-{source_id}.png"
@@ -1807,7 +1810,10 @@ class PipelineTests(unittest.TestCase):
         fakes.write_export(self.folder.name, records)
         with config.use_settings(self.settings()):
             groups = htmlexport.infer_media_groups([self.path("messages.html")])
-        self.assertEqual(groups, {})
+        self.assertEqual(list(groups), ["2", "12"])
+        self.assertEqual([row["msg_id"] for row in groups["2"]],
+                         [str(i) for i in range(2, 12)])
+        self.assertEqual([row["msg_id"] for row in groups["12"]], ["12", "13"])
 
 
     def test_forwarded_static_and_video_stickers_keep_attribution_in_media_caption(self):
