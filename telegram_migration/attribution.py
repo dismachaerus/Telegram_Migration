@@ -83,6 +83,14 @@ async def _send_attribution_reply(
                 standalone = True
                 progress_state["delivery_mode"] = "standalone_channel_post"
                 progress.save_state(state["src"], state)
+            elif (
+                delivery_mode == "discussion_reply"
+                and int(linked_chat_id) != int(progress_state.get("discussion_chat_id", -1))
+            ):
+                raise RuntimeError(
+                    "The linked discussion group changed after the attribution route "
+                    "was checkpointed. Refusing to reuse the random_id in another peer."
+                )
             else:
                 discussion_chat = next(
                     (
@@ -103,6 +111,7 @@ async def _send_attribution_reply(
                     access_hash=int(discussion_chat.access_hash),
                 )
                 progress_state["delivery_mode"] = "discussion_reply"
+                progress_state["discussion_chat_id"] = int(linked_chat_id)
                 progress.save_state(state["src"], state)
 
         if standalone:
