@@ -1,4 +1,4 @@
-"""Settings for a migration run
+"""Settings for a migration run.
 
 The package modules read the *active* settings through ``config.settings``
 at call time; :func:`use_settings` scopes them to the current thread/async context.
