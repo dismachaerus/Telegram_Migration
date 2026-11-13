@@ -1,4 +1,4 @@
-name: Clean failed PyPI deployments
+name: Clean failed PyPI deployments.
 
 on:
   workflow_dispatch:
