@@ -60,6 +60,11 @@ def _classify(rel, wrap_class, full, anchor_classes=(), export_label=""):
         or "sticker_wrap" in classes
         or "stickers/" in lower_rel
         or _label_says_sticker(export_label)
+        # Telegram Desktop may export video stickers as video_file_wrap links
+        # under video_files/sticker*.webm rather than sticker_wrap anchors.
+        # Reuse the same path rule already used for inline video-sticker links
+        # so these are never inferred as ordinary video album members.
+        or is_inline_sticker_reference(rel)
     )
     if is_sticker:
         if ext in (".webp", ".png"):
@@ -277,6 +282,32 @@ def find_missing_media(msg):
                 label = label[2:]
             missing.append(label or os.path.basename(str(reference)))
     return missing
+
+
+def sticker_emoji_text(msg_div, media=None):
+    """Return the fallback emoji label for an exported TGS sticker only."""
+    if not any(
+        kind == "sticker_animated" and str(path).casefold().endswith(".tgs")
+        for path, kind in (media or [])
+    ):
+        return ""
+
+    found = []
+    for _wrap_class, wrap in _media_wrappers(msg_div):
+        export_label = "\n".join(
+            value.strip() for value in wrap.itertext() if value and value.strip()
+        )
+        if not _label_says_sticker(export_label):
+            continue
+        for element in wrap.iter():
+            if not isinstance(element.tag, str):
+                continue
+            if "status" not in css_classes(element):
+                continue
+            value = "".join(element.itertext()).strip()
+            if value:
+                found.append(value)
+    return " ".join(found)
 
 
 def media_note(msg_div):
