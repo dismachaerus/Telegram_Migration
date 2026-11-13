@@ -312,12 +312,17 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
     await send_group_caption(message_ids)
     return message_ids if return_all else message_ids[0]
 
+def _is_tgs_sticker(path, kind):
+    """Return whether this media item is a TGS sticker requiring separate attribution."""
+    return kind == "sticker_animated" and str(path).casefold().endswith(".tgs")
+
+
 async def _send_individual_media(client, channel, chunks, media, reply_to, state,
                                  source_id):
     first_text, first_ents = chunks[0]
     state.setdefault("multi_media_ids", [])
     for index, (path, kind) in enumerate(media[:len(state["multi_media_ids"])]):
-        if kind in STICKER_KINDS:
+        if _is_tgs_sticker(path, kind):
             await _send_sticker_with_attribution(
                 client, channel, path, kind, reply_to,
                 [(first_text, first_ents)], state, source_id,
@@ -327,7 +332,7 @@ async def _send_individual_media(client, channel, chunks, media, reply_to, state
         index = len(state["multi_media_ids"])
         path, kind = media[index]
         is_final_item = index == len(media) - 1
-        if kind in STICKER_KINDS:
+        if _is_tgs_sticker(path, kind):
             sent_id = await _send_sticker_with_attribution(
                 client, channel, path, kind, reply_to,
                 [(first_text, first_ents)], state, source_id,
@@ -407,9 +412,9 @@ async def _send_single_media(client, channel, chunks, media, reply_to, state, so
 async def _do_send(client, channel, chunks, media, reply_to, forward_source,
                    state, annotation, source_id=None, data=None):
     if data and data.get("_sticker_attribution"):
-        if len(media) != 1 or media[0][1] not in STICKER_KINDS:
+        if len(media) != 1 or not _is_tgs_sticker(media[0][0], media[0][1]):
             raise RuntimeError(
-                "Separate sticker attribution requires exactly one standalone sticker."
+                "Separate sticker attribution requires exactly one standalone TGS sticker."
             )
         path, kind = media[0]
         sticker_chunks = chunks
