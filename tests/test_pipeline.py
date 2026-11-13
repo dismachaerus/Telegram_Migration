@@ -2167,16 +2167,17 @@ class PipelineTests(unittest.TestCase):
                     media, None, state, "702",
                 )
             self.assertEqual(result, 801)
-            self.assertEqual(len(calls), 2)
+            self.assertEqual(len(calls), 3)
             sticker_send = calls[0]
-            photo_send = calls[1]
+            attribution = calls[1]
+            photo_send = calls[2]
             self.assertEqual(sticker_send[1]["caption"], "")
             self.assertEqual(photo_send[1]["caption"], caption)
             self.assertTrue(any(
                 isinstance(attribute, tl.DocumentAttributeSticker)
                 for attribute in sticker_send[1]["attributes"]
             ))
-            attribution = next(call for call in calls if call[0] == "send_message")
+            self.assertEqual(attribution[0], "send_message")
             self.assertIn(caption, attribution[1])
             self.assertEqual(attribution[2]["reply_to"], 801)
         asyncio.run(scenario())
