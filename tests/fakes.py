@@ -1,6 +1,6 @@
 """Shared test doubles: a fake Telegram client and a tiny Telegram Desktop export builder.
 
-Nothing here talks to Telegram or needs credentials..
+Nothing here talks to Telegram or needs credentials.
 """
 import os
 from types import SimpleNamespace
