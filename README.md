@@ -1,5 +1,23 @@
 # Telegram Desktop Chat-History Migration
 
+## Windows one-click launcher
+
+Prefer a guided setup instead of typing commands? Download the **Windows click-to-run launcher**:
+
+**[Download the Windows launcher (.zip)](https://ifaac.github.io/Telegram_Migration/downloads/telegram-migration-windows-launcher.zip)**
+
+1. Download and extract the ZIP file.
+2. Double-click **Run Telegram Migration.bat**.
+3. On first launch, Notepad opens a local `.env` file. Add your own Telegram API ID and API hash, bot token, and destination channel.
+4. Double-click the launcher again. It creates an isolated Python environment, installs the published PyPI package, and lets you choose the Telegram Desktop export folder.
+5. It runs a **dry-run preview first**. Review the destination and preview; type `YES` only when you are ready to send, then confirm the destination channel.
+
+**Requirements:** Windows, Python 3.10 or newer, and an internet connection for the first package installation. Keep the HTML export pages and their accompanying media folders together. The bot must be an administrator in the destination channel with permission to post.
+
+The launcher uses the current public PyPI release; it does not install unreleased changes from the GitHub repository. Never share your `.env` file, bot token, API hash, session files, or private Telegram export.
+
+---
+
 A Python tool for reconstructing a Telegram conversation in a destination channel from a **Telegram Desktop export** (`messages.html`, `messages2.html`, etc.) and the media files that accompany it. Use it as a **command-line tool** (`python -m telegram_migration`) or import it as a **Python library** (`from telegram_migration import Settings, run`).
 
 > **Scope:** this program migrates a local export. It does not sign into Telegram Web or retrieve the complete live history of an unrelated channel. Most reconstructed messages are newly sent by your destination bot; the program cannot recreate arbitrary historical sender identities or original native reaction totals. This program uses Telegram's official Bot API/MTProto bot authentication to send migrated messages, rather than logging in through your personal Telegram account. It does not require your personal phone number, SMS login code, or personal account session, reducing the exposure of your personal account credentials. The bot operates under its own identity, so sending limits and restrictions primarily affect the bot.
