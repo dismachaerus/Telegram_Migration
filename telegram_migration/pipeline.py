@@ -242,8 +242,8 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         annotation = [(annotation_text, annotation_entities)] if annotation_text.strip() else None
 
         kinds = [kind for _path, kind in data["media"]]
-        # Sticker attribution is sent as a separate linked text message; other
-        # caption-capable media use the configured caption limit.
+        # TGS attribution is sent separately; WebP and WebM sticker captions
+        # remain attached to their media messages.
         first_limit = (
             config.settings.caption_limit if kinds
             else config.settings.text_limit
