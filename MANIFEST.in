@@ -1,2 +1,2 @@
-graft tests
+graft tests.
 global-exclude *.py[cod]
