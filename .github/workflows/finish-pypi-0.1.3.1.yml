@@ -133,7 +133,7 @@ jobs:
               removed.push(deployment.id);
             }
 
-            core.summary
+            await core.summary
               .addHeading("PyPI release 0.1.3.1")
               .addRaw(`The publishing action completed. Any files already on PyPI were skipped; missing files were uploaded. Removed ${removed.length} failed deployment record(s) from the pypi environment. The pypi environment itself was not changed.`)
               .addRaw(removed.length ? `\n\nRemoved deployment IDs: ${removed.join(", ")}` : "")
