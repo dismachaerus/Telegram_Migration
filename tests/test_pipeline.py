@@ -1437,7 +1437,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("album 701–710", output)
         self.assertIn("sent=12", output)
 
-    def test_source_group_inference_is_type_agnostic_for_every_supported_size(self):
+    def test_source_group_inference_is_type_agnostic_for_album_eligible_media(self):
         records = []
         expected = {}
         next_id = 2000
@@ -1448,10 +1448,10 @@ class PipelineTests(unittest.TestCase):
                 '<div class="media_wrap clearfix"><a class="animated_wrap" '
                 f'href="{p}"><div class="gif_play">GIF</div></a></div>'
             ), "video_files"),
-            ("voice", lambda p: (
-                '<div class="media_wrap clearfix"><a class="media_voice_message" '
+            ("document", lambda p: (
+                '<div class="media_wrap clearfix"><a class="media clearfix pull_left block_link media_file" '
                 f'href="{p}"></a></div>'
-            ), "voice_messages"),
+            ), "files"),
             ("sticker", lambda p: (
                 '<div class="sticker_wrap"><a '
                 f'href="{p}"></a></div>'
@@ -1465,7 +1465,7 @@ class PipelineTests(unittest.TestCase):
                 kind, builder, folder = media_builders[index % len(media_builders)]
                 extension = {
                     "photo": ".jpg", "video": ".mp4", "gif": ".mp4",
-                    "voice": ".ogg", "round_video": ".mp4", "sticker": ".webp",
+                    "document": ".pdf", "round_video": ".mp4", "sticker": ".webp",
                 }[kind]
                 relative = f"{folder}/group_{count}_{index}{extension}"
                 fakes.write_file(self.folder.name, relative)
