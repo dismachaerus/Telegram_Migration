@@ -5,6 +5,12 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      wheel_build_number:
+        description: "Build number for an additional wheel of the current release (3 is the next build for 0.1.3)."
+        required: true
+        default: "3"
+        type: string
 
 jobs:
   build:
@@ -15,9 +21,58 @@ jobs:
         with:
           python-version: '3.x'
       - name: Build distributions
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WHEEL_BUILD_NUMBER: ${{ inputs.wheel_build_number }}
         run: |
-          python -m pip install --upgrade build
-          python -m build
+          python -m pip install --upgrade build wheel twine
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ ! "$WHEEL_BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+              echo "wheel_build_number must be a positive integer."
+              exit 1
+            fi
+            python -m build --wheel \
+              -C--build-option=bdist_wheel \
+              -C--build-option=--build-number \
+              -C--build-option="$WHEEL_BUILD_NUMBER"
+          else
+            python -m build
+          fi
+          python -m twine check dist/*
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            WHEEL_BUILD_NUMBER="$WHEEL_BUILD_NUMBER" python - <<'PY'
+          import os
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          wheels = list(Path("dist").glob("*.whl"))
+          assert len(wheels) == 1, f"Expected exactly one wheel, found: {wheels}"
+          wheel = wheels[0]
+          build_number = os.environ["WHEEL_BUILD_NUMBER"]
+          assert f"-{build_number}-" in wheel.name, wheel.name
+
+          with ZipFile(wheel) as archive:
+              wheel_info = next(
+                  name for name in archive.namelist()
+                  if name.endswith(".dist-info/WHEEL")
+              )
+              wheel_metadata = archive.read(wheel_info).decode("utf-8")
+              assert f"Build: {build_number}" in wheel_metadata, wheel_metadata
+              dist_metadata = next(
+                  name for name in archive.namelist()
+                  if name.endswith(".dist-info/METADATA")
+              )
+              package_metadata = archive.read(dist_metadata).decode("utf-8")
+              version = next(
+                  line.partition(": ")[2]
+                  for line in package_metadata.splitlines()
+                  if line.startswith("Version: ")
+              )
+              assert version == "0.1.3", f"Expected package version 0.1.3, got {version}"
+          print(f"Validated {wheel.name} (package version {version}, wheel build {build_number})")
+          PY
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -36,3 +91,6 @@ jobs:
           path: dist/
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Manual wheel rebuilds may be repeated; tagged source releases must fail on duplicates.
+          skip-existing: ${{ github.event_name == 'workflow_dispatch' }}
