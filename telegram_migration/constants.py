@@ -19,9 +19,8 @@ MIN_TEXT_LIMIT = 4
 # messages.html, messages2.html, ... in a Telegram Desktop HTML export.
 HTML_FILE_PATTERN = r"^messages(\d*)\.html$"
 
-# Sticker files need sticker-specific upload attributes. Telegram sticker
-# messages do not reliably display captions, so the sender attaches attribution
-# as a separate linked text message.
+# Sticker files need sticker-specific upload attributes. Static WebP and video
+# WebM stickers support native media captions; TGS stickers use linked attribution.
 STICKER_KINDS = ("sticker_static", "sticker_animated", "sticker_video", "sticker_unknown")
-# Media types that cannot carry their own visible caption.
-NO_CAPTION_KINDS = STICKER_KINDS
+# TGS sticker documents use separate attribution instead of a media caption.
+NO_CAPTION_KINDS = ("sticker_animated",)
