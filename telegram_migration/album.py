@@ -7,6 +7,7 @@ from telethon.tl import types as tl
 
 from . import exportmedia
 from .albumcaption import caption_for_group, caption_for_group_body
+from .constants import STICKER_KINDS
 from .htmlutil import css_classes
 
 from .textutil import (
@@ -97,10 +98,23 @@ def prepare_inferred_group(data, group, id_map, manual_done, partial, persist_id
     legacy_caption, legacy_caption_entities = caption_for_group_body(group)
     all_media = [item for member in group for item in member["media"]]
 
+    # Consecutive audio records are separate source messages, even when the
+    # destination supports sending them together as one media group. Preserve
+    # each record's own sender/date and body beside its corresponding audio.
+    audio_item_captions = None
+    if all(
+        len(member.get("media") or []) == 1
+        and member["media"][0][1] == "audio"
+        for member in group
+    ):
+        audio_item_captions = [caption_for_record(member) for member in group]
+
     data["_inferred_album"] = True
     data["_album_source_ids"] = member_ids
     data["_album_caption_text"] = album_caption
     data["_album_caption_entities"] = album_caption_entities
+    if audio_item_captions is not None:
+        data["_album_item_captions"] = audio_item_captions
     data["_album_caption_legacy_text"] = legacy_caption
     data["_album_caption_legacy_entities"] = legacy_caption_entities
     data["media"] = all_media
@@ -125,6 +139,15 @@ def _album_candidate(data, effective_sender):
     # continuation. Telegram Desktop may still apply the visual "joined" class
     # to adjacent notes, so never infer a source album from that layout marker.
     if data["media"][0][1] == "round_video":
+        return False
+    # Consecutive audio tracks and voice notes are separate source messages.
+    # Keep each one's sender, timestamp, and text in that same media caption.
+    if data["media"][0][1] in {"audio", "voice"}:
+        return False
+    # Stickers are standalone Telegram messages, not inferred media albums.
+    # Every sticker keeps its own sender/date in its own media caption.
+    media_path, media_kind = data["media"][0]
+    if media_kind in STICKER_KINDS:
         return False
     if data.get("is_forwarded") and not data.get("forward_name"):
         return False
@@ -321,6 +344,10 @@ def map_destination_ids(source_ids, destination_ids, id_map, persist_id):
 async def verify_mapped_album(client, channel, data, id_map, partial, source_id):
     """Audit a mapped album before skipping it; never resend media automatically."""
     from . import progress, sending
+    from .caption_sending import (
+        inferred_album_item_caption_parts,
+        send_inferred_album_item_caption_continuations,
+    )
 
     source_ids = data["_album_source_ids"]
     state = dict(partial.get(str(source_id), {}) or {})
@@ -331,12 +358,17 @@ async def verify_mapped_album(client, channel, data, id_map, partial, source_id)
             f"Partial album IDs disagree with the migration ID map for source id={source_id}; "
             "refusing to guess which destination messages belong to this album"
         )
-    first_caption, _continuation = sending.inferred_album_caption_parts(
-        data.get("_album_caption_text", ""),
-        data.get("_album_caption_entities", []),
-    )
-    expected_captions = [""] * (len(mapped_ids) - 1) + [first_caption[0]]
-    expected_entities = [[] for _ in mapped_ids[:-1]] + [first_caption[1]]
+    if data.get("_album_item_captions") is not None:
+        expected_captions, expected_entities, _continuations = (
+            inferred_album_item_caption_parts(data["_album_item_captions"])
+        )
+    else:
+        first_caption, _continuation = sending.inferred_album_caption_parts(
+            data.get("_album_caption_text", ""),
+            data.get("_album_caption_entities", []),
+        )
+        expected_captions = [""] * (len(mapped_ids) - 1) + [first_caption[0]]
+        expected_entities = [[] for _ in mapped_ids[:-1]] + [first_caption[1]]
     grouped_id = await _verify_saved_album(
         client, channel, mapped_ids, expected_captions, expected_entities, source_id
     )
@@ -349,10 +381,16 @@ async def verify_mapped_album(client, channel, data, id_map, partial, source_id)
         f"    audited existing Telegram album for source id={source_id}: "
         f"{len(mapped_ids)} items, grouped_id={grouped_id}"
     )
-    await sending.send_inferred_album_caption(
-        client, channel, data.get("_album_caption_text", ""),
-        data.get("_album_caption_entities", []), state, source_id, mapped_ids[-1],
-    )
+    if data.get("_album_item_captions") is not None:
+        await send_inferred_album_item_caption_continuations(
+            client, channel, data["_album_item_captions"], state, source_id,
+            mapped_ids,
+        )
+    else:
+        await sending.send_inferred_album_caption(
+            client, channel, data.get("_album_caption_text", ""),
+            data.get("_album_caption_entities", []), state, source_id, mapped_ids[-1],
+        )
 
 
 async def _album_message_list(value):

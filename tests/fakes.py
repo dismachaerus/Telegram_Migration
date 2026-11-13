@@ -5,6 +5,8 @@ Nothing here talks to Telegram or needs credentials.
 import os
 from types import SimpleNamespace
 
+from telethon.tl import functions as fn
+
 
 class FakeMessage:
     def __init__(self, message_id, grouped_id=None, message=""):
@@ -18,6 +20,7 @@ class FakeTelegram:
     """Stands in for telethon.TelegramClient; records every call in `.calls`."""
 
     instances = []
+    linked_chat_id_default = 2
 
     def __init__(self, *args, **kwargs):
         self.calls = []
@@ -26,6 +29,7 @@ class FakeTelegram:
         self.messages = {}
         self.disconnected = False
         self.reject_formatting = None       # set to an Exception to reject any message with entities
+        self.linked_chat_id = self.linked_chat_id_default
         FakeTelegram.instances.append(self)
 
     def _new_id(self):
@@ -36,7 +40,35 @@ class FakeTelegram:
         return self
 
     async def get_entity(self, peer):
-        return SimpleNamespace(title="Test channel", id=1, username=None)
+        return SimpleNamespace(
+            title="Test channel", id=1, username=None,
+            access_hash=11, broadcast=True, noforwards=False,
+        )
+
+    async def __call__(self, request):
+        if isinstance(request, fn.channels.GetFullChannelRequest):
+            self.calls.append(("get_full_channel", request))
+            chats = (
+                [SimpleNamespace(id=self.linked_chat_id, access_hash=22)]
+                if self.linked_chat_id else []
+            )
+            return SimpleNamespace(
+                full_chat=SimpleNamespace(linked_chat_id=self.linked_chat_id),
+                chats=chats,
+            )
+        if isinstance(request, fn.messages.SendMessageRequest):
+            kind = (
+                "send_discussion_reply"
+                if getattr(request, "reply_to", None) is not None
+                else "send_channel_attribution"
+            )
+            self.calls.append((kind, request))
+            message = FakeMessage(self._new_id(), message=request.message)
+            self.messages[message.id] = message
+            return SimpleNamespace(
+                updates=[SimpleNamespace(random_id=request.random_id, id=message.id)]
+            )
+        raise AssertionError(f"Unexpected raw Telegram request: {type(request).__name__}")
 
     async def disconnect(self):
         self.disconnected = True

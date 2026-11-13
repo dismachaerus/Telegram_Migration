@@ -69,7 +69,7 @@ _MONTH_NAMES = (
 )
 
 
-def format_archive_timestamp(timestamp, date_only=False):
+def format_archive_timestamp(timestamp, date_only=False, include_seconds=False):
     """Format an exported timestamp for the readable Telegram archive header.
 
     Month names are deliberately locale-independent so the same export gets
@@ -80,10 +80,11 @@ def format_archive_timestamp(timestamp, date_only=False):
     day = f"{timestamp.day} {_MONTH_NAMES[timestamp.month - 1]} {timestamp.year}"
     if date_only:
         return day
-    return f"{day} · {timestamp:%H:%M}"
+    time_format = "%H:%M:%S" if include_seconds and timestamp.second else "%H:%M"
+    return f"{day} · {timestamp:{time_format}}"
 
 
-def compose_message_header(timestamp, sender, date_only=False):
+def compose_message_header(timestamp, sender, date_only=False, include_seconds=False):
     """Build a readable sender/date header with Telegram formatting entities.
 
     The sender is bold and the timestamp italic. Both offsets and lengths use
@@ -102,7 +103,7 @@ def compose_message_header(timestamp, sender, date_only=False):
             entities.append(tl.MessageEntityBold(offset=start, length=length))
         text += "\n"
 
-    stamp = format_archive_timestamp(timestamp, date_only=date_only)
+    stamp = format_archive_timestamp(timestamp, date_only=date_only, include_seconds=include_seconds)
     if stamp:
         start = u16len(text)
         text += stamp
