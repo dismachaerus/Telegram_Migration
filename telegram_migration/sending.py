@@ -314,12 +314,8 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
 
 async def _send_individual_media(client, channel, chunks, media, reply_to, state,
                                  source_id):
-    """Send separate media posts, retaining the source attribution on every sticker."""
     first_text, first_ents = chunks[0]
     state.setdefault("multi_media_ids", [])
-    # Older partial states may already contain sticker uploads whose captions
-    # Telegram did not display. Backfill their individual attribution before
-    # continuing the sequence; the helper reuses the saved destination IDs.
     for index, (path, kind) in enumerate(media[:len(state["multi_media_ids"])]):
         if kind in STICKER_KINDS:
             await _send_sticker_with_attribution(
@@ -331,9 +327,6 @@ async def _send_individual_media(client, channel, chunks, media, reply_to, state
         index = len(state["multi_media_ids"])
         path, kind = media[index]
         is_final_item = index == len(media) - 1
-        # Stickers cannot join media albums and do not reliably display
-        # captions. Send each sticker natively, then attach this source post's
-        # attribution as its own linked text message.
         if kind in STICKER_KINDS:
             sent_id = await _send_sticker_with_attribution(
                 client, channel, path, kind, reply_to,
