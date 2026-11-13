@@ -704,21 +704,15 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(sticker_calls[0][2]["reply_to"], 1001)
         self.assertEqual(photo_call[2]["reply_to"], 1002)
         self.assertIsNone(sticker_calls[1][2]["reply_to"])
-        self.assertEqual(sticker_calls[1][2]["caption"], "")
-        sticker_attributions = client.kinds("send_discussion_reply")
-        self.assertEqual(len(sticker_attributions), 2)
-        self.assertIn("Forwarded from Valerie Demian", sticker_attributions[1][1].message)
-        self.assertNotIn("The impotent old man and the sea", sticker_attributions[1][1].message)
-        self.assertEqual(
-            sticker_attributions[1][1].reply_to.reply_to_msg_id,
-            sticker_calls[1][1].id if hasattr(sticker_calls[1][1], "id") else 1005,
-        )
+        self.assertIn("Forwarded from Valerie Demian", sticker_calls[1][2]["caption"])
+        self.assertNotIn("The impotent old man and the sea", sticker_calls[1][2]["caption"])
+        self.assertEqual(client.kinds("send_discussion_reply"), [])
         self.assertIn("The impotent old man and the sea", photo_call[2]["caption"])
         self.assertEqual(client.texts(), ["Alice\n\nearlier source message"])
         with config.use_settings(self.settings()):
             self.assertEqual(
                 progress.load_id_map(),
-                {"105": 1001, "106": 1002, "107": 1004, "108": 1005},
+                {"105": 1001, "106": 1002, "107": 1003, "108": 1004},
             )
 
     def test_original_forwarded_reply_context_disables_native_forward_for_all_media_kinds(self):
@@ -784,7 +778,7 @@ class PipelineTests(unittest.TestCase):
                 self.assertNotIn("In reply to the original conversation", kwargs["caption"])
                 self.assertIsNone(kwargs["reply_to"])
                 self.assertEqual(client.kinds("send_message"), [])
-                if expected_kind.startswith("sticker_"):
+                if expected_kind == "sticker_animated":
                     self.assertEqual(kwargs["caption"], "")
                     attribution = client.kinds("send_discussion_reply")
                     self.assertEqual(len(attribution), 1)
@@ -1050,7 +1044,7 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse(calls[0][2].get("force_document", False))
         self.assertTrue(calls[0][2]["caption"].endswith("audio caption"))
 
-    def test_all_sticker_formats_use_separate_sender_attribution(self):
+    def test_only_tgs_stickers_use_separate_sender_attribution(self):
         cases = (
             (".tgs", "sticker_animated", "application/x-tgsticker"),
             (".webp", "sticker_static", "image/webp"),
@@ -1084,11 +1078,16 @@ class PipelineTests(unittest.TestCase):
                     "DocumentAttributeSticker",
                 )
 
-                self.assertEqual(kwargs["caption"], "")
                 attribution = client.kinds("send_discussion_reply")
-                self.assertEqual(len(attribution), 1)
-                self.assertIn("Sticker sender\n12 March 2023 · 10:10", attribution[0][1].message)
-                self.assertEqual(attribution[0][1].reply_to.reply_to_msg_id, 1001)
+                if extension == ".tgs":
+                    self.assertEqual(kwargs["caption"], "")
+                    self.assertEqual(len(attribution), 1)
+                    self.assertIn("Sticker sender\n12 March 2023 · 10:10", attribution[0][1].message)
+                    self.assertEqual(attribution[0][1].reply_to.reply_to_msg_id, 1001)
+                else:
+                    self.assertIn("Sticker sender", kwargs["caption"])
+                    self.assertIn("12 March 2023 · 10:10", kwargs["caption"])
+                    self.assertEqual(attribution, [])
                 self.assertEqual(client.kinds("send_channel_attribution"), [])
                 self.assertEqual(client.kinds("send_message"), [])
 
@@ -1142,14 +1141,9 @@ class PipelineTests(unittest.TestCase):
                     isinstance(attribute, tl.DocumentAttributeSticker)
                     for attribute in kwargs["attributes"]
                 ))
-                self.assertEqual(kwargs["caption"], "")
-        attribution = client.kinds("send_discussion_reply")
-        self.assertEqual(len(attribution), 3)
-        for index, (call, (_relative, _mime, minute, _extension)) in enumerate(zip(attribution, stickers)):
-            with self.subTest(attribution=index + 1):
-                self.assertIn("Sticker sender", call[1].message)
-                self.assertIn(f"12 March 2023 · 10:{minute}", call[1].message)
-                self.assertEqual(call[1].reply_to.reply_to_msg_id, 1001 + index * 2)
+                self.assertIn("Sticker sender", kwargs["caption"])
+                self.assertIn(f"12 March 2023 · 10:{minute}", kwargs["caption"])
+        self.assertEqual(client.kinds("send_discussion_reply"), [])
         self.assertEqual(client.kinds("send_message"), [])
         self.assertEqual(client.kinds("send_channel_attribution"), [])
         self.assertIn("sent=3", output)
@@ -1188,18 +1182,15 @@ class PipelineTests(unittest.TestCase):
         client, output, _ = self.run_once(native_forward=False)
         sends = client.kinds("send_file")
         self.assertEqual(len(sends), 3)
-        self.assertTrue(all(call[2]["caption"] == "" for call in sends))
-        attributions = client.kinds("send_discussion_reply")
-        self.assertEqual(len(attributions), 3)
         expected_times = (
             "13 November 2026 · 11:02:37",
             "13 November 2026 · 11:02:43",
             "13 November 2026 · 11:02:48",
         )
-        for index, (call, expected_time) in enumerate(zip(attributions, expected_times)):
-            self.assertIn("З", call[1].message)
-            self.assertIn(expected_time, call[1].message)
-            self.assertEqual(call[1].reply_to.reply_to_msg_id, 1001 + index * 2)
+        for call, expected_time in zip(sends, expected_times):
+            self.assertIn("З", call[2]["caption"])
+            self.assertIn(expected_time, call[2]["caption"])
+        self.assertEqual(client.kinds("send_discussion_reply"), [])
         self.assertIn("sent=3", output)
         self.assertIn("failed=0", output)
         with config.use_settings(self.settings()):
@@ -2133,21 +2124,26 @@ class PipelineTests(unittest.TestCase):
                     isinstance(attribute, tl.DocumentAttributeSticker)
                     for attribute in kwargs["attributes"]
                 ))
-                self.assertEqual(kwargs["caption"], "")
                 attribution = client.kinds("send_discussion_reply")
-                self.assertEqual(len(attribution), 1)
-                self.assertIn(
-                    "Forwarded from Original sender",
-                    attribution[0][1].message,
-                )
-                self.assertIn(
-                    "5 November 2026 · 19:35:11",
-                    attribution[0][1].message,
-                )
-                self.assertTrue(any(
-                    isinstance(entity, tl.MessageEntityBlockquote)
-                    for entity in attribution[0][1].entities
-                ))
+                if extension == ".tgs":
+                    self.assertEqual(kwargs["caption"], "")
+                    self.assertEqual(len(attribution), 1)
+                    self.assertIn(
+                        "Forwarded from Original sender",
+                        attribution[0][1].message,
+                    )
+                    self.assertIn(
+                        "5 November 2026 · 19:35:11",
+                        attribution[0][1].message,
+                    )
+                    self.assertTrue(any(
+                        isinstance(entity, tl.MessageEntityBlockquote)
+                        for entity in attribution[0][1].entities
+                    ))
+                else:
+                    self.assertIn("Forwarded from Original sender", kwargs["caption"])
+                    self.assertIn("5 November 2026 · 19:35:11", kwargs["caption"])
+                    self.assertEqual(attribution, [])
                 with config.use_settings(self.settings()):
                     self.assertEqual(progress.load_id_map(), {"701": 1001})
 
@@ -2178,19 +2174,16 @@ class PipelineTests(unittest.TestCase):
                     media, None, state, "702",
                 )
             self.assertEqual(result, 801)
-            self.assertEqual(len(calls), 3)
+            self.assertEqual(len(calls), 2)
             sticker_send = calls[0]
-            attribution = calls[1]
-            photo_send = calls[2]
+            photo_send = calls[1]
             self.assertEqual(sticker_send[1]["caption"], "")
             self.assertEqual(photo_send[1]["caption"], caption)
             self.assertTrue(any(
                 isinstance(attribute, tl.DocumentAttributeSticker)
                 for attribute in sticker_send[1]["attributes"]
             ))
-            self.assertEqual(attribution[0], "send_message")
-            self.assertIn(caption, attribution[1])
-            self.assertEqual(attribution[2]["reply_to"], 801)
+            self.assertEqual(client.kinds("send_discussion_reply"), [])
         asyncio.run(scenario())
 
     def test_multiple_webp_webm_stickers_in_one_source_message_each_keep_attribution(self):
@@ -2224,11 +2217,12 @@ class PipelineTests(unittest.TestCase):
                     isinstance(attribute, tl.DocumentAttributeSticker)
                     for attribute in kwargs["attributes"]
                 ))
-                self.assertEqual(kwargs["caption"], "")
-        attribution = client.kinds("send_discussion_reply")
-        self.assertEqual(len(attribution), 3)
-        for call in attribution:
-            self.assertIn("Sticker author\n12 March 2023 · 10:25", call[1].message)
+                if index < len(stickers) - 1:
+                    self.assertEqual(kwargs["caption"], "")
+                else:
+                    self.assertIn("Sticker author", kwargs["caption"])
+                    self.assertIn("12 March 2023 · 10:25", kwargs["caption"])
+        self.assertEqual(client.kinds("send_discussion_reply"), [])
         self.assertEqual(client.kinds("send_message"), [])
         self.assertEqual(client.kinds("send_channel_attribution"), [])
         self.assertIn("sent=1", output)
