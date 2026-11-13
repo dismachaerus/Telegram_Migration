@@ -2090,7 +2090,7 @@ class PipelineTests(unittest.TestCase):
                 with config.use_settings(self.settings()):
                     self.assertEqual(progress.load_id_map(), {"701": 1001})
 
-    def test_multiple_media_with_sticker_first_attaches_context_to_final_media(self):
+    def test_multiple_media_with_sticker_first_keeps_context_on_sticker_and_final_item(self):
         async def scenario():
             calls = []
 
@@ -2109,22 +2109,59 @@ class PipelineTests(unittest.TestCase):
                 ("stickers/first.webp", "sticker_static"),
                 ("photos/second.jpg", "photo"),
             ]
+            caption = "Forwarded from Original sender\\n5 November 2026"
             with patch.object(progress, "save_state"):
                 result = await sending._send_multiple_media(
-                    client, "channel",
-                    [("Forwarded from Original sender\\n5 November 2026", [])],
+                    client, "channel", [(caption, [])],
                     media, None, state, "702",
                 )
             self.assertEqual(result, 801)
             self.assertEqual(len(calls), 2)
-            self.assertEqual(calls[0][1]["caption"], "")
-            self.assertEqual(calls[1][1]["caption"],
-                             "Forwarded from Original sender\\n5 November 2026")
+            self.assertEqual(calls[0][1]["caption"], caption)
+            self.assertEqual(calls[1][1]["caption"], caption)
             self.assertTrue(any(
                 isinstance(attribute, tl.DocumentAttributeSticker)
                 for attribute in calls[0][1]["attributes"]
             ))
         asyncio.run(scenario())
+
+    def test_multiple_webp_webm_stickers_in_one_source_message_each_keep_attribution(self):
+        stickers = (
+            ("stickers/first.webp", "image/webp"),
+            ("video_files/second.webm", "video/webm"),
+            ("stickers/third.webp", "image/webp"),
+        )
+        anchors = []
+        for relative, _mime in stickers:
+            fakes.write_file(self.folder.name, relative)
+            anchors.append(
+                f'<a class="sticker_wrap clearfix pull_left" href="{relative}">'
+                f'<img class="sticker" src="{relative}" /></a>'
+            )
+        markup = '<div class="media_wrap clearfix">' + "".join(anchors) + '</div>'
+        fakes.write_export(self.folder.name, [
+            fakes.message(823, markup, sender="Sticker author", minute=25)
+        ])
+
+        client, output, _ = self.run_once(native_forward=False)
+        calls = client.kinds("send_file")
+        self.assertEqual(len(calls), 3)
+        for index, (call, (relative, mime)) in enumerate(zip(calls, stickers)):
+            _channel, sent_path, kwargs = call
+            with self.subTest(sticker=index + 1):
+                self.assertEqual(sent_path, os.path.join(self.folder.name, relative))
+                self.assertEqual(kwargs["mime_type"], mime)
+                self.assertTrue(kwargs["force_document"])
+                self.assertTrue(any(
+                    isinstance(attribute, tl.DocumentAttributeSticker)
+                    for attribute in kwargs["attributes"]
+                ))
+                self.assertIn("Sticker author\\n12 March 2023 · 10:25", kwargs["caption"])
+        self.assertEqual(client.kinds("send_message"), [])
+        self.assertEqual(client.kinds("send_discussion_reply"), [])
+        self.assertEqual(client.kinds("send_channel_attribution"), [])
+        self.assertIn("sent=1", output)
+        self.assertIn("failed=0", output)
 
 
     def test_single_html_record_keeps_mixed_photo_video_media_together_in_source_order(self):
