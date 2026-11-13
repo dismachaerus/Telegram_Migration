@@ -60,6 +60,11 @@ def _classify(rel, wrap_class, full, anchor_classes=(), export_label=""):
         or "sticker_wrap" in classes
         or "stickers/" in lower_rel
         or _label_says_sticker(export_label)
+        # Telegram Desktop may export video stickers as video_file_wrap links
+        # under video_files/sticker*.webm rather than sticker_wrap anchors.
+        # Reuse the same path rule already used for inline video-sticker links
+        # so these are never inferred as ordinary video album members.
+        or is_inline_sticker_reference(rel)
     )
     if is_sticker:
         if ext in (".webp", ".png"):
