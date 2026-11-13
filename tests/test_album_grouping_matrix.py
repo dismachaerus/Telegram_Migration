@@ -36,11 +36,9 @@ class AlbumGroupingMatrixTests(unittest.TestCase):
             ("photo",),
             ("video",),
             ("document",),
-            ("audio",),
             ("gif",),
-            ("voice",),
             ("sticker_static",),
-            ("photo", "video", "gif", "voice", "sticker_static"),
+            ("photo", "video", "gif", "sticker_static"),
         )
         for count in (2, 3, 8, 10):
             for kinds in media_runs:
@@ -59,7 +57,7 @@ class AlbumGroupingMatrixTests(unittest.TestCase):
                     self.assertTrue(all(not row["body_text"] for row in records[1:]))
 
     def test_non_album_media_types_cannot_start_or_continue_source_groups(self):
-        for kind in ("round_video",):
+        for kind in ("round_video", "audio", "voice"):
             with self.subTest(kind=kind):
                 record = self._record(0, kind, first=True)
                 self.assertFalse(album._album_candidate(record, record["sender"]))
