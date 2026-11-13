@@ -1191,7 +1191,11 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(all(call[2]["caption"] == "" for call in sends))
         attributions = client.kinds("send_discussion_reply")
         self.assertEqual(len(attributions), 3)
-        expected_times = ("11:02", "11:02", "11:02")
+        expected_times = (
+            "13 November 2026 · 11:02:37",
+            "13 November 2026 · 11:02:43",
+            "13 November 2026 · 11:02:48",
+        )
         for index, (call, expected_time) in enumerate(zip(attributions, expected_times)):
             self.assertIn("З", call[1].message)
             self.assertIn(expected_time, call[1].message)
