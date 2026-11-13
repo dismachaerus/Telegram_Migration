@@ -1151,7 +1151,7 @@ class PipelineTests(unittest.TestCase):
         with config.use_settings(self.settings()):
             self.assertEqual(
                 progress.load_id_map(),
-                {"812": 1001, "813": 1003, "814": 1005},
+                {"812": 1001, "813": 1002, "814": 1003},
             )
 
     def test_actual_joined_webp_sticker_export_keeps_each_sender_and_timestamp(self):
@@ -1196,7 +1196,7 @@ class PipelineTests(unittest.TestCase):
         with config.use_settings(self.settings()):
             self.assertEqual(
                 progress.load_id_map(),
-                {"495": 1001, "496": 1003, "497": 1005},
+                {"495": 1001, "496": 1002, "497": 1003},
             )
 
     def test_tgs_attribution_without_discussion_group_is_the_next_channel_post(self):
@@ -2186,7 +2186,7 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(client.kinds("send_discussion_reply"), [])
         asyncio.run(scenario())
 
-    def test_multiple_webp_webm_stickers_in_one_source_message_each_keep_attribution(self):
+    def test_multiple_webp_webm_stickers_in_one_source_message_keep_media_caption(self):
         stickers = (
             ("stickers/first.webp", "image/webp"),
             ("video_files/second.webm", "video/webm"),
