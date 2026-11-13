@@ -11,6 +11,7 @@ from telethon.tl import types as tl
 from . import attribution, album, bigfiles, cli, config, customemoji, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
 from .htmlutil import css_classes
 from .message_dispatch import _print_dry_run, _send_migrated_message
+from .constants import STICKER_KINDS
 from .textutil import compose_message, compose_message_header, format_archive_timestamp, split_with_entities, strip_with_entities, u16len
 
 async def process_file(client, channel, path, id_map, partial, pending_replies, stats, ctx,
@@ -152,7 +153,12 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
                 timestamp, "Telegram service event", date_only=True
             )
         else:
-            header = compose_message_header(timestamp, data["sender"])
+            has_sticker = any(
+                kind in STICKER_KINDS for _path, kind in data.get("media", [])
+            )
+            header = compose_message_header(
+                timestamp, data["sender"], include_seconds=has_sticker
+            )
 
         body_text = data["body_text"]
         body_entities = list(data["body_entities"])
