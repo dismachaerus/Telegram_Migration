@@ -8,6 +8,7 @@ from telethon.tl import types as tl
 
 from . import album, config, exportmedia, formatfallback, progress, uploads
 from .attribution import _send_sticker_with_attribution
+from .caption_sending import inferred_album_item_caption_parts, send_inferred_album_item_caption_continuations
 from .textutil import clean_invalid_entities, split_with_entities
 from .constants import STICKER_KINDS
 
@@ -149,45 +150,6 @@ async def send_inferred_album_caption(
     )
 
 
-def inferred_album_item_caption_parts(item_captions):
-    """Split each source audio message's caption independently for its album item."""
-    captions = []
-    caption_entities = []
-    continuations = []
-    for text, entities in item_captions:
-        chunks = split_with_entities(
-            text, entities or [],
-            config.settings.caption_limit, config.settings.text_limit,
-        )
-        first, *rest = chunks
-        captions.append(first[0])
-        caption_entities.append(first[1])
-        continuations.append(rest)
-    return captions, caption_entities, continuations
-
-
-async def send_inferred_album_item_caption_continuations(
-    client, channel, item_captions, state, source_id, album_message_ids,
-):
-    """Reply to the corresponding audio item only when its own caption overflows."""
-    _captions, _entities, continuations = inferred_album_item_caption_parts(
-        item_captions
-    )
-    if len(album_message_ids) != len(continuations):
-        raise RuntimeError(
-            f"Cannot restore per-item audio captions for source id={source_id}: "
-            "caption and destination item counts differ"
-        )
-    for index, (message_id, extra_chunks) in enumerate(
-        zip(album_message_ids, continuations)
-    ):
-        if extra_chunks:
-            await _send_text_chunks(
-                client, channel, extra_chunks, int(message_id), state,
-                f"album_item_caption_{index}_prog", source_id,
-            )
-
-
 async def _send_album(client, channel, chunks, media, reply_to, state, source_id,
                       *, force_document=False, captions=None, caption_entities=None,
                       album_caption=None, album_caption_entities=None,
@@ -321,6 +283,10 @@ async def _send_individual_media(client, channel, chunks, media, reply_to, state
                                  source_id):
     first_text, first_ents = chunks[0]
     state.setdefault("multi_media_ids", [])
+    captionable_sticker_kinds = {"sticker_static", "sticker_video"}
+    has_captioned_sticker = any(
+        kind in captionable_sticker_kinds for _path, kind in media
+    )
     for index, (path, kind) in enumerate(media[:len(state["multi_media_ids"])]):
         if _is_tgs_sticker(path, kind):
             await _send_sticker_with_attribution(
@@ -340,8 +306,14 @@ async def _send_individual_media(client, channel, chunks, media, reply_to, state
             )
             sent_msg = type("SentSticker", (), {"id": sent_id})()
         else:
-            caption = first_text if is_final_item else ""
-            entities = first_ents if is_final_item else None
+            # Every WebP/WebM sticker is posted separately, so each gets the
+            # source message caption. Other media keep the one-caption rule.
+            caption_on_item = (
+                kind in captionable_sticker_kinds
+                or (is_final_item and not has_captioned_sticker)
+            )
+            caption = first_text if caption_on_item else ""
+            entities = first_ents if caption_on_item else None
             sent_msg = await uploads.send_media_item(
                 client, channel, path, kind, reply_to, source_id,
                 caption=caption, entities=entities,
