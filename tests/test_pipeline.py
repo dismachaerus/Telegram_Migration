@@ -1092,34 +1092,47 @@ class PipelineTests(unittest.TestCase):
                     self.assertEqual(client.kinds("send_channel_attribution"), [])
                 self.assertEqual(client.kinds("send_message"), [])
 
-    def test_consecutive_webp_and_webm_stickers_each_keep_own_caption(self):
+    def test_consecutive_webm_video_file_stickers_keep_own_authors(self):
         stickers = (
-            ("stickers/one.webp", "image/webp", 12),
-            ("stickers/two.webm", "video/webm", 13),
-            ("stickers/three.webp", "image/webp", 14),
+            ("video_files/sticker-one.webm", "video/webm", 12, "webm"),
+            ("video_files/sticker-two.webm", "video/webm", 13, "webm"),
+            ("stickers/three.webp", "image/webp", 14, "webp"),
         )
         records = []
-        for index, (relative, _mime, minute) in enumerate(stickers):
+        for index, (relative, _mime, minute, extension) in enumerate(stickers):
             fakes.write_file(self.folder.name, relative)
-            sticker = (
-                '<div class="media_wrap clearfix">'
-                f'<a class="media clearfix pull_left block_link media_photo" href="{relative}">'
-                '<div class="body"><div class="title bold">Sticker</div>'
-                '<div class="status details">👋</div></div></a></div>'
-            )
+            if extension == "webm":
+                # This is Telegram Desktop's video-file representation of a
+                # WebM sticker, not a sticker_wrap in the stickers/ directory.
+                markup = (
+                    '<div class="media_wrap clearfix">'
+                    f'<a class="video_file_wrap clearfix pull_left" href="{relative}">'
+                    '<div class="video_play_bg"><div class="video_play"></div></div>'
+                    '<div class="video_duration">00:03</div></a></div>'
+                )
+            else:
+                markup = (
+                    '<div class="media_wrap clearfix">'
+                    f'<a class="sticker_wrap clearfix pull_left" href="{relative}">'
+                    f'<img class="sticker" src="{relative}_thumb.webp" /></a></div>'
+                )
             records.append(fakes.message(
                 812 + index,
-                sticker,
+                markup,
                 sender="Sticker sender" if index == 0 else "",
                 classes="" if index == 0 else "joined",
                 minute=minute,
             ))
         fakes.write_export(self.folder.name, records)
 
+        with config.use_settings(self.settings()):
+            groups = htmlexport.infer_media_groups([self.path("messages.html")])
+        self.assertEqual(groups, {})
+
         client, output, _ = self.run_once(native_forward=False)
         calls = client.kinds("send_file")
         self.assertEqual(len(calls), 3)
-        for index, (call, (relative, mime, minute)) in enumerate(zip(calls, stickers)):
+        for index, (call, (relative, mime, minute, _extension)) in enumerate(zip(calls, stickers)):
             _channel, sent_file, kwargs = call
             with self.subTest(sticker=index + 1):
                 self.assertEqual(sent_file, os.path.join(self.folder.name, relative))
