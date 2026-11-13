@@ -343,7 +343,7 @@ def map_destination_ids(source_ids, destination_ids, id_map, persist_id):
 
 async def verify_mapped_album(client, channel, data, id_map, partial, source_id):
     """Audit a mapped album before skipping it; never resend media automatically."""
-    from . import progress
+    from . import progress, sending
     from .caption_sending import (
         inferred_album_item_caption_parts,
         send_inferred_album_item_caption_continuations,
