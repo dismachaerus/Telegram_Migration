@@ -1119,7 +1119,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(client.kinds("send_file")), 1)
         self.assertEqual(client.kinds("send_file")[0][2]["caption"], "")
 
-    def test_consecutive_audio_messages_keep_each_sender_and_timestamp_on_its_own_item(self):
+    def test_consecutive_audio_posts_each_keep_own_sender_timestamp_and_caption(self):
         paths = (
             "audio_files/track-one.mp3",
             "audio_files/track-two.mp3",
@@ -1147,18 +1147,15 @@ class PipelineTests(unittest.TestCase):
 
         client, output, _ = self.run_once(native_forward=False)
         calls = client.kinds("send_file")
-        self.assertEqual(len(calls), 1)
-        files, kwargs = calls[0][1], calls[0][2]
-        self.assertEqual(
-            files,
-            [os.path.join(self.folder.name, path) for path in paths],
-        )
-        self.assertEqual(len(kwargs["caption"]), 3)
-        for index, caption in enumerate(kwargs["caption"]):
+        self.assertEqual(len(calls), 3)
+        for index, (call, relative) in enumerate(zip(calls, paths)):
+            _channel, sent_file, kwargs = call
             with self.subTest(audio=index + 1):
-                self.assertIn("Alice", caption)
-                self.assertIn(f"12 March 2023 · 10:{20 + index}", caption)
-                self.assertIn(f"Track caption {index + 1}", caption)
+                self.assertEqual(sent_file, os.path.join(self.folder.name, relative))
+                self.assertIsInstance(kwargs["caption"], str)
+                self.assertIn("Alice", kwargs["caption"])
+                self.assertIn(f"12 March 2023 · 10:{20 + index}", kwargs["caption"])
+                self.assertIn(f"Track caption {index + 1}", kwargs["caption"])
         self.assertEqual(client.kinds("send_message"), [])
         self.assertEqual(client.kinds("send_discussion_reply"), [])
         self.assertEqual(client.kinds("send_channel_attribution"), [])
