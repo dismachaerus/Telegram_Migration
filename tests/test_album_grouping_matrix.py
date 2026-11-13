@@ -3,7 +3,7 @@
 These tests use synthetic records only. They verify source grouping separately
 from Telegram's narrower native sendMediaGroup compatibility rules.
 """
-import tempfile.
+import tempfile
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
