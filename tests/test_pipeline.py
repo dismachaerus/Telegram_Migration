@@ -1153,6 +1153,50 @@ class PipelineTests(unittest.TestCase):
                 {"812": 1001, "813": 1002, "814": 1003},
             )
 
+    def test_actual_joined_webp_sticker_export_keeps_each_sender_and_timestamp(self):
+        # Exact message structure from the supplied Telegram Desktop export.
+        records = [
+            '<div class="message default clearfix" id="message495"><div class="body">'
+            '<div class="pull_right date details" title="13.11.2026 11:02:37 UTC+02:00">11:02</div>'
+            '<div class="from_name">З</div>'
+            '<div class="media_wrap clearfix"><a class="sticker_wrap clearfix pull_left" href="stickers/sticker.webp">'
+            '<img class="sticker" src="stickers/sticker_thumb.webp" /></a></div></div></div>',
+            '<div class="message default clearfix joined" id="message496"><div class="body">'
+            '<div class="pull_right date details" title="13.11.2026 11:02:43 UTC+02:00">11:02</div>'
+            '<div class="media_wrap clearfix"><a class="sticker_wrap clearfix pull_left" href="stickers/sticker (1).webp">'
+            '<img class="sticker" src="stickers/sticker (1)_thumb.webp" /></a></div></div></div>',
+            '<div class="message default clearfix joined" id="message497"><div class="body">'
+            '<div class="pull_right date details" title="13.11.2026 11:02:48 UTC+02:00">11:02</div>'
+            '<div class="media_wrap clearfix"><a class="sticker_wrap clearfix pull_left" href="stickers/sticker (2).webp">'
+            '<img class="sticker" src="stickers/sticker (2)_thumb.webp" /></a></div></div></div>',
+        ]
+        for relative in (
+            "stickers/sticker.webp",
+            "stickers/sticker (1).webp",
+            "stickers/sticker (2).webp",
+        ):
+            fakes.write_file(self.folder.name, relative)
+        fakes.write_export(self.folder.name, records)
+
+        client, output, _ = self.run_once(native_forward=False)
+        sends = client.kinds("send_file")
+        self.assertEqual(len(sends), 3)
+        self.assertTrue(all(call[2]["caption"] == "" for call in sends))
+        attributions = client.kinds("send_discussion_reply")
+        self.assertEqual(len(attributions), 3)
+        expected_times = ("11:02", "11:02", "11:02")
+        for index, (call, expected_time) in enumerate(zip(attributions, expected_times)):
+            self.assertIn("З", call[1].message)
+            self.assertIn(expected_time, call[1].message)
+            self.assertEqual(call[1].reply_to.reply_to_msg_id, 1001 + index * 2)
+        self.assertIn("sent=3", output)
+        self.assertIn("failed=0", output)
+        with config.use_settings(self.settings()):
+            self.assertEqual(
+                progress.load_id_map(),
+                {"495": 1001, "496": 1003, "497": 1005},
+            )
+
     def test_tgs_attribution_without_discussion_group_is_the_next_channel_post(self):
         relative = "stickers/no-discussion.tgs"
         fakes.write_file(self.folder.name, relative)
@@ -2037,7 +2081,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual([row["msg_id"] for row in groups["12"]], ["12", "13"])
 
 
-    def test_forwarded_static_and_video_stickers_keep_attribution_in_media_caption(self):
+    def test_forwarded_static_animated_and_video_stickers_use_separate_attribution(self):
         # Exercise HTML reconstruction through the actual send_file call for
         # both sticker formats that previously emitted a separate text message.
         for extension in (".webp", ".tgs", ".webm"):
@@ -2078,26 +2122,21 @@ class PipelineTests(unittest.TestCase):
                     isinstance(attribute, tl.DocumentAttributeSticker)
                     for attribute in kwargs["attributes"]
                 ))
-                if extension == ".tgs":
-                    self.assertEqual(kwargs["caption"], "")
-                    attribution = client.kinds("send_discussion_reply")
-                    self.assertEqual(len(attribution), 1)
-                    self.assertIn(
-                        "Forwarded from Original sender",
-                        attribution[0][1].message,
-                    )
-                    self.assertIn(
-                        "5 November 2026 · 19:35:11",
-                        attribution[0][1].message,
-                    )
-                    self.assertTrue(any(
-                        isinstance(entity, tl.MessageEntityBlockquote)
-                        for entity in attribution[0][1].entities
-                    ))
-                else:
-                    self.assertIn("Forwarded from Original sender", kwargs["caption"])
-                    self.assertIn("5 November 2026 · 19:35:11", kwargs["caption"])
-                    self.assertEqual(client.kinds("send_discussion_reply"), [])
+                self.assertEqual(kwargs["caption"], "")
+                attribution = client.kinds("send_discussion_reply")
+                self.assertEqual(len(attribution), 1)
+                self.assertIn(
+                    "Forwarded from Original sender",
+                    attribution[0][1].message,
+                )
+                self.assertIn(
+                    "5 November 2026 · 19:35:11",
+                    attribution[0][1].message,
+                )
+                self.assertTrue(any(
+                    isinstance(entity, tl.MessageEntityBlockquote)
+                    for entity in attribution[0][1].entities
+                ))
                 with config.use_settings(self.settings()):
                     self.assertEqual(progress.load_id_map(), {"701": 1001})
 
@@ -2110,7 +2149,8 @@ class PipelineTests(unittest.TestCase):
                 return type("Sent", (), {"id": 800 + len(calls)})()
 
             async def send_message(channel, text, **kwargs):
-                raise AssertionError("caption must not be emitted as a separate text message")
+                calls.append(("send_message", text, kwargs))
+                return type("Sent", (), {"id": 900 + len(calls)})()
 
             client = type("Client", (), {})()
             client.send_file = send_file
@@ -2128,12 +2168,17 @@ class PipelineTests(unittest.TestCase):
                 )
             self.assertEqual(result, 801)
             self.assertEqual(len(calls), 2)
-            self.assertEqual(calls[0][1]["caption"], caption)
-            self.assertEqual(calls[1][1]["caption"], caption)
+            sticker_send = calls[0]
+            photo_send = calls[1]
+            self.assertEqual(sticker_send[1]["caption"], "")
+            self.assertEqual(photo_send[1]["caption"], caption)
             self.assertTrue(any(
                 isinstance(attribute, tl.DocumentAttributeSticker)
-                for attribute in calls[0][1]["attributes"]
+                for attribute in sticker_send[1]["attributes"]
             ))
+            attribution = next(call for call in calls if call[0] == "send_message")
+            self.assertIn(caption, attribution[1])
+            self.assertEqual(attribution[2]["reply_to"], 801)
         asyncio.run(scenario())
 
     def test_multiple_webp_webm_stickers_in_one_source_message_each_keep_attribution(self):
@@ -2167,9 +2212,12 @@ class PipelineTests(unittest.TestCase):
                     isinstance(attribute, tl.DocumentAttributeSticker)
                     for attribute in kwargs["attributes"]
                 ))
-                self.assertIn("Sticker author\n12 March 2023 · 10:25", kwargs["caption"])
+                self.assertEqual(kwargs["caption"], "")
+        attribution = client.kinds("send_discussion_reply")
+        self.assertEqual(len(attribution), 3)
+        for call in attribution:
+            self.assertIn("Sticker author\n12 March 2023 · 10:25", call[1].message)
         self.assertEqual(client.kinds("send_message"), [])
-        self.assertEqual(client.kinds("send_discussion_reply"), [])
         self.assertEqual(client.kinds("send_channel_attribution"), [])
         self.assertIn("sent=1", output)
         self.assertIn("failed=0", output)
