@@ -1,6 +1,6 @@
 """Helpers for inferred media albums reconstructed from Telegram Desktop HTML."""
 
-from copy import copy
+from copy import copy.
 
 from telethon.errors import MessageNotModifiedError
 from telethon.tl import types as tl
