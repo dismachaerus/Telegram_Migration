@@ -139,6 +139,10 @@ def _album_candidate(data, effective_sender):
     # to adjacent notes, so never infer a source album from that layout marker.
     if data["media"][0][1] == "round_video":
         return False
+    # Consecutive audio tracks and voice notes are separate source messages.
+    # Keep each one's sender, timestamp, and text in that same media caption.
+    if data["media"][0][1] in {"audio", "voice"}:
+        return False
     # TGS stickers are standalone Telegram sticker messages, not media albums.
     # Keep WebP and WebM sticker grouping behaviour unchanged.
     media_path, media_kind = data["media"][0]
