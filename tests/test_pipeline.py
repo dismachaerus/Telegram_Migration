@@ -1043,7 +1043,7 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse(calls[0][2].get("force_document", False))
         self.assertTrue(calls[0][2]["caption"].endswith("audio caption"))
 
-    def test_only_tgs_stickers_use_separate_sender_attribution(self):
+    def test_all_sticker_formats_use_separate_sender_attribution(self):
         cases = (
             (".tgs", "sticker_animated", "application/x-tgsticker"),
             (".webp", "sticker_static", "image/webp"),
@@ -1077,19 +1077,12 @@ class PipelineTests(unittest.TestCase):
                     "DocumentAttributeSticker",
                 )
 
-                if extension == ".tgs":
-                    self.assertEqual(kwargs["caption"], "")
-                    attribution = client.kinds("send_discussion_reply")
-                    self.assertEqual(len(attribution), 1)
-                    self.assertIn("Sticker sender\n12 March 2023 · 10:10", attribution[0][1].message)
-                    self.assertIn("👋", attribution[0][1].message)
-                    self.assertEqual(attribution[0][1].reply_to.reply_to_msg_id, 1001)
-                    self.assertEqual(client.kinds("send_channel_attribution"), [])
-                else:
-                    self.assertIn("Sticker sender\n12 March 2023 · 10:10", kwargs["caption"])
-                    self.assertNotIn("👋", kwargs["caption"])
-                    self.assertEqual(client.kinds("send_discussion_reply"), [])
-                    self.assertEqual(client.kinds("send_channel_attribution"), [])
+                self.assertEqual(kwargs["caption"], "")
+                attribution = client.kinds("send_discussion_reply")
+                self.assertEqual(len(attribution), 1)
+                self.assertIn("Sticker sender\n12 March 2023 · 10:10", attribution[0][1].message)
+                self.assertEqual(attribution[0][1].reply_to.reply_to_msg_id, 1001)
+                self.assertEqual(client.kinds("send_channel_attribution"), [])
                 self.assertEqual(client.kinds("send_message"), [])
 
     def test_consecutive_webm_video_file_stickers_keep_own_authors(self):
