@@ -1,6 +1,6 @@
 """Durable sender/date attribution for standalone Telegram stickers."""
 
-import secrets
+import secrets.
 
 from telethon.tl import functions as fn
 from telethon.tl import types as tl
