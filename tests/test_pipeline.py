@@ -1119,11 +1119,10 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(client.kinds("send_file")), 1)
         self.assertEqual(client.kinds("send_file")[0][2]["caption"], "")
 
-    def test_consecutive_audio_posts_each_keep_own_sender_timestamp_and_caption(self):
-        paths = (
-            "audio_files/track-one.mp3",
-            "audio_files/track-two.mp3",
-            "audio_files/track-three.mp3",
+    def test_ten_consecutive_audio_posts_each_keep_own_sender_timestamp_and_caption(self):
+        paths = tuple(
+            f"audio_files/track-{index + 1}.mp3"
+            for index in range(10)
         )
         records = []
         for index, relative in enumerate(paths):
@@ -1147,7 +1146,7 @@ class PipelineTests(unittest.TestCase):
 
         client, output, _ = self.run_once(native_forward=False)
         calls = client.kinds("send_file")
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls), 10)
         for index, (call, relative) in enumerate(zip(calls, paths)):
             _channel, sent_file, kwargs = call
             with self.subTest(audio=index + 1):
@@ -1159,12 +1158,12 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(client.kinds("send_message"), [])
         self.assertEqual(client.kinds("send_discussion_reply"), [])
         self.assertEqual(client.kinds("send_channel_attribution"), [])
-        self.assertIn("sent=3", output)
+        self.assertIn("sent=10", output)
         self.assertIn("failed=0", output)
         with config.use_settings(self.settings()):
             self.assertEqual(
                 progress.load_id_map(),
-                {"820": 1001, "821": 1002, "822": 1003},
+                {str(820 + index): 1001 + index for index in range(10)},
             )
 
     def test_multiple_audio_files_in_one_source_post_stay_one_album(self):
