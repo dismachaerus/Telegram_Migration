@@ -1119,8 +1119,12 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(client.kinds("send_file")), 1)
         self.assertEqual(client.kinds("send_file")[0][2]["caption"], "")
 
-    def test_consecutive_audio_media_are_one_album_with_one_shared_author_caption(self):
-        paths = ("audio_files/track-one.mp3", "audio_files/track-two.mp3")
+    def test_consecutive_audio_messages_keep_each_sender_and_timestamp_on_its_own_item(self):
+        paths = (
+            "audio_files/track-one.mp3",
+            "audio_files/track-two.mp3",
+            "audio_files/track-three.mp3",
+        )
         records = []
         for index, relative in enumerate(paths):
             fakes.write_file(self.folder.name, relative)
@@ -1132,7 +1136,8 @@ class PipelineTests(unittest.TestCase):
             )
             records.append(
                 fakes.message(
-                    820 + index, markup,
+                    820 + index,
+                    fakes.text(f"Track caption {index + 1}") + markup,
                     sender="Alice" if index == 0 else "",
                     classes="" if index == 0 else "joined",
                     minute=20 + index,
@@ -1148,18 +1153,21 @@ class PipelineTests(unittest.TestCase):
             files,
             [os.path.join(self.folder.name, path) for path in paths],
         )
-        self.assertEqual(kwargs["caption"][0], "")
-        self.assertIn("Alice\n12 March 2023 · 10:20", kwargs["caption"][-1])
-        self.assertEqual(len(kwargs["caption"]), 2)
+        self.assertEqual(len(kwargs["caption"]), 3)
+        for index, caption in enumerate(kwargs["caption"]):
+            with self.subTest(audio=index + 1):
+                self.assertIn("Alice", caption)
+                self.assertIn(f"12 March 2023 · 10:{20 + index}", caption)
+                self.assertIn(f"Track caption {index + 1}", caption)
         self.assertEqual(client.kinds("send_message"), [])
         self.assertEqual(client.kinds("send_discussion_reply"), [])
         self.assertEqual(client.kinds("send_channel_attribution"), [])
-        self.assertIn("sent=2", output)
+        self.assertIn("sent=3", output)
         self.assertIn("failed=0", output)
         with config.use_settings(self.settings()):
             self.assertEqual(
                 progress.load_id_map(),
-                {"820": 1001, "821": 1002},
+                {"820": 1001, "821": 1002, "822": 1003},
             )
 
     def test_multiple_audio_files_in_one_source_post_stay_one_album(self):
