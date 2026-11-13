@@ -6,17 +6,18 @@ from telethon.tl import functions as fn
 from telethon.tl import types as tl
 
 from . import formatfallback, progress, uploads
-from .constants import STICKER_KINDS
 from .textutil import clean_invalid_entities
 
 
 def prepare_message_attribution(data, text, entities):
-    """Mark every standalone sticker for separate sender/date attribution."""
+    """Mark a standalone TGS sticker for separate sender/date attribution."""
     media_items = data.get("media") or []
-    if len(media_items) == 1 and media_items[0][1] in STICKER_KINDS:
-        data["_sticker_attribution"] = True
-        data["_sticker_attribution_text"] = text
-        data["_sticker_attribution_entities"] = entities
+    if len(media_items) == 1:
+        path, kind = media_items[0]
+        if kind == "sticker_animated" and str(path).casefold().endswith(".tgs"):
+            data["_sticker_attribution"] = True
+            data["_sticker_attribution_text"] = text
+            data["_sticker_attribution_entities"] = entities
 
 
 
@@ -175,12 +176,11 @@ async def _send_sticker_with_attribution(
     client, channel, path, kind, reply_to, chunks, state, source_id,
     item_index=None,
 ):
-    """Post a native sticker without caption, then attach its own attribution.
+    """Post a native TGS sticker without caption and attach its attribution.
 
-    Telegram sticker posts do not reliably display media captions. Keep the
-    sticker native and publish the reconstructed author/date/text as a linked
-    attribution message. ``item_index`` gives each sticker in one source post
-    an independent checkpoint.
+    WebP and WebM sticker documents retain their native media captions.
+    ``item_index`` gives each TGS sticker in one source post an independent
+    checkpoint.
     """
     legacy_tgs = (
         item_index is None
