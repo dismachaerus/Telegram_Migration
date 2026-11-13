@@ -149,17 +149,64 @@ async def send_inferred_album_caption(
     )
 
 
+def inferred_album_item_caption_parts(item_captions):
+    """Split each source audio message's caption independently for its album item."""
+    captions = []
+    caption_entities = []
+    continuations = []
+    for text, entities in item_captions:
+        chunks = split_with_entities(
+            text, entities or [],
+            config.settings.caption_limit, config.settings.text_limit,
+        )
+        first, *rest = chunks
+        captions.append(first[0])
+        caption_entities.append(first[1])
+        continuations.append(rest)
+    return captions, caption_entities, continuations
+
+
+async def send_inferred_album_item_caption_continuations(
+    client, channel, item_captions, state, source_id, album_message_ids,
+):
+    """Reply to the corresponding audio item only when its own caption overflows."""
+    _captions, _entities, continuations = inferred_album_item_caption_parts(
+        item_captions
+    )
+    if len(album_message_ids) != len(continuations):
+        raise RuntimeError(
+            f"Cannot restore per-item audio captions for source id={source_id}: "
+            "caption and destination item counts differ"
+        )
+    for index, (message_id, extra_chunks) in enumerate(
+        zip(album_message_ids, continuations)
+    ):
+        if extra_chunks:
+            await _send_text_chunks(
+                client, channel, extra_chunks, int(message_id), state,
+                f"album_item_caption_{index}_prog", source_id,
+            )
+
+
 async def _send_album(client, channel, chunks, media, reply_to, state, source_id,
                       *, force_document=False, captions=None, caption_entities=None,
                       album_caption=None, album_caption_entities=None,
-                      return_all=False):
+                      album_item_captions=None, return_all=False):
     first_text, first_ents = chunks[0]
     files = [path for path, _kind in media]
-    inferred_album = album_caption is not None
-    if inferred_album:
-        # Put the complete message context on the final item of the group.
-        # Telegram accepts one caption per album item; all earlier slots stay
-        # empty so the caption follows the entire media sequence.
+    inferred_album = album_caption is not None or album_item_captions is not None
+    item_caption_continuations = None
+    if album_item_captions is not None:
+        if len(album_item_captions) != len(files):
+            raise RuntimeError(
+                f"Per-item album caption count {len(album_item_captions)} "
+                f"does not match media count {len(files)}"
+            )
+        captions, caption_entities, item_caption_continuations = (
+            inferred_album_item_caption_parts(album_item_captions)
+        )
+    elif inferred_album:
+        # Non-audio inferred albums keep one shared group caption on the final item.
         final_caption, _continuation = inferred_album_caption_parts(
             album_caption, album_caption_entities,
         )
@@ -184,11 +231,16 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
         for caption, entities in zip(captions, caption_entities)
     ]
 
-    async def send_group_caption(album_message_id):
-        if inferred_album:
+    async def send_group_caption(album_message_ids):
+        if album_item_captions is not None:
+            await send_inferred_album_item_caption_continuations(
+                client, channel, album_item_captions, state, source_id,
+                album_message_ids,
+            )
+        elif inferred_album:
             await send_inferred_album_caption(
                 client, channel, album_caption, album_caption_entities,
-                state, source_id, album_message_id,
+                state, source_id, album_message_ids[-1],
             )
 
     if "album_message_ids" in state:
@@ -204,7 +256,7 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
         )
         state["album_grouped_id"] = int(grouped_id)
         progress.save_state(state["src"], state)
-        await send_group_caption(saved_ids[-1])
+        await send_group_caption(saved_ids)
         return saved_ids if return_all else saved_ids[0]
     if "album_id" in state:
         # Older partial-state files may contain only the first ID. Guessing
@@ -257,7 +309,7 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
         f"    verified Telegram album for source id={source_id}: "
         f"{len(message_ids)} items, grouped_id={grouped_id}"
     )
-    await send_group_caption(message_ids[-1])
+    await send_group_caption(message_ids)
     return message_ids if return_all else message_ids[0]
 
 async def _send_individual_media(client, channel, chunks, media, reply_to, state,
@@ -364,6 +416,7 @@ async def _do_send(client, channel, chunks, media, reply_to, forward_source,
                 force_document=all(kind == "document" for _path, kind in media),
                 album_caption=album_caption,
                 album_caption_entities=album_caption_entities,
+                album_item_captions=data.get("_album_item_captions"),
                 return_all=True,
             )
 
