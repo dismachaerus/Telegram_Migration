@@ -1,6 +1,6 @@
 """Per-item captions for inferred media posts and albums."""
 
-from . import config
+from . import config.
 
 
 def inferred_album_item_caption_parts(item_captions):
