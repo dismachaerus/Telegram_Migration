@@ -1,0 +1,140 @@
+name: Finish v0.1.3.1 PyPI release and clear failed deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Publish missing 0.1.3.1 files (skip existing ones) and remove failed PyPI deployment records"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  deployments: write
+  id-token: write
+
+jobs:
+  publish-and-clean:
+    name: Publish remaining files and clear failed deployments
+    if: ${{ inputs.confirm }}
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - name: Check out the current release source
+        uses: actions/checkout@v4
+
+      - name: Verify package version
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          source = Path("telegram_migration/_version.py").read_text(encoding="utf-8")
+          match = re.search(r"""^__version__\s*=\s*["']([^"']+)["']""", source, re.MULTILINE)
+          if not match or match.group(1) != "0.1.3.1":
+              raise SystemExit(f"Expected package version 0.1.3.1, got {match.group(1) if match else 'unknown'}")
+          print("Verified package version 0.1.3.1")
+          PY
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Build distributions
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check dist/*
+
+      - name: Verify the source archive contains the complete test suite
+        run: |
+          python - <<'PY'
+          import tarfile
+          from pathlib import Path
+
+          sdists = list(Path("dist").glob("*.tar.gz"))
+          if len(sdists) != 1:
+              raise SystemExit(f"Expected one source archive, found {len(sdists)}")
+
+          expected = {
+              path.as_posix()
+              for path in Path("tests").rglob("*.py")
+          }
+          with tarfile.open(sdists[0], "r:gz") as archive:
+              actual = {
+                  "/".join(member.name.split("/")[1:])
+                  for member in archive.getmembers()
+                  if member.isfile() and len(member.name.split("/")) > 1
+                  and member.name.split("/")[1] == "tests"
+              }
+
+          missing = sorted(expected - actual)
+          if missing:
+              raise SystemExit("Source archive is missing test files: " + ", ".join(missing))
+
+          print(f"Verified all {len(expected)} test Python files in {sdists[0].name}")
+          PY
+
+      - name: Publish to PyPI, skipping files already uploaded
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+
+      - name: Remove failed PyPI deployment records
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const environment = "pypi";
+
+            const deployments = await github.paginate(
+              github.rest.repos.listDeployments,
+              { owner, repo, environment, per_page: 100 }
+            );
+
+            const failed = [];
+            for (const deployment of deployments) {
+              const statuses = await github.paginate(
+                github.rest.repos.listDeploymentStatuses,
+                { owner, repo, deployment_id: deployment.id, per_page: 100 }
+              );
+
+              if (statuses.length === 0) continue;
+
+              const latest = statuses.reduce((newest, status) =>
+                Date.parse(status.created_at) > Date.parse(newest.created_at) ? status : newest
+              );
+
+              if (latest.state === "failure") {
+                failed.push(deployment);
+              }
+            }
+
+            const removed = [];
+            for (const deployment of failed) {
+              await github.rest.repos.createDeploymentStatus({
+                owner,
+                repo,
+                deployment_id: deployment.id,
+                state: "inactive",
+                description: "Marked inactive before removing this failed PyPI deployment record.",
+                auto_inactive: false
+              });
+
+              await github.rest.repos.deleteDeployment({
+                owner,
+                repo,
+                deployment_id: deployment.id
+              });
+
+              removed.push(deployment.id);
+            }
+
+            core.summary
+              .addHeading("PyPI release 0.1.3.1")
+              .addRaw(`The publishing action completed. Any files already on PyPI were skipped; missing files were uploaded. Removed ${removed.length} failed deployment record(s) from the pypi environment. The pypi environment itself was not changed.`)
+              .addRaw(removed.length ? `\n\nRemoved deployment IDs: ${removed.join(", ")}` : "")
+              .write();
