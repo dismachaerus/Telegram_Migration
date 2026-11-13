@@ -1,4 +1,4 @@
-"""Durable sender/date attribution for standalone TGS stickers."""
+"""Durable sender/date attribution for standalone Telegram stickers."""
 
 import secrets
 
@@ -6,21 +6,17 @@ from telethon.tl import functions as fn
 from telethon.tl import types as tl
 
 from . import formatfallback, progress, uploads
+from .constants import STICKER_KINDS
 from .textutil import clean_invalid_entities
 
 
 def prepare_message_attribution(data, text, entities):
-    """Mark only standalone TGS sticker posts for separate sender/date attribution."""
+    """Mark every standalone sticker for separate sender/date attribution."""
     media_items = data.get("media") or []
-    if len(media_items) == 1:
-        media_path, media_kind = media_items[0]
-        if (
-            media_kind == "sticker_animated"
-            and str(media_path).casefold().endswith(".tgs")
-        ):
-            data["_tgs_sticker_attribution"] = True
-            data["_tgs_attribution_text"] = text
-            data["_tgs_attribution_entities"] = entities
+    if len(media_items) == 1 and media_items[0][1] in STICKER_KINDS:
+        data["_sticker_attribution"] = True
+        data["_sticker_attribution_text"] = text
+        data["_sticker_attribution_entities"] = entities
 
 
 
@@ -175,26 +171,45 @@ async def _send_attribution_reply(
     return int(reply_message_id)
 
 
-async def _send_tgs_sticker_with_attribution(
-    client, channel, path, kind, reply_to, chunks, data, state, source_id,
+async def _send_sticker_with_attribution(
+    client, channel, path, kind, reply_to, chunks, state, source_id,
+    item_index=None,
 ):
-    """Post one TGS sticker natively without caption, then attach its attribution."""
-    if "tgs_sticker_message_id" not in state:
+    """Post a native sticker without caption, then attach its own attribution.
+
+    Telegram sticker posts do not reliably display media captions. Keep the
+    sticker native and publish the reconstructed author/date/text as a linked
+    attribution message. ``item_index`` gives each sticker in one source post
+    an independent checkpoint.
+    """
+    legacy_tgs = (
+        item_index is None
+        and kind == "sticker_animated"
+        and str(path).casefold().endswith(".tgs")
+    )
+    prefix = (
+        "tgs_sticker" if legacy_tgs else
+        ("sticker" if item_index is None else f"sticker_item_{item_index}")
+    )
+    message_key = f"{prefix}_message_id"
+    attribution_key = f"{prefix}_attribution"
+
+    if message_key not in state:
         sticker = await uploads.send_media_item(
             client, channel, path, kind, reply_to, source_id,
             caption="", entities=None,
         )
-        state["tgs_sticker_message_id"] = int(sticker.id)
+        state[message_key] = int(sticker.id)
         progress.save_state(state["src"], state)
 
-    attribution_text = data.get("_tgs_attribution_text")
-    attribution_entities = data.get("_tgs_attribution_entities") or []
-    if not attribution_text:
-        attribution_text, attribution_entities = chunks[0]
-
+    attribution_text, attribution_entities = chunks[0]
     await _send_attribution_reply(
-        client, channel, state["tgs_sticker_message_id"],
+        client, channel, state[message_key],
         attribution_text, attribution_entities, state, source_id,
-        "tgs_sticker_attribution",
+        attribution_key,
     )
-    return int(state["tgs_sticker_message_id"])
+    return int(state[message_key])
+
+
+# Backwards-compatible internal alias for older callers and partial states.
+_send_tgs_sticker_with_attribution = _send_sticker_with_attribution
