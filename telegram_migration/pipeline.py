@@ -236,8 +236,8 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         annotation = [(annotation_text, annotation_entities)] if annotation_text.strip() else None
 
         kinds = [kind for _path, kind in data["media"]]
-        # Every supported media type carries its message context as a media
-        # caption. Text-only messages use the larger message limit.
+        # Sticker attribution is sent as a separate linked text message; other
+        # caption-capable media use the configured caption limit.
         first_limit = (
             config.settings.caption_limit if kinds
             else config.settings.text_limit
