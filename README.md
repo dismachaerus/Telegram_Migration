@@ -1,6 +1,6 @@
 # Telegram Desktop Chat-History Migration
 
-## Windows one-click launcher
+## Windows one-click launcher.
 
 Prefer a guided setup instead of typing commands? Download the **Windows click-to-run launcher**:
 
