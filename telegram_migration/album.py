@@ -343,7 +343,11 @@ def map_destination_ids(source_ids, destination_ids, id_map, persist_id):
 
 async def verify_mapped_album(client, channel, data, id_map, partial, source_id):
     """Audit a mapped album before skipping it; never resend media automatically."""
-    from . import progress, sending
+    from . import progress
+    from .caption_sending import (
+        inferred_album_item_caption_parts,
+        send_inferred_album_item_caption_continuations,
+    )
 
     source_ids = data["_album_source_ids"]
     state = dict(partial.get(str(source_id), {}) or {})
@@ -356,7 +360,7 @@ async def verify_mapped_album(client, channel, data, id_map, partial, source_id)
         )
     if data.get("_album_item_captions") is not None:
         expected_captions, expected_entities, _continuations = (
-            sending.inferred_album_item_caption_parts(data["_album_item_captions"])
+            inferred_album_item_caption_parts(data["_album_item_captions"])
         )
     else:
         first_caption, _continuation = sending.inferred_album_caption_parts(
@@ -378,7 +382,7 @@ async def verify_mapped_album(client, channel, data, id_map, partial, source_id)
         f"{len(mapped_ids)} items, grouped_id={grouped_id}"
     )
     if data.get("_album_item_captions") is not None:
-        await sending.send_inferred_album_item_caption_continuations(
+        await send_inferred_album_item_caption_continuations(
             client, channel, data["_album_item_captions"], state, source_id,
             mapped_ids,
         )
