@@ -7,6 +7,7 @@ from telethon.tl import types as tl
 
 from . import exportmedia
 from .albumcaption import caption_for_group, caption_for_group_body
+from .constants import STICKER_KINDS
 from .htmlutil import css_classes
 
 from .textutil import (
@@ -143,10 +144,10 @@ def _album_candidate(data, effective_sender):
     # Keep each one's sender, timestamp, and text in that same media caption.
     if data["media"][0][1] in {"audio", "voice"}:
         return False
-    # TGS stickers are standalone Telegram sticker messages, not media albums.
-    # Keep WebP and WebM sticker grouping behaviour unchanged.
+    # Stickers are standalone Telegram messages, not inferred media albums.
+    # Every sticker keeps its own sender/date in its own media caption.
     media_path, media_kind = data["media"][0]
-    if media_kind == "sticker_animated" and str(media_path).casefold().endswith(".tgs"):
+    if media_kind in STICKER_KINDS:
         return False
     if data.get("is_forwarded") and not data.get("forward_name"):
         return False
