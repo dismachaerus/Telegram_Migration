@@ -1489,6 +1489,7 @@ class PipelineTests(unittest.TestCase):
     def test_source_group_inference_is_type_agnostic_for_album_eligible_media(self):
         records = []
         expected = {}
+        sticker_ids = set()
         next_id = 2000
         media_builders = (
             ("photo", lambda p: fakes.photo(p), "photos"),
@@ -1508,8 +1509,8 @@ class PipelineTests(unittest.TestCase):
         )
 
         for count in range(2, 11):
-            first_id = next_id
-            expected[str(first_id)] = count
+            segment_first_id = None
+            segment_count = 0
             for index in range(count):
                 kind, builder, folder = media_builders[index % len(media_builders)]
                 extension = {
@@ -1524,7 +1525,24 @@ class PipelineTests(unittest.TestCase):
                     next_id, builder(relative) + caption,
                     sender="Alice", classes=joined,
                 ))
+
+                # Stickers are deliberate boundaries: only contiguous runs of
+                # two or more album-eligible media records should be inferred.
+                if kind == "sticker":
+                    sticker_ids.add(str(next_id))
+                    if segment_count >= 2:
+                        expected[str(segment_first_id)] = segment_count
+                    segment_first_id = None
+                    segment_count = 0
+                else:
+                    if segment_count == 0:
+                        segment_first_id = next_id
+                    segment_count += 1
                 next_id += 1
+
+            if segment_count >= 2:
+                expected[str(segment_first_id)] = segment_count
+
             # A text-only record is an explicit boundary between source groups.
             records.append(fakes.message(next_id, fakes.text("group boundary"), sender="Alice"))
             next_id += 1
@@ -1534,6 +1552,7 @@ class PipelineTests(unittest.TestCase):
             groups = htmlexport.infer_media_groups([self.path("messages.html")])
 
         self.assertEqual(set(groups), set(expected))
+        self.assertTrue(sticker_ids.isdisjoint(groups))
         for first_id, count in expected.items():
             self.assertEqual(len(groups[first_id]), count)
             self.assertTrue(all(len(member["media"]) == 1 for member in groups[first_id]))
