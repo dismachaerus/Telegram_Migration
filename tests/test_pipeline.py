@@ -2156,7 +2156,7 @@ class PipelineTests(unittest.TestCase):
                     isinstance(attribute, tl.DocumentAttributeSticker)
                     for attribute in kwargs["attributes"]
                 ))
-                self.assertIn("Sticker author\\n12 March 2023 · 10:25", kwargs["caption"])
+                self.assertIn("Sticker author\n12 March 2023 · 10:25", kwargs["caption"])
         self.assertEqual(client.kinds("send_message"), [])
         self.assertEqual(client.kinds("send_discussion_reply"), [])
         self.assertEqual(client.kinds("send_channel_attribution"), [])
