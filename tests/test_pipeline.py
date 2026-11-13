@@ -704,8 +704,15 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(sticker_calls[0][2]["reply_to"], 1001)
         self.assertEqual(photo_call[2]["reply_to"], 1002)
         self.assertIsNone(sticker_calls[1][2]["reply_to"])
-        self.assertIn("Forwarded from Valerie Demian", sticker_calls[1][2]["caption"])
-        self.assertNotIn("The impotent old man and the sea", sticker_calls[1][2]["caption"])
+        self.assertEqual(sticker_calls[1][2]["caption"], "")
+        sticker_attributions = client.kinds("send_discussion_reply")
+        self.assertEqual(len(sticker_attributions), 2)
+        self.assertIn("Forwarded from Valerie Demian", sticker_attributions[1][1].message)
+        self.assertNotIn("The impotent old man and the sea", sticker_attributions[1][1].message)
+        self.assertEqual(
+            sticker_attributions[1][1].reply_to.reply_to_msg_id,
+            sticker_calls[1][1].id if hasattr(sticker_calls[1][1], "id") else 1005,
+        )
         self.assertIn("The impotent old man and the sea", photo_call[2]["caption"])
         self.assertEqual(client.texts(), ["Alice\n\nearlier source message"])
         with config.use_settings(self.settings()):
@@ -777,7 +784,7 @@ class PipelineTests(unittest.TestCase):
                 self.assertNotIn("In reply to the original conversation", kwargs["caption"])
                 self.assertIsNone(kwargs["reply_to"])
                 self.assertEqual(client.kinds("send_message"), [])
-                if expected_kind == "sticker_animated":
+                if expected_kind.startswith("sticker_"):
                     self.assertEqual(kwargs["caption"], "")
                     attribution = client.kinds("send_discussion_reply")
                     self.assertEqual(len(attribution), 1)
@@ -1150,7 +1157,7 @@ class PipelineTests(unittest.TestCase):
         with config.use_settings(self.settings()):
             self.assertEqual(
                 progress.load_id_map(),
-                {"812": 1001, "813": 1002, "814": 1003},
+                {"812": 1001, "813": 1003, "814": 1005},
             )
 
     def test_actual_joined_webp_sticker_export_keeps_each_sender_and_timestamp(self):
