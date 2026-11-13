@@ -1135,10 +1135,15 @@ class PipelineTests(unittest.TestCase):
                     isinstance(attribute, tl.DocumentAttributeSticker)
                     for attribute in kwargs["attributes"]
                 ))
-                self.assertIn("Sticker sender", kwargs["caption"])
-                self.assertIn(f"12 March 2023 · 10:{minute}", kwargs["caption"])
+                self.assertEqual(kwargs["caption"], "")
+        attribution = client.kinds("send_discussion_reply")
+        self.assertEqual(len(attribution), 3)
+        for index, (call, (_relative, _mime, minute, _extension)) in enumerate(zip(attribution, stickers)):
+            with self.subTest(attribution=index + 1):
+                self.assertIn("Sticker sender", call[1].message)
+                self.assertIn(f"12 March 2023 · 10:{minute}", call[1].message)
+                self.assertEqual(call[1].reply_to.reply_to_msg_id, 1001 + index * 2)
         self.assertEqual(client.kinds("send_message"), [])
-        self.assertEqual(client.kinds("send_discussion_reply"), [])
         self.assertEqual(client.kinds("send_channel_attribution"), [])
         self.assertIn("sent=3", output)
         self.assertIn("failed=0", output)
