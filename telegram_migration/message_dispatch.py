@@ -1,6 +1,6 @@
 """Prepare, send, and record individual migrated messages."""
 
-from . import album, config, progress, replylinks, sending.
+from . import album, config, progress, replylinks, sending
 from .textutil import split_with_entities
 
 
