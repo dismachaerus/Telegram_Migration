@@ -195,11 +195,20 @@ async def _send_sticker_with_attribution(
     attribution_key = f"{prefix}_attribution"
 
     if message_key not in state:
-        sticker = await uploads.send_media_item(
-            client, channel, path, kind, reply_to, source_id,
-            caption="", entities=None,
-        )
-        state[message_key] = int(sticker.id)
+        # Reuse an upload checkpoint from the earlier caption-based path. This
+        # lets an interrupted migration add the missing attribution without
+        # uploading a duplicate sticker.
+        existing_ids = state.get("multi_media_ids") or []
+        if item_index is not None and item_index < len(existing_ids):
+            state[message_key] = int(existing_ids[item_index])
+        elif item_index is None and state.get("media_id") is not None:
+            state[message_key] = int(state["media_id"])
+        else:
+            sticker = await uploads.send_media_item(
+                client, channel, path, kind, reply_to, source_id,
+                caption="", entities=None,
+            )
+            state[message_key] = int(sticker.id)
         progress.save_state(state["src"], state)
 
     attribution_text, attribution_entities = chunks[0]
