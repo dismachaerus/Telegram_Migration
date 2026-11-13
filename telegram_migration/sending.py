@@ -7,7 +7,7 @@ from telethon.errors import FloodWaitError
 from telethon.tl import types as tl
 
 from . import album, config, exportmedia, formatfallback, progress, uploads
-from .attribution import _send_tgs_sticker_with_attribution
+from .attribution import _send_sticker_with_attribution
 from .textutil import clean_invalid_entities, split_with_entities
 from .constants import STICKER_KINDS
 
@@ -321,18 +321,23 @@ async def _send_individual_media(client, channel, chunks, media, reply_to, state
         index = len(state["multi_media_ids"])
         path, kind = media[index]
         is_final_item = index == len(media) - 1
-        # Stickers cannot join Telegram media albums. When one source message
-        # contains several files including stickers, each sticker is therefore
-        # published as its own post and needs the source author/date in its own
-        # caption; putting that caption only on the final item loses attribution
-        # from every preceding sticker.
-        carries_context = is_final_item or kind in STICKER_KINDS
-        caption = first_text if carries_context else ""
-        entities = first_ents if carries_context else None
-        sent_msg = await uploads.send_media_item(
-            client, channel, path, kind, reply_to, source_id,
-            caption=caption, entities=entities,
-        )
+        # Stickers cannot join media albums and do not reliably display
+        # captions. Send each sticker natively, then attach this source post's
+        # attribution as its own linked text message.
+        if kind in STICKER_KINDS:
+            sent_id = await _send_sticker_with_attribution(
+                client, channel, path, kind, reply_to,
+                [(first_text, first_ents)], state, source_id,
+                item_index=index,
+            )
+            sent_msg = type("SentSticker", (), {"id": sent_id})()
+        else:
+            caption = first_text if is_final_item else ""
+            entities = first_ents if is_final_item else None
+            sent_msg = await uploads.send_media_item(
+                client, channel, path, kind, reply_to, source_id,
+                caption=caption, entities=entities,
+            )
         state["multi_media_ids"].append(sent_msg.id)
         progress.save_state(state["src"], state)
     state["album_id"] = state["multi_media_ids"][0]
@@ -398,19 +403,18 @@ async def _send_single_media(client, channel, chunks, media, reply_to, state, so
 
 async def _do_send(client, channel, chunks, media, reply_to, forward_source,
                    state, annotation, source_id=None, data=None):
-    if data and data.get("_tgs_sticker_attribution"):
-        if (
-            len(media) != 1
-            or media[0][1] != "sticker_animated"
-            or not str(media[0][0]).casefold().endswith(".tgs")
-        ):
+    if data and data.get("_sticker_attribution"):
+        if len(media) != 1 or media[0][1] not in STICKER_KINDS:
             raise RuntimeError(
-                "Separate sticker attribution is restricted to one standalone "
-                "TGS sticker; other sticker formats keep their original send path."
+                "Separate sticker attribution requires exactly one standalone sticker."
             )
         path, kind = media[0]
-        return await _send_tgs_sticker_with_attribution(
-            client, channel, path, kind, reply_to, chunks, data, state, source_id,
+        sticker_chunks = chunks
+        attribution_text = data.get("_sticker_attribution_text")
+        if attribution_text is not None:
+            sticker_chunks = [(attribution_text, data.get("_sticker_attribution_entities") or [])]
+        return await _send_sticker_with_attribution(
+            client, channel, path, kind, reply_to, sticker_chunks, state, source_id,
         )
 
     if data and data.get("_inferred_album"):
