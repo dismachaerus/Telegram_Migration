@@ -2083,7 +2083,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual([row["msg_id"] for row in groups["12"]], ["12", "13"])
 
 
-    def test_forwarded_static_animated_and_video_stickers_use_separate_attribution(self):
+    def test_forwarded_stickers_use_native_captions_except_tgs(self):
         # Exercise HTML reconstruction through the actual send_file call for
         # both sticker formats that previously emitted a separate text message.
         for extension in (".webp", ".tgs", ".webm"):
@@ -2147,7 +2147,7 @@ class PipelineTests(unittest.TestCase):
                 with config.use_settings(self.settings()):
                     self.assertEqual(progress.load_id_map(), {"701": 1001})
 
-    def test_multiple_media_with_sticker_first_keeps_context_on_sticker_and_final_item(self):
+    def test_multiple_media_with_webp_sticker_keeps_caption_on_sticker(self):
         async def scenario():
             calls = []
 
@@ -2177,13 +2177,13 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(len(calls), 2)
             sticker_send = calls[0]
             photo_send = calls[1]
-            self.assertEqual(sticker_send[1]["caption"], "")
-            self.assertEqual(photo_send[1]["caption"], caption)
+            self.assertEqual(sticker_send[1]["caption"], caption)
+            self.assertEqual(photo_send[1]["caption"], "")
             self.assertTrue(any(
                 isinstance(attribute, tl.DocumentAttributeSticker)
                 for attribute in sticker_send[1]["attributes"]
             ))
-            self.assertEqual(client.kinds("send_discussion_reply"), [])
+            self.assertFalse(any(call[0] == "send_message" for call in calls))
         asyncio.run(scenario())
 
     def test_multiple_webp_webm_stickers_in_one_source_message_keep_media_caption(self):
@@ -2217,11 +2217,8 @@ class PipelineTests(unittest.TestCase):
                     isinstance(attribute, tl.DocumentAttributeSticker)
                     for attribute in kwargs["attributes"]
                 ))
-                if index < len(stickers) - 1:
-                    self.assertEqual(kwargs["caption"], "")
-                else:
-                    self.assertIn("Sticker author", kwargs["caption"])
-                    self.assertIn("12 March 2023 · 10:25", kwargs["caption"])
+                self.assertIn("Sticker author", kwargs["caption"])
+                self.assertIn("12 March 2023 · 10:25", kwargs["caption"])
         self.assertEqual(client.kinds("send_discussion_reply"), [])
         self.assertEqual(client.kinds("send_message"), [])
         self.assertEqual(client.kinds("send_channel_attribution"), [])
