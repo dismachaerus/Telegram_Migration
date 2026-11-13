@@ -314,15 +314,21 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
 
 async def _send_individual_media(client, channel, chunks, media, reply_to, state,
                                  source_id):
-    """Send an ungroupable source media sequence in order, captioning its final item."""
+    """Send separate media posts, retaining the source attribution on every sticker."""
     first_text, first_ents = chunks[0]
     state.setdefault("multi_media_ids", [])
     while len(state["multi_media_ids"]) < len(media):
         index = len(state["multi_media_ids"])
         path, kind = media[index]
         is_final_item = index == len(media) - 1
-        caption = first_text if is_final_item else ""
-        entities = first_ents if is_final_item else None
+        # Stickers cannot join Telegram media albums. When one source message
+        # contains several files including stickers, each sticker is therefore
+        # published as its own post and needs the source author/date in its own
+        # caption; putting that caption only on the final item loses attribution
+        # from every preceding sticker.
+        carries_context = is_final_item or kind in STICKER_KINDS
+        caption = first_text if carries_context else ""
+        entities = first_ents if carries_context else None
         sent_msg = await uploads.send_media_item(
             client, channel, path, kind, reply_to, source_id,
             caption=caption, entities=entities,
