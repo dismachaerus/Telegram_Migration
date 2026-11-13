@@ -16,8 +16,37 @@ jobs:
           python-version: '3.x'
       - name: Build distributions
         run: |
-          python -m pip install --upgrade build
+          python -m pip install --upgrade build twine
           python -m build
+          python -m twine check dist/*
+      - name: Verify the source archive contains the complete test suite
+        run: |
+          python - <<'PY'
+          import tarfile
+          from pathlib import Path
+
+          sdists = list(Path("dist").glob("*.tar.gz"))
+          if len(sdists) != 1:
+              raise SystemExit(f"Expected one source archive, found {len(sdists)}")
+
+          expected = {
+              path.as_posix()
+              for path in Path("tests").rglob("*.py")
+          }
+          with tarfile.open(sdists[0], "r:gz") as archive:
+              actual = {
+                  "/".join(member.name.split("/")[1:])
+                  for member in archive.getmembers()
+                  if member.isfile() and len(member.name.split("/")) > 1
+                  and member.name.split("/")[1] == "tests"
+              }
+
+          missing = sorted(expected - actual)
+          if missing:
+              raise SystemExit("Source archive is missing test files: " + ", ".join(missing))
+
+          print(f"Verified all {len(expected)} test Python files in {sdists[0].name}")
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: dist
