@@ -1092,6 +1092,56 @@ class PipelineTests(unittest.TestCase):
                     self.assertEqual(client.kinds("send_channel_attribution"), [])
                 self.assertEqual(client.kinds("send_message"), [])
 
+    def test_consecutive_webp_and_webm_stickers_each_keep_own_caption(self):
+        stickers = (
+            ("stickers/one.webp", "image/webp", 12),
+            ("stickers/two.webm", "video/webm", 13),
+            ("stickers/three.webp", "image/webp", 14),
+        )
+        records = []
+        for index, (relative, _mime, minute) in enumerate(stickers):
+            fakes.write_file(self.folder.name, relative)
+            sticker = (
+                '<div class="media_wrap clearfix">'
+                f'<a class="media clearfix pull_left block_link media_photo" href="{relative}">'
+                '<div class="body"><div class="title bold">Sticker</div>'
+                '<div class="status details">👋</div></div></a></div>'
+            )
+            records.append(fakes.message(
+                812 + index,
+                sticker,
+                sender="Sticker sender" if index == 0 else "",
+                classes="" if index == 0 else "joined",
+                minute=minute,
+            ))
+        fakes.write_export(self.folder.name, records)
+
+        client, output, _ = self.run_once(native_forward=False)
+        calls = client.kinds("send_file")
+        self.assertEqual(len(calls), 3)
+        for index, (call, (relative, mime, minute)) in enumerate(zip(calls, stickers)):
+            _channel, sent_file, kwargs = call
+            with self.subTest(sticker=index + 1):
+                self.assertEqual(sent_file, os.path.join(self.folder.name, relative))
+                self.assertEqual(kwargs["mime_type"], mime)
+                self.assertTrue(kwargs["force_document"])
+                self.assertTrue(any(
+                    isinstance(attribute, tl.DocumentAttributeSticker)
+                    for attribute in kwargs["attributes"]
+                ))
+                self.assertIn("Sticker sender", kwargs["caption"])
+                self.assertIn(f"12 March 2023 · 10:{minute}", kwargs["caption"])
+        self.assertEqual(client.kinds("send_message"), [])
+        self.assertEqual(client.kinds("send_discussion_reply"), [])
+        self.assertEqual(client.kinds("send_channel_attribution"), [])
+        self.assertIn("sent=3", output)
+        self.assertIn("failed=0", output)
+        with config.use_settings(self.settings()):
+            self.assertEqual(
+                progress.load_id_map(),
+                {"812": 1001, "813": 1002, "814": 1003},
+            )
+
     def test_tgs_attribution_without_discussion_group_is_the_next_channel_post(self):
         relative = "stickers/no-discussion.tgs"
         fakes.write_file(self.folder.name, relative)
