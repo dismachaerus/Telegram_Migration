@@ -6,7 +6,10 @@ from telethon.tl import types as tl
 
 from . import exportmedia
 from .htmlutil import css_classes
-from .textutil import sanitize_text, strip_with_entities, u16len
+from .textutil import (
+    ordered_entities, prepare_entities_for_telegram,
+    sanitize_text, strip_with_entities, u16len,
+)
 
 
 _URL_SCHEMES = ("http", "https", "tg", "ftp", "ftps")
@@ -15,15 +18,26 @@ _URL_SCHEMES = ("http", "https", "tg", "ftp", "ftps")
 def _make_entity(name, **kwargs):
     cls = getattr(tl, name, None)
     if cls is None:
-        return None
+        raise RuntimeError(
+            f"Installed Telethon does not support required HTML formatting entity {name}"
+        )
     try:
         return cls(**kwargs)
-    except TypeError:
-        kwargs.pop("collapsed", None)        # older Telethon: no `collapsed`
+    except TypeError as exc:
+        # Older Telethon schema layers may not expose the optional collapsed
+        # blockquote flag. No other constructor error is silently ignored.
+        if "collapsed" not in kwargs:
+            raise RuntimeError(
+                f"Could not construct required Telegram entity {name}: {exc}"
+            ) from exc
+        compatible = dict(kwargs)
+        compatible.pop("collapsed")
         try:
-            return cls(**kwargs)
-        except TypeError:
-            return None
+            return cls(**compatible)
+        except TypeError as compat_exc:
+            raise RuntimeError(
+                f"Could not construct required Telegram entity {name}: {compat_exc}"
+            ) from compat_exc
 
 
 def _parse_rich_text(root, *, extract_stickers=False):
@@ -147,6 +161,9 @@ def _parse_rich_text(root, *, extract_stickers=False):
     raw_text = "".join(parts)
     leading_units = u16len(raw_text) - u16len(raw_text.lstrip())
     text, entities = strip_with_entities(raw_text, entities)
+    entities = prepare_entities_for_telegram(
+        text, ordered_entities(entities)
+    )
     kept_stickers = []
     text_length = u16len(text)
     for sticker in inline_stickers:
