@@ -97,8 +97,8 @@ class TextAndEntityTests(unittest.TestCase):
     def test_rich_text_fails_instead_of_dropping_unsupported_entities(self):
         root = etree.fromstring("<div><u>underlined</u></div>")
         with patch.object(richtext.tl, "MessageEntityUnderline", None):
-            with self.assertRaisesRegex(RuntimeError, "does not support required HTML formatting entity"):
-                richtext.parse_rich_text(root)
+            with self.assertRaisesRegex(RuntimeError, "source id=source-55: installed Telethon does not support required HTML formatting entity"):
+                richtext.parse_rich_text(root, source_id="source-55")
     def test_rich_text_handles_nested_bold_and_italic(self):
         root = etree.fromstring("<div><b>bold <i>both</i></b></div>")
         text, entities = richtext.parse_rich_text(root)
@@ -150,6 +150,18 @@ class TextAndEntityTests(unittest.TestCase):
         with self.assertRaisesRegex(textutil.EntityValidationError, "trailing whitespace"):
             textutil.validate_entities("bold ", [entity])
         self.assertEqual(entity.length, 5)
+
+    def test_prepare_entities_does_not_silently_drop_whitespace_only_formatting(self):
+        entity = tl.MessageEntityBold(offset=0, length=1)
+        with self.assertRaisesRegex(textutil.EntityValidationError, "trailing whitespace"):
+            textutil.prepare_entities_for_telegram(" ", [entity])
+        self.assertEqual(entity.length, 1)
+
+    def test_preformatted_entity_cannot_overlap_other_formatting(self):
+        pre = tl.MessageEntityPre(offset=0, length=4, language="")
+        bold = tl.MessageEntityBold(offset=0, length=4)
+        with self.assertRaisesRegex(textutil.EntityValidationError, "MessageEntityPre cannot overlap"):
+            textutil.validate_entities("code", [pre, bold])
 
     def test_prepare_entities_applies_telegram_trailing_whitespace_rule(self):
         text = "bold \nlink  "
