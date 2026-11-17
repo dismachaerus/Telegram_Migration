@@ -112,18 +112,27 @@ async def _verify_album_delivery(client, channel, messages, captions,
                 ) from exc
             raise
 
+        # Do not trust the Message object returned by edit_message: Telethon can
+        # return an update object whose cached text is stale. Verify the persisted
+        # server state with a fresh GetMessages request whenever available.
         edited_text = getattr(edited, "message", None) if edited is not None else None
-        if edited_text is None:
-            get_messages = getattr(client, "get_messages", None)
-            if callable(get_messages):
-                refreshed = await get_messages(channel, ids=message.id)
-                refreshed_list = await _album_message_list(refreshed)
-                if refreshed_list:
-                    edited_text = getattr(refreshed_list[0], "message", None)
+        get_messages = getattr(client, "get_messages", None)
+        if callable(get_messages):
+            refreshed = await get_messages(channel, ids=message.id)
+            refreshed_list = await _album_message_list(refreshed)
+            if refreshed_list:
+                edited_text = getattr(refreshed_list[0], "message", None)
+            else:
+                edited_text = None
         if edited_text != expected:
+            actual_preview = repr(edited_text)
+            expected_preview = repr(expected)
             raise RuntimeError(
                 f"Caption verification failed for album item {index} "
-                f"(source id={source_id}); expected text was not retained"
+                f"(source id={source_id}); fetched text did not match. "
+                f"expected_len={len(expected)}, actual_len="
+                f"{len(edited_text) if edited_text is not None else None}, "
+                f"expected={expected_preview[:240]}, actual={actual_preview[:240]}"
             )
 
     return grouped_ids[0]
