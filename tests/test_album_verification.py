@@ -49,6 +49,31 @@ class AlbumVerificationTests(unittest.TestCase):
         client.edit_message.assert_awaited_once()
         client.get_messages.assert_not_awaited()
 
+    def test_album_edit_filters_only_entities_outside_caption_bounds(self):
+        from telethon.tl import types as tl
+
+        valid = tl.MessageEntityBold(offset=0, length=7)
+        invalid = tl.MessageEntityItalic(offset=7, length=1)
+        stale = SimpleNamespace(
+            id=81, grouped_id=9005, message="caption", entities=[],
+        )
+        edited = SimpleNamespace(
+            id=81, grouped_id=9005, message="caption", entities=[valid],
+        )
+        client = SimpleNamespace(
+            edit_message=AsyncMock(return_value=edited),
+            get_messages=AsyncMock(),
+        )
+
+        grouped_id = asyncio.run(album._verify_album_delivery(
+            client, -100123, [stale], ["caption"], [[valid, invalid]], "313",
+        ))
+
+        self.assertEqual(grouped_id, 9005)
+        kwargs = client.edit_message.await_args.kwargs
+        self.assertEqual(kwargs["formatting_entities"], [valid])
+        client.get_messages.assert_not_awaited()
+
     def test_successful_edit_still_rejects_a_real_caption_mismatch(self):
         stale = SimpleNamespace(id=78, grouped_id=9002, message="stale caption")
         edited = SimpleNamespace(id=78, grouped_id=9002, message="still wrong")
