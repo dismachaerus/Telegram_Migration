@@ -145,16 +145,17 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
             inferred_album_item_caption_parts(album_item_captions)
         )
     elif inferred_album:
-        # Non-audio inferred albums keep one shared group caption on the final item.
-        final_caption, _continuation = inferred_album_caption_parts(
+        # Telegram's proven album path places the shared caption on the first
+        # media item. Keep the caption and its entity row aligned with item 0.
+        first_caption, _continuation = inferred_album_caption_parts(
             album_caption, album_caption_entities,
         )
-        captions = [""] * (len(files) - 1) + [final_caption[0]]
-        caption_entities = [[] for _ in files[:-1]] + [final_caption[1]]
+        captions = [first_caption[0]] + [""] * (len(files) - 1)
+        caption_entities = [first_caption[1]] + [[] for _ in files[1:]]
     else:
-        captions = ([""] * (len(files) - 1) + [first_text]
+        captions = ([first_text] + [""] * (len(files) - 1)
                     if captions is None else list(captions))
-        caption_entities = ([[] for _ in files[:-1]] + [first_ents]
+        caption_entities = ([first_ents] + [[] for _ in files[1:]]
                             if caption_entities is None else list(caption_entities))
     if len(captions) != len(files):
         raise RuntimeError(
@@ -179,7 +180,7 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
         elif inferred_album:
             await send_inferred_album_caption(
                 client, channel, album_caption, album_caption_entities,
-                state, source_id, album_message_ids[-1],
+                state, source_id, album_message_ids[0],
             )
 
     if "album_message_ids" in state:
@@ -216,7 +217,7 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
 
     msgs = await formatfallback.with_formatting_fallback(
         lambda **kw: uploads.send_file(client, channel, files, **kw),
-        album_kwargs, captions[-1], safe_entity_rows[-1], source_id,
+        album_kwargs, captions[0], safe_entity_rows[0], source_id,
     )
     if not msgs:
         raise RuntimeError("Album upload returned no messages")
@@ -324,7 +325,7 @@ async def _send_multiple_media(client, channel, chunks, media, reply_to, state, 
             or [state["album_id"]]
         )
         await _send_text_chunks(
-            client, channel, rest, group_ids[-1], state, "tail_prog", source_id
+            client, channel, rest, group_ids[0], state, "tail_prog", source_id
         )
     return state["album_id"]
 
