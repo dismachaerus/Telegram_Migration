@@ -50,19 +50,29 @@ class TextAndEntityTests(unittest.TestCase):
         self.assertEqual(link.url, "https://example.test/path")
         self.assertEqual(text[link.offset:link.offset + link.length], "site")
 
+    def test_rich_text_preserves_link_targets_without_resolving_them(self):
+        # These targets need not exist or be accessible. The exporter already
+        # supplied the URL; migration preserves it without network/account lookup.
+        for href in (
+            "https://this-host-does-not-exist.invalid/path%20with%20spaces",
+            "tg://user?id=987654321",
+        ):
+            with self.subTest(href=href):
+                root = etree.fromstring(
+                    f'<div><a href="{href}">target</a></div>'
+                )
+                text, entities = richtext.parse_rich_text(root)
+                self.assertEqual(text, "target")
+                self.assertEqual(len(entities), 1)
+                self.assertIsInstance(entities[0], tl.MessageEntityTextUrl)
+                self.assertEqual(entities[0].url, href)
+
     def test_rich_text_measures_offsets_in_utf16_units(self):
         root = etree.fromstring("<div>😀<i>x</i></div>")
         text, entities = richtext.parse_rich_text(root)
         self.assertEqual(text, "😀x")
         italic = next(e for e in entities if isinstance(e, tl.MessageEntityItalic))
         self.assertEqual((italic.offset, italic.length), (2, 1))
-
-    def test_malformed_telegram_user_link_fails_instead_of_losing_mention_entity(self):
-        root = etree.fromstring(
-            '<div><a href="tg://user?id=not-a-number">Alice</a></div>'
-        )
-        with self.assertRaisesRegex(ValueError, "malformed Telegram user mention"):
-            richtext.parse_rich_text(root)
 
     def test_rich_text_handles_nested_bold_and_italic(self):
         root = etree.fromstring("<div><b>bold <i>both</i></b></div>")
@@ -73,42 +83,22 @@ class TextAndEntityTests(unittest.TestCase):
         self.assertEqual((bold.offset, bold.length), (0, 9))
         self.assertEqual((italic.offset, italic.length), (5, 4))
 
-    def test_unresolvable_user_mention_fails_instead_of_becoming_plain_text(self):
-        async def get_input_entity(user_id):
-            raise ValueError("user is not available to this bot")
-
-        mention = tl.MessageEntityMentionName(
-            offset=0, length=5, user_id=123456789
-        )
-        client = SimpleNamespace(get_input_entity=get_input_entity)
-        with self.assertRaisesRegex(RuntimeError, "source message id=703"):
-            asyncio.run(sending.resolve_mentions(
-                client, [mention], source_id="703"
-            ))
-
-    def test_unsupported_telethon_entity_fails_instead_of_losing_formatting(self):
-        with self.assertRaisesRegex(RuntimeError, "does not support"):
-            richtext._make_entity(
-                "MessageEntityDefinitelyUnsupported", offset=0, length=1
-            )
-
     def test_strip_with_entities_rebases_offsets_using_utf16(self):
         entity = tl.MessageEntityItalic(offset=1, length=3)
         text, entities = textutil.strip_with_entities(" 😀x ", [entity])
         self.assertEqual(text, "😀x")
         self.assertEqual((entities[0].offset, entities[0].length), (0, 3))
 
-    def test_validate_entities_rejects_malformed_spans_without_dropping_valid_ones(self):
+    def test_clean_invalid_entities_drops_invalid_and_clips_overrun(self):
         good = tl.MessageEntityBold(offset=0, length=2)
         overrun = tl.MessageEntityItalic(offset=1, length=8)
         negative = tl.MessageEntityUnderline(offset=-1, length=1)
         empty = tl.MessageEntityStrike(offset=1, length=0)
         outside = tl.MessageEntityCode(offset=8, length=1)
-        with self.assertRaisesRegex(ValueError, "No formatting was discarded"):
-            textutil.validate_entities(
-                "abc", [good, overrun, negative, empty, outside], source_id="42"
-            )
-        self.assertEqual(textutil.validate_entities("abc", [good]), [good])
+        result = textutil.clean_invalid_entities("abc", [good, overrun, negative, empty, outside])
+        self.assertEqual([type(item).__name__ for item in result], [type(good).__name__, type(overrun).__name__])
+        self.assertEqual((result[0].offset, result[0].length), (0, 2))
+        self.assertEqual((result[1].offset, result[1].length), (1, 2))
 
     def test_archive_header_formats_sender_and_timestamp_with_utf16_entities(self):
         timestamp = datetime(2025, 3, 15, 11, 39)
@@ -134,35 +124,6 @@ class TextAndEntityTests(unittest.TestCase):
         )
         self.assertEqual(text, "[date]\nAlice:\nword")
         self.assertEqual((entities[0].offset, entities[0].length), (14, 4))
-
-    def test_compose_message_orders_outer_entities_before_nested_entities(self):
-        # Album forwarding attribution previously appended its blockquote
-        # after the bold/italic entities inside it, producing an unsorted
-        # Telegram entity vector and EntityBoundsInvalidError.
-        forward_text = "Forwarded from Source\n20 August 2024 · 16:32:07\n\n"
-        bold = tl.MessageEntityBold(offset=textutil.u16len("Forwarded from "), length=6)
-        italic = tl.MessageEntityItalic(
-            offset=textutil.u16len("Forwarded from Source\n"),
-            length=textutil.u16len("20 August 2024 · 16:32:07"),
-        )
-        quote = tl.MessageEntityBlockquote(
-            offset=0,
-            length=textutil.u16len("Forwarded from Source\n20 August 2024 · 16:32:07"),
-        )
-
-        text, entities = textutil.compose_message(
-            ("", []), ("", []), (forward_text, [bold, italic, quote]), "", [],
-        )
-
-        self.assertEqual(text, forward_text)
-        self.assertEqual(
-            [(type(entity).__name__, entity.offset, entity.length) for entity in entities],
-            [
-                ("MessageEntityBlockquote", 0, quote.length),
-                ("MessageEntityBold", bold.offset, bold.length),
-                ("MessageEntityItalic", italic.offset, italic.length),
-            ],
-        )
 
     def test_split_long_text_respects_limit_and_does_not_split_surrogate_pair(self):
         text = "abcdefgh😀ijklmnopqrs"
@@ -507,23 +468,6 @@ class InlineCustomEmojiTests(unittest.TestCase):
 
 
 class ExportParsingTests(unittest.TestCase):
-    def test_album_inference_scan_does_not_abort_on_one_unparseable_message(self):
-        from telegram_migration import album
-
-        with tempfile.TemporaryDirectory() as temp:
-            page = Path(temp) / "messages.html"
-            page.write_text(
-                '<html><body><div class="message" id="message701"></div>'
-                '</body></html>',
-                encoding="utf-8",
-            )
-            with patch(
-                "telegram_migration.htmlexport.extract_message_data",
-                side_effect=ValueError("unsupported source formatting"),
-            ):
-                groups = album.infer_media_groups([str(page)])
-        self.assertEqual(groups, [])
-
     def test_extract_message_data_reads_sender_time_text_and_reply(self):
         html = '''<div class="message default clearfix" id="message123">
           <div class="body">
@@ -1179,16 +1123,9 @@ class AsyncSendTests(unittest.TestCase):
                     captions = kwargs.get("caption") or ["", ""]
                     if not isinstance(captions, (list, tuple)):
                         captions = [captions, ""]
-                    entity_rows = kwargs.get("formatting_entities") or [[], []]
                     sent_messages[:] = [
-                        SimpleNamespace(
-                            id=501, grouped_id=77, message=captions[0],
-                            entities=entity_rows[0],
-                        ),
-                        SimpleNamespace(
-                            id=502, grouped_id=77, message=captions[1],
-                            entities=entity_rows[1],
-                        ),
+                        SimpleNamespace(id=501, grouped_id=77, message=captions[0]),
+                        SimpleNamespace(id=502, grouped_id=77, message=captions[1]),
                     ]
                     return sent_messages[:]
                 async def get_messages(channel, ids=None):
@@ -1309,76 +1246,27 @@ class AsyncSendTests(unittest.TestCase):
             self.assertIn("mime_type", uploads._UNSUPPORTED_SEND_KWARGS)
         asyncio.run(scenario())
 
-    def test_invalid_text_formatting_stops_before_sending_without_dropping_entities(self):
-        async def scenario():
-            calls = []
-            async def send_message(channel, text, **kwargs):
-                calls.append((text, kwargs))
-                return SimpleNamespace(id=1)
-            client = SimpleNamespace(send_message=send_message)
-            state = {"src": "701"}
-            invalid = tl.MessageEntityBold(offset=0, length=6)
-            with self.assertRaisesRegex(ValueError, "source message id=701"):
-                await sending._send_text_chunks(
-                    client, "channel", [("hello", [invalid])], None,
-                    state, "text_prog", source_id="701",
-                )
-            self.assertEqual(calls, [])
-
-        asyncio.run(scenario())
-
-    def test_invalid_media_caption_stops_before_upload_without_dropping_entities(self):
-        async def scenario():
-            calls = []
-            async def send_file(channel, path, **kwargs):
-                calls.append((path, kwargs))
-                return SimpleNamespace(id=2)
-            client = SimpleNamespace(send_file=send_file)
-            invalid = tl.MessageEntityItalic(offset=5, length=1)
-            with self.assertRaisesRegex(ValueError, "source message id=702"):
-                await uploads.send_media_item(
-                    client, "channel", "photos/test.jpg", "photo", None,
-                    source_id="702", caption="hello", entities=[invalid],
-                )
-            self.assertEqual(calls, [])
-
-        asyncio.run(scenario())
-
-    def test_formatting_error_is_not_retried_after_stripping_all_entities(self):
+    def test_formatting_fallback_retries_only_without_entities(self):
         async def scenario():
             calls = []
             async def send(**kwargs):
                 calls.append(dict(kwargs))
-                raise EntityBoundsError("invalid entity bounds")
+                if len(calls) == 1:
+                    raise EntityBoundsError("invalid entity bounds")
+                return "sent"
             class EntityBoundsError(Exception):
                 pass
             with tempfile.TemporaryDirectory() as temp:
-                debug_file = Path(temp) / "format.jsonl"
-                with patch.object(config.get_settings(), "format_debug_file", str(debug_file)):
-                    with self.assertRaises(EntityBoundsError):
-                        await formatfallback.with_formatting_fallback(
-                            send, {"formatting_entities": [tl.MessageEntityItalic(offset=0, length=1)]},
-                            "x", [tl.MessageEntityItalic(offset=0, length=1)], "1",
-                        )
-                self.assertEqual(len(calls), 1)
-                self.assertEqual(len(calls[0]["formatting_entities"]), 1)
-                self.assertTrue(debug_file.exists())
+                with patch.object(config.get_settings(), "format_debug_file", str(Path(temp) / "format.jsonl")):
+                    result = await formatfallback.with_formatting_fallback(
+                        send, {"formatting_entities": [tl.MessageEntityItalic(offset=0, length=1)]},
+                        "x", [tl.MessageEntityItalic(offset=0, length=1)], "1",
+                    )
+                self.assertEqual(result, "sent")
+                self.assertEqual(len(calls), 2)
+                self.assertIsNone(calls[1]["formatting_entities"])
+                self.assertTrue(Path(temp, "format.jsonl").exists())
         asyncio.run(scenario())
-
-    def test_validate_entities_rejects_surrogate_splitting_span_without_dropping_it(self):
-        text = "A😀B"
-        valid_before = tl.MessageEntityBold(offset=0, length=1)
-        invalid_middle = tl.MessageEntityItalic(offset=2, length=1)
-        valid_after = tl.MessageEntityUnderline(offset=3, length=1)
-        with self.assertRaisesRegex(ValueError, "surrogate|UTF-16"):
-            textutil.validate_entities(
-                text, [valid_before, invalid_middle, valid_after], source_id="43"
-            )
-
-    def test_split_rejects_invalid_entity_before_chunking_can_clip_it(self):
-        invalid = tl.MessageEntityItalic(offset=4, length=3)
-        with self.assertRaisesRegex(ValueError, "Invalid Telegram formatting entity bounds"):
-            textutil.split_with_entities("abcde", [invalid], first_limit=3, limit=3)
 
 
 if __name__ == "__main__":

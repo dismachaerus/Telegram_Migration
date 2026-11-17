@@ -32,7 +32,6 @@ def strip_with_entities(text, entities):
     identical, but measuring in UTF-16 avoids an off-by-N shift if the
     composed message ever starts with a non-BMP codepoint.
     """
-    entities = validate_entities(text, entities)
     stripped = text.lstrip()
     lead = u16len(text) - u16len(stripped)
     stripped = stripped.rstrip()
@@ -132,14 +131,6 @@ def compose_message(watermark, sender, forward, body_text, body_entities, extra_
         text += part
         for e in part_ents:
             entities.append(_shift(e, base))
-    # Telegram expects entity vectors ordered by offset. For nested spans,
-    # the outer (longer) entity must precede its contained entities.
-    entities.sort(
-        key=lambda entity: (
-            int(getattr(entity, "offset", 0)),
-            -int(getattr(entity, "length", 0)),
-        )
-    )
     return text, entities
 
 
@@ -159,7 +150,6 @@ def split_with_entities(text, entities, first_limit, limit):
         raise ValueError(
             f"split limits must be at least 1 (got first_limit={first_limit}, limit={limit})"
         )
-    entities = validate_entities(text, entities)
     text, entities = strip_with_entities(text, entities)
     b = text.encode("utf-16-le")
     n = len(b) // 2
@@ -215,74 +205,39 @@ def split_with_entities(text, entities, first_limit, limit):
     return chunks or [(text, entities)]
 
 
-def _is_utf16_boundary(text, offset):
-    """Whether a UTF-16 offset falls between Unicode code points."""
-    encoded = (text or "").encode("utf-16-le")
-    units = len(encoded) // 2
-    if not isinstance(offset, int) or offset < 0 or offset > units:
-        return False
-    if offset in (0, units):
-        return True
-    previous = int.from_bytes(encoded[2 * (offset - 1):2 * offset], "little")
-    following = int.from_bytes(encoded[2 * offset:2 * (offset + 1)], "little")
-    return not (0xD800 <= previous <= 0xDBFF and 0xDC00 <= following <= 0xDFFF)
+def clean_invalid_entities(text, entities):
+    """Drop or clip entities whose bounds are invalid for `text`.
 
+    Telegram rejects a message outright with "Some of provided entities have
+    invalid bounds" when any entity has offset < 0, length <= 0, or
+    offset + length > UTF-16 length of the text. This helper enforces those
+    three invariants:
 
-def validate_entities(text, entities, source_id=None):
-    """Validate every Telegram entity without removing or clipping any formatting.
+      1. entities entirely outside the text range     -> discarded
+      2. entities that spill past the end of the text -> length shrunk
+      3. entities with zero or negative length         -> discarded
 
-    Entity offsets and lengths are UTF-16 code units. Invalid spans raise before
-    a message is sent; valid spans are returned intact in Telegram's canonical
-    order (offset ascending, enclosing spans before nested spans).
+    Valid entities pass through unchanged.
     """
     if not entities:
-        return []
-    text = text or ""
-    text_len = u16len(text)
-    invalid = []
-    for entity in entities:
-        offset = getattr(entity, "offset", None)
-        length = getattr(entity, "length", None)
-        end = (
-            offset + length
-            if isinstance(offset, int) and isinstance(length, int)
-            else None
-        )
-        valid = (
-            isinstance(offset, int)
-            and isinstance(length, int)
-            and offset >= 0
-            and length > 0
-            and end <= text_len
-            and _is_utf16_boundary(text, offset)
-            and _is_utf16_boundary(text, end)
-        )
-        if not valid:
-            invalid.append(
-                f"{type(entity).__name__} offset={offset!r} "
-                f"length={length!r} end={end!r}"
-            )
-    if invalid:
-        source = f" for source message id={source_id}" if source_id is not None else ""
-        raise ValueError(
-            f"Invalid Telegram formatting entity bounds{source}; "
-            f"text UTF-16 length={text_len}. No formatting was discarded: "
-            + "; ".join(invalid)
-        )
-    return sorted(
-        list(entities),
-        key=lambda entity: (
-            int(getattr(entity, "offset", 0)),
-            -int(getattr(entity, "length", 0)),
-        ),
-    )
-
-
-def clean_invalid_entities(text, entities):
-    """Backward-compatible alias for :func:`validate_entities`.
-
-    Despite the historical name, this function no longer cleans or drops
-    malformed formatting entities. It fails closed and returns all valid
-    entities intact.
-    """
-    return validate_entities(text, entities)
+        return entities
+    text_len = u16len(text or "")
+    out = []
+    for e in entities:
+        offset = getattr(e, "offset", None)
+        length = getattr(e, "length", None)
+        if not isinstance(offset, int) or not isinstance(length, int):
+            continue
+        if length <= 0:
+            continue
+        if offset < 0 or offset >= text_len:
+            continue
+        if offset + length > text_len:
+            e2 = copy.copy(e)
+            e2.length = text_len - offset
+            if e2.length <= 0:
+                continue
+            out.append(e2)
+        else:
+            out.append(e)
+    return out

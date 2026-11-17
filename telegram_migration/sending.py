@@ -9,45 +9,11 @@ from telethon.tl import types as tl
 from . import album, config, exportmedia, formatfallback, progress, uploads
 from .attribution import _send_sticker_with_attribution
 from .caption_sending import inferred_album_item_caption_parts, send_inferred_album_item_caption_continuations
-from .textutil import validate_entities, split_with_entities
+from .textutil import clean_invalid_entities, split_with_entities
 from .constants import STICKER_KINDS
 
 
 _native_warned = [False]
-
-
-async def resolve_mentions(client, entities, source_id=None):
-    """Resolve user mentions or fail rather than silently stripping their entity."""
-    cls_in = getattr(tl, "InputMessageEntityMentionName", None)
-    cls_out = getattr(tl, "MessageEntityMentionName", None)
-    if cls_out is None:
-        return entities
-    out = []
-    for entity in entities:
-        if isinstance(entity, cls_out):
-            if cls_in is None:
-                raise RuntimeError(
-                    "Cannot preserve a source user mention: this Telethon version "
-                    "does not support InputMessageEntityMentionName."
-                )
-            try:
-                input_user = await client.get_input_entity(entity.user_id)
-                out.append(cls_in(entity.offset, entity.length, input_user))
-            except FloodWaitError:
-                raise
-            except Exception as exc:
-                source = (
-                    f" in source message id={source_id}"
-                    if source_id is not None else ""
-                )
-                raise RuntimeError(
-                    f"Cannot preserve user-mention formatting{source} "
-                    f"for user id={entity.user_id}: Telegram could not resolve "
-                    "the input user. The message was not sent without its mention."
-                ) from exc
-        else:
-            out.append(entity)
-    return out
 
 
 async def _try_native_forward(client, channel, peer_hint, source_msg_id,
@@ -91,7 +57,7 @@ async def _send_text_chunks(client, channel, chunks, reply_to, state, prog_key,
     for i, (text, ents) in enumerate(chunks):
         if i < prog.get("done", 0):
             continue
-        ents = validate_entities(text, ents, source_id)
+        ents = clean_invalid_entities(text, ents)
         m = await formatfallback.with_formatting_fallback(
             lambda **kw: client.send_message(channel, text, **kw),
             {"formatting_entities": ents or None,
@@ -200,7 +166,7 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
         )
 
     safe_entity_rows = [
-        validate_entities(caption, entities, source_id)
+        clean_invalid_entities(caption, entities)
         for caption, entities in zip(captions, caption_entities)
     ]
 
@@ -478,13 +444,6 @@ async def send_one(client, channel, data, chunks, reply_to, state, annotation, s
             print(f"    FloodWait {fw.seconds}s — sleeping...")
             await asyncio.sleep(fw.seconds + 5)
         except Exception as exc:
-            # Telegram entity-bound errors are deterministic for this exact
-            # text/entity payload. Retrying the same malformed request cannot
-            # repair its offsets and only repeats a rejected send.
-            if formatfallback._is_entity_error(exc):
-                print(f"    failed id={data['msg_id']}: {exc}")
-                progress.log_failure(data["msg_id"], str(exc))
-                return None
             attempt += 1
             if attempt >= config.settings.max_retries:
                 print(f"    failed id={data['msg_id']}: {exc}")

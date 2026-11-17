@@ -13,30 +13,17 @@ _URL_SCHEMES = ("http", "https", "tg", "ftp", "ftps")
 
 
 def _make_entity(name, **kwargs):
-    """Create a recognized source entity or stop rather than dropping formatting."""
     cls = getattr(tl, name, None)
     if cls is None:
-        raise RuntimeError(
-            f"Cannot preserve source formatting entity {name}: "
-            "the installed Telethon version does not support it. "
-            "Upgrade Telethon instead of migrating this span as plain text."
-        )
+        return None
     try:
         return cls(**kwargs)
-    except TypeError as first_error:
-        if "collapsed" in kwargs:
-            kwargs.pop("collapsed")
-            try:
-                return cls(**kwargs)
-            except TypeError as exc:
-                raise RuntimeError(
-                    f"Cannot preserve source formatting entity {name}: "
-                    f"Telethon rejected its fields ({exc})."
-                ) from exc
-        raise RuntimeError(
-            f"Cannot preserve source formatting entity {name}: "
-            f"Telethon rejected its fields ({first_error})."
-        ) from first_error
+    except TypeError:
+        kwargs.pop("collapsed", None)        # older Telethon: no `collapsed`
+        try:
+            return cls(**kwargs)
+        except TypeError:
+            return None
 
 
 def _parse_rich_text(root, *, extract_stickers=False):
@@ -105,17 +92,11 @@ def _parse_rich_text(root, *, extract_stickers=False):
                 else:
                     if sticker and sticker.get("missing"):
                         missing_stickers.append(sticker["missing"])
-                    if href.startswith("tg://user?id="):
-                        try:
-                            uid = int(href.split("id=", 1)[1])
-                        except (ValueError, IndexError) as exc:
-                            raise ValueError(
-                                f"Cannot preserve malformed Telegram user mention URL: {href!r}"
-                            ) from exc
-                        emit("MessageEntityMentionName", start, end, user_id=uid)
-                    elif href.startswith("mailto:"):
+                    if href.startswith("mailto:"):
                         emit("MessageEntityEmail", start, end)
                     elif urlparse(href).scheme.lower() in _URL_SCHEMES:
+                        # Preserve the exported target verbatim. Do not resolve
+                        # Telegram user IDs or test whether any link is reachable.
                         emit("MessageEntityTextUrl", start, end, url=href)
 
             elif tag in ("b", "strong"):

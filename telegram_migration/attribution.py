@@ -6,7 +6,7 @@ from telethon.tl import functions as fn
 from telethon.tl import types as tl
 
 from . import formatfallback, progress, uploads
-from .textutil import validate_entities
+from .textutil import clean_invalid_entities
 
 
 def prepare_message_attribution(data, text, entities):
@@ -58,7 +58,7 @@ async def _send_attribution_reply(
         progress.save_state(state["src"], state)
 
     random_id = int(progress_state["random_id"])
-    entities = validate_entities(text, entities or [], source_id)
+    entities = clean_invalid_entities(text, entities or [])
 
     if getattr(channel, "broadcast", False):
         channel_id = int(getattr(channel, "id"))

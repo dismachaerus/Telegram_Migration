@@ -9,12 +9,11 @@ from telethon.tl import functions as fn
 
 
 class FakeMessage:
-    def __init__(self, message_id, grouped_id=None, message="", entities=None):
+    def __init__(self, message_id, grouped_id=None, message=""):
         self.id = message_id
         self.grouped_id = grouped_id
         self.message = message
         self.text = message
-        self.entities = entities or []
 
 
 class FakeTelegram:
@@ -25,7 +24,6 @@ class FakeTelegram:
 
     def __init__(self, *args, **kwargs):
         self.calls = []
-        self.attempts = []
         self.next_id = 1000
         self.next_grouped_id = -1
         self.messages = {}
@@ -94,14 +92,10 @@ class FakeTelegram:
             return None
         existing.message = text
         existing.text = text
-        existing.entities = kwargs.get("formatting_entities") or []
         self.calls.append(("edit_message", message_id, text, kwargs))
         return existing
 
     async def send_message(self, channel, text, **kwargs):
-        # Keep rejected requests separate from successful sends so tests can
-        # inspect the exact payload without treating it as a delivered message.
-        self.attempts.append(("send_message", text, kwargs))
         if self.reject_formatting and kwargs.get("formatting_entities"):
             raise self.reject_formatting
         self.calls.append(("send_message", text, kwargs))
@@ -117,15 +111,9 @@ class FakeTelegram:
                 captions = [captions] * len(files)
             grouped_id = self.next_grouped_id
             self.next_grouped_id -= 1
-            entity_rows = kwargs.get("formatting_entities") or []
-            if entity_rows and not isinstance(entity_rows[0], (list, tuple)):
-                entity_rows = [entity_rows]
             messages = [
-                FakeMessage(
-                    self._new_id(), grouped_id=grouped_id,
-                    message=captions[index] if index < len(captions) else "",
-                    entities=entity_rows[index] if index < len(entity_rows) else [],
-                )
+                FakeMessage(self._new_id(), grouped_id=grouped_id,
+                            message=captions[index] if index < len(captions) else "")
                 for index, _file in enumerate(files)
             ]
             for message in messages:
@@ -134,7 +122,6 @@ class FakeTelegram:
         message = FakeMessage(
             self._new_id(),
             message=captions if isinstance(captions, str) else (captions[0] if captions else ""),
-            entities=kwargs.get("formatting_entities") or [],
         )
         self.messages[message.id] = message
         return message
