@@ -2,7 +2,7 @@
 
 from telethon.errors import MessageNotModifiedError
 
-from .textutil import u16len
+from .textutil import clean_invalid_entities, u16len
 
 
 async def _album_message_list(value):
@@ -48,7 +48,7 @@ async def _verify_album_delivery(client, channel, messages, captions,
         # Validate and canonicalize at the final EditMessageRequest boundary.
         # This catches offsets outside the exact UTF-16 text sent to Telegram,
         # and guarantees outer spans precede nested entities.
-        entities = list(raw_entities or [])
+        entities = clean_invalid_entities(expected, raw_entities or [])
         text_utf16_len = u16len(expected)
         entities.sort(key=lambda entity: (
             int(getattr(entity, "offset", 0)),
