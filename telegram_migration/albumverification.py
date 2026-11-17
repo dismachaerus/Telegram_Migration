@@ -85,7 +85,10 @@ async def _verify_album_delivery(client, channel, messages, captions,
             # Telegram confirms the requested caption is already present.
             continue
         except Exception as exc:
-            if entities and formatfallback.is_entity_error(exc):
+            if entities and (
+                formatfallback.is_entity_error(exc)
+                or isinstance(exc, (TypeError, ValueError))
+            ):
                 formatfallback.record_send_failure(
                     expected, entities, source_id,
                     f"album caption edit item {index}", exc,
