@@ -50,7 +50,7 @@ class AlbumVerificationTests(unittest.TestCase):
             get_messages=AsyncMock(return_value=edited),
         )
 
-        with self.assertRaisesRegex(RuntimeError, "expected text was not retained"):
+        with self.assertRaisesRegex(RuntimeError, "fetched text did not match"):
             asyncio.run(album._verify_album_delivery(
                 client, -100123, [stale], ["archive caption"], [[]], "310",
             ))
