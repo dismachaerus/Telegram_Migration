@@ -105,8 +105,22 @@ async def with_formatting_fallback(send, kwargs, text, entities, src=None):
     try:
         return await send(**kwargs)
     except Exception as exc:
-        if entities and (
-            is_entity_error(exc) or isinstance(exc, (TypeError, ValueError))
-        ):
-            record_send_failure(text, entities, src, "message send", exc)
+        if is_entity_error(exc) or isinstance(exc, (TypeError, ValueError)):
+            captions = kwargs.get("caption")
+            entity_rows = kwargs.get("formatting_entities")
+            if (
+                isinstance(captions, (list, tuple))
+                and isinstance(entity_rows, (list, tuple))
+                and len(captions) == len(entity_rows)
+                and entity_rows
+                and isinstance(entity_rows[0], (list, tuple))
+            ):
+                # An album carries one entity list per caption. Record every
+                # row so a rejection on an earlier item is diagnosable too.
+                for index, (caption, row) in enumerate(zip(captions, entity_rows)):
+                    record_send_failure(
+                        caption, row, src, f"album caption item {index}", exc,
+                    )
+            elif entities:
+                record_send_failure(text, entities, src, "message send", exc)
         raise
