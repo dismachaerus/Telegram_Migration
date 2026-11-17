@@ -74,6 +74,31 @@ class TextAndEntityTests(unittest.TestCase):
         italic = next(e for e in entities if isinstance(e, tl.MessageEntityItalic))
         self.assertEqual((italic.offset, italic.length), (2, 1))
 
+    def test_rich_text_supports_exported_html_formatting_tags(self):
+        root = etree.fromstring(
+            '<div><u>under</u> <s>strike</s> <code>code</code> '
+            '<pre><code class="language-python">print(1)</code></pre> '
+            '<blockquote>quoted</blockquote> <span class="spoiler">secret</span></div>'
+        )
+        text, entities = richtext.parse_rich_text(root)
+        self.assertEqual(text, "under strike code print(1) quoted secret")
+        self.assertEqual(
+            [type(entity).__name__ for entity in entities],
+            [
+                "MessageEntityUnderline", "MessageEntityStrike",
+                "MessageEntityCode", "MessageEntityPre",
+                "MessageEntityBlockquote", "MessageEntitySpoiler",
+            ],
+        )
+        pre = next(entity for entity in entities if isinstance(entity, tl.MessageEntityPre))
+        self.assertEqual(pre.language, "python")
+        self.assertEqual(entities, textutil.validate_entities(text, entities))
+
+    def test_rich_text_fails_instead_of_dropping_unsupported_entities(self):
+        root = etree.fromstring("<div><u>underlined</u></div>")
+        with patch.object(richtext.tl, "MessageEntityUnderline", None):
+            with self.assertRaisesRegex(RuntimeError, "does not support required HTML formatting entity"):
+                richtext.parse_rich_text(root)
     def test_rich_text_handles_nested_bold_and_italic(self):
         root = etree.fromstring("<div><b>bold <i>both</i></b></div>")
         text, entities = richtext.parse_rich_text(root)
@@ -89,27 +114,51 @@ class TextAndEntityTests(unittest.TestCase):
         self.assertEqual(text, "😀x")
         self.assertEqual((entities[0].offset, entities[0].length), (0, 3))
 
-    def test_clean_invalid_entities_drops_invalid_and_clips_overrun(self):
+    def test_entity_validation_rejects_invalid_bounds_without_mutating_entities(self):
         good = tl.MessageEntityBold(offset=0, length=2)
         overrun = tl.MessageEntityItalic(offset=1, length=8)
-        negative = tl.MessageEntityUnderline(offset=-1, length=1)
-        empty = tl.MessageEntityStrike(offset=1, length=0)
-        outside = tl.MessageEntityCode(offset=8, length=1)
-        result = textutil.clean_invalid_entities("abc", [good, overrun, negative, empty, outside])
-        self.assertEqual([type(item).__name__ for item in result], [type(good).__name__, type(overrun).__name__])
-        self.assertEqual((result[0].offset, result[0].length), (0, 2))
-        self.assertEqual((result[1].offset, result[1].length), (1, 2))
+        with self.assertRaisesRegex(textutil.EntityValidationError, "outside the message text"):
+            textutil.validate_entities("abc", [good, overrun], source_id="42")
+        self.assertEqual((overrun.offset, overrun.length), (1, 8))
 
-    def test_clean_invalid_entities_excludes_trailing_whitespace_and_preserves_url(self):
+        for entity in (
+            tl.MessageEntityUnderline(offset=-1, length=1),
+            tl.MessageEntityStrike(offset=1, length=0),
+            tl.MessageEntityCode(offset=8, length=1),
+        ):
+            with self.subTest(entity=entity):
+                with self.assertRaises(textutil.EntityValidationError):
+                    textutil.validate_entities("abc", [entity])
+
+    def test_entity_validation_checks_utf16_surrogate_boundaries(self):
+        valid = tl.MessageEntityBold(offset=0, length=2)
+        self.assertEqual(textutil.validate_entities("😀", [valid]), [valid])
+        invalid = tl.MessageEntityBold(offset=1, length=1)
+        with self.assertRaisesRegex(textutil.EntityValidationError, "surrogate pair"):
+            textutil.validate_entities("😀", [invalid])
+
+    def test_entity_validation_allows_nesting_but_rejects_crossing_ranges(self):
+        outer = tl.MessageEntityBold(offset=0, length=8)
+        inner = tl.MessageEntityItalic(offset=4, length=4)
+        self.assertEqual(textutil.validate_entities("abcdefgh", [inner, outer]), [outer, inner])
+        crossing = tl.MessageEntityItalic(offset=4, length=6)
+        with self.assertRaisesRegex(textutil.EntityValidationError, "crossing entity ranges"):
+            textutil.validate_entities("abcdefghij", [outer, crossing])
+
+    def test_entity_validation_rejects_trailing_whitespace_without_repair(self):
+        entity = tl.MessageEntityBold(offset=0, length=5)
+        with self.assertRaisesRegex(textutil.EntityValidationError, "trailing whitespace"):
+            textutil.validate_entities("bold ", [entity])
+        self.assertEqual(entity.length, 5)
+
+    def test_prepare_entities_applies_telegram_trailing_whitespace_rule(self):
         text = "bold \nlink  "
         bold = tl.MessageEntityBold(offset=0, length=5)
         quote = tl.MessageEntityBlockquote(offset=0, length=textutil.u16len(text))
         link = tl.MessageEntityTextUrl(
             offset=6, length=4, url="https://example.test/original?x=1"
         )
-
-        result = textutil.clean_invalid_entities(text, [bold, quote, link])
-
+        result = textutil.prepare_entities_for_telegram(text, [bold, quote, link])
         self.assertEqual(
             [(type(entity).__name__, entity.offset, entity.length) for entity in result],
             [
@@ -121,7 +170,6 @@ class TextAndEntityTests(unittest.TestCase):
         self.assertEqual(link.url, "https://example.test/original?x=1")
         self.assertEqual((bold.length, quote.length), (5, textutil.u16len(text)))
         self.assertEqual(text, "bold \nlink  ")
-
     def test_archive_header_formats_sender_and_timestamp_with_utf16_entities(self):
         timestamp = datetime(2025, 3, 15, 11, 39)
         header, entities = textutil.compose_message_header(timestamp, "esprít 😀")
@@ -218,10 +266,19 @@ class TextAndEntityTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             textutil.split_with_entities("abc", [], first_limit=0, limit=1)
 
-    def test_entity_error_detection_does_not_match_generic_word_entities(self):
-        self.assertTrue(formatfallback._is_entity_error(ValueError("invalid bounds for formatting")))
-        self.assertFalse(formatfallback._is_entity_error(RuntimeError("unrelated entities database failure")))
-
+    def test_formatting_validation_logs_source_and_entity_details(self):
+        entity = tl.MessageEntityItalic(offset=1, length=9)
+        with tempfile.TemporaryDirectory() as temp:
+            debug_path = str(Path(temp) / "format.jsonl")
+            with patch.object(config.get_settings(), "format_debug_file", debug_path):
+                with self.assertRaises(textutil.EntityValidationError):
+                    formatfallback.validate_formatting("hello", [entity], "source-77")
+            record = json.loads(Path(debug_path).read_text(encoding="utf-8"))
+        self.assertEqual(record["source_id"], "source-77")
+        self.assertEqual(record["entities"][0]["type"], "MessageEntityItalic")
+        self.assertEqual(record["entities"][0]["offset"], 1)
+        self.assertEqual(record["entities"][0]["length"], 9)
+        self.assertEqual(record["text_repr"], "hello")
     def test_parse_export_date_accepts_desktop_timezone_suffix(self):
         self.assertEqual(
             htmlexport.parse_export_date("24.10.2026 12:34:56 UTC+03:00"),
