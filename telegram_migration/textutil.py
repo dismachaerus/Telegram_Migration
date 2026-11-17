@@ -131,6 +131,14 @@ def compose_message(watermark, sender, forward, body_text, body_entities, extra_
         text += part
         for e in part_ents:
             entities.append(_shift(e, base))
+    # Telegram expects entity vectors ordered by offset. For nested spans,
+    # the outer (longer) entity must precede its contained entities.
+    entities.sort(
+        key=lambda entity: (
+            int(getattr(entity, "offset", 0)),
+            -int(getattr(entity, "length", 0)),
+        )
+    )
     return text, entities
 
 
