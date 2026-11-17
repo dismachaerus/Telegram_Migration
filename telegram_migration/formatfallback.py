@@ -61,6 +61,13 @@ def record_send_failure(text, entities, source_id, context, exc):
     )
 
 
+def record_conversion_failure(text, entities, source_id, context, exc):
+    """Persist an HTML-to-entity conversion failure before any API request."""
+    _record_entity_issue(
+        text, entities, source_id, context, exc, phase="html_conversion",
+    )
+
+
 def validate_formatting(text, entities, source_id=None, *, context=None):
     """Validate entity offsets without changing any entity span."""
     try:
