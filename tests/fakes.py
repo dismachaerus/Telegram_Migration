@@ -1,4 +1,4 @@
-"""Shared test doubles: a fake Telegram client and a tiny Telegram Desktop export builder.
+"""Shared test doubles: a fake Telegram client and a tiny Telegram Desktop export builder..
 
 Nothing here talks to Telegram or needs credentials.
 """
