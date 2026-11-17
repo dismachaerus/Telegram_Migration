@@ -72,15 +72,17 @@ class TextAndEntityTests(unittest.TestCase):
         self.assertEqual(text, "😀x")
         self.assertEqual((entities[0].offset, entities[0].length), (0, 3))
 
-    def test_clean_invalid_entities_drops_malformed_spans_without_clipping(self):
+    def test_validate_entities_rejects_malformed_spans_without_dropping_valid_ones(self):
         good = tl.MessageEntityBold(offset=0, length=2)
         overrun = tl.MessageEntityItalic(offset=1, length=8)
         negative = tl.MessageEntityUnderline(offset=-1, length=1)
         empty = tl.MessageEntityStrike(offset=1, length=0)
         outside = tl.MessageEntityCode(offset=8, length=1)
-        result = textutil.clean_invalid_entities("abc", [good, overrun, negative, empty, outside])
-        self.assertEqual([type(item).__name__ for item in result], [type(good).__name__])
-        self.assertEqual((result[0].offset, result[0].length), (0, 2))
+        with self.assertRaisesRegex(ValueError, "No formatting was discarded"):
+            textutil.validate_entities(
+                "abc", [good, overrun, negative, empty, outside], source_id="42"
+            )
+        self.assertEqual(textutil.validate_entities("abc", [good]), [good])
 
     def test_archive_header_formats_sender_and_timestamp_with_utf16_entities(self):
         timestamp = datetime(2025, 3, 15, 11, 39)
@@ -1285,15 +1287,20 @@ class AsyncSendTests(unittest.TestCase):
                 self.assertTrue(debug_file.exists())
         asyncio.run(scenario())
 
-    def test_clean_invalid_entities_drops_only_surrogate_splitting_span(self):
+    def test_validate_entities_rejects_surrogate_splitting_span_without_dropping_it(self):
         text = "A😀B"
         valid_before = tl.MessageEntityBold(offset=0, length=1)
         invalid_middle = tl.MessageEntityItalic(offset=2, length=1)
         valid_after = tl.MessageEntityUnderline(offset=3, length=1)
-        cleaned = textutil.clean_invalid_entities(
-            text, [valid_before, invalid_middle, valid_after]
-        )
-        self.assertEqual(cleaned, [valid_before, valid_after])
+        with self.assertRaisesRegex(ValueError, "surrogate|UTF-16"):
+            textutil.validate_entities(
+                text, [valid_before, invalid_middle, valid_after], source_id="43"
+            )
+
+    def test_split_rejects_invalid_entity_before_chunking_can_clip_it(self):
+        invalid = tl.MessageEntityItalic(offset=4, length=3)
+        with self.assertRaisesRegex(ValueError, "Invalid Telegram formatting entity bounds"):
+            textutil.split_with_entities("abcde", [invalid], first_limit=3, limit=3)
 
 
 if __name__ == "__main__":
