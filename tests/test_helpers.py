@@ -184,8 +184,8 @@ class TextAndEntityTests(unittest.TestCase):
         self.assertEqual(
             [(type(entity).__name__, entity.offset, entity.length) for entity in result],
             [
-                ("MessageEntityBold", 0, 4),
                 ("MessageEntityBlockquote", 0, 10),
+                ("MessageEntityBold", 0, 4),
                 ("MessageEntityTextUrl", 6, 4),
             ],
         )
