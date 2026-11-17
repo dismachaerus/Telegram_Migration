@@ -1,5 +1,4 @@
 """Retry a send without formatting when Telegram rejects message entities."""
-import json
 from telethon.errors import FloodWaitError
 from . import config, progress
 from .textutil import u16len
