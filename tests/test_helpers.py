@@ -1377,13 +1377,16 @@ class AsyncSendTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as temp:
                 debug_path = str(Path(temp) / "format.jsonl")
                 with patch.object(config.get_settings(), "format_debug_file", debug_path):
-                    with self.assertRaisesRegex(EntityBoundsError, "invalid entity bounds"):
+                    with self.assertRaisesRegex(
+                        formatfallback.FormattingDeliveryError, "source id=1"
+                    ) as caught:
                         await formatfallback.with_formatting_fallback(
                             send, {"formatting_entities": entities}, "x", entities, "1",
                         )
                 record = json.loads(Path(debug_path).read_text(encoding="utf-8"))
             self.assertEqual(len(calls), 1)
             self.assertEqual(calls[0]["formatting_entities"], entities)
+            self.assertIsInstance(caught.exception.__cause__, EntityBoundsError)
             self.assertEqual(record["phase"], "telegram_send")
             self.assertEqual(record["source_id"], "1")
             self.assertEqual(record["text_repr"], "x")
@@ -1391,6 +1394,32 @@ class AsyncSendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_send_one_does_not_retry_telegram_entity_rejections(self):
+        async def scenario():
+            calls = []
+            failures = []
+            async def send_message(channel, text, **kwargs):
+                calls.append((text, dict(kwargs)))
+                raise EntityBoundsError("invalid entity bounds")
+            class EntityBoundsError(Exception):
+                pass
+            client = SimpleNamespace(send_message=send_message)
+            data = {"msg_id": "77", "media": [], "forward_source": None}
+            state = {"src": "77"}
+            entities = [tl.MessageEntityBold(offset=0, length=5)]
+            with tempfile.TemporaryDirectory() as temp:
+                debug_path = str(Path(temp) / "format.jsonl")
+                with patch.object(config.get_settings(), "format_debug_file", debug_path):
+                    with patch.object(progress, "log_failure", side_effect=lambda *args: failures.append(args)):
+                        result = await sending.send_one(
+                            client, "channel", data, [("hello", entities)],
+                            None, state, None, "77",
+                        )
+            self.assertIsNone(result)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(len(failures), 1)
+            self.assertIn("formatting could not be delivered safely", failures[0][1])
+        asyncio.run(scenario())
     def test_unrelated_type_error_is_never_retried(self):
         async def scenario():
             calls = []
