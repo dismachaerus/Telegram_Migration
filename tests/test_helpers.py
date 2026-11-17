@@ -1266,6 +1266,41 @@ class AsyncSendTests(unittest.TestCase):
             self.assertIn("mime_type", uploads._UNSUPPORTED_SEND_KWARGS)
         asyncio.run(scenario())
 
+    def test_invalid_text_formatting_stops_before_sending_without_dropping_entities(self):
+        async def scenario():
+            calls = []
+            async def send_message(channel, text, **kwargs):
+                calls.append((text, kwargs))
+                return SimpleNamespace(id=1)
+            client = SimpleNamespace(send_message=send_message)
+            state = {"src": "701"}
+            invalid = tl.MessageEntityBold(offset=0, length=6)
+            with self.assertRaisesRegex(ValueError, "source message id=701"):
+                await sending._send_text_chunks(
+                    client, "channel", [("hello", [invalid])], None,
+                    state, "text_prog", source_id="701",
+                )
+            self.assertEqual(calls, [])
+
+        asyncio.run(scenario())
+
+    def test_invalid_media_caption_stops_before_upload_without_dropping_entities(self):
+        async def scenario():
+            calls = []
+            async def send_file(channel, path, **kwargs):
+                calls.append((path, kwargs))
+                return SimpleNamespace(id=2)
+            client = SimpleNamespace(send_file=send_file)
+            invalid = tl.MessageEntityItalic(offset=5, length=1)
+            with self.assertRaisesRegex(ValueError, "source message id=702"):
+                await uploads.send_media_item(
+                    client, "channel", "photos/test.jpg", "photo", None,
+                    source_id="702", caption="hello", entities=[invalid],
+                )
+            self.assertEqual(calls, [])
+
+        asyncio.run(scenario())
+
     def test_formatting_error_is_not_retried_after_stripping_all_entities(self):
         async def scenario():
             calls = []
