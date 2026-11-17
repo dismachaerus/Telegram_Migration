@@ -90,11 +90,9 @@ async def _verify_album_delivery(client, channel, messages, captions,
                     expected, entities, source_id,
                     f"album caption edit item {index}", exc,
                 )
-            if "entityboundsinvalid" in type(exc).__name__.lower():
-                raise RuntimeError(
-                    "Telegram rejected the canonical album caption entities "
-                    f"for source id={source_id}, item={index}; "
-                    f"text_utf16_len={text_utf16_len}, entities={entity_ranges!r}"
+                raise formatfallback.FormattingDeliveryError(
+                    f"Telegram rejected album caption formatting for "
+                    f"source id={source_id}, item={index}: {exc}"
                 ) from exc
             raise
 
