@@ -98,29 +98,23 @@ def prepare_inferred_group(data, group, id_map, manual_done, partial, persist_id
     legacy_caption, legacy_caption_entities = caption_for_group_body(group)
     all_media = [item for member in group for item in member["media"]]
 
-    # Every inferred group member is a separate source message. Keep its
-    # own sender/date, forwarding attribution, body text and formatting on
-    # the corresponding destination media item. Desktop may repeat one
-    # album caption on several joined rows; preserve that body only at its
-    # first occurrence rather than duplicating it across the destination.
-    item_captions = []
-    seen_caption_bodies = set()
-    for member in group:
-        signature = _caption_signature(member)
-        caption_record = member
-        if signature and signature in seen_caption_bodies:
-            caption_record = dict(member)
-            caption_record["body_text"] = ""
-            caption_record["body_entities"] = []
-        elif signature:
-            seen_caption_bodies.add(signature)
-        item_captions.append(caption_for_record(caption_record))
+    # Consecutive audio records are separate source messages, even when the
+    # destination supports sending them together as one media group. Preserve
+    # each record's own sender/date and body beside its corresponding audio.
+    audio_item_captions = None
+    if all(
+        len(member.get("media") or []) == 1
+        and member["media"][0][1] == "audio"
+        for member in group
+    ):
+        audio_item_captions = [caption_for_record(member) for member in group]
 
     data["_inferred_album"] = True
     data["_album_source_ids"] = member_ids
     data["_album_caption_text"] = album_caption
     data["_album_caption_entities"] = album_caption_entities
-    data["_album_item_captions"] = item_captions
+    if audio_item_captions is not None:
+        data["_album_item_captions"] = audio_item_captions
     data["_album_caption_legacy_text"] = legacy_caption
     data["_album_caption_legacy_entities"] = legacy_caption_entities
     data["media"] = all_media
@@ -373,8 +367,8 @@ async def verify_mapped_album(client, channel, data, id_map, partial, source_id)
             data.get("_album_caption_text", ""),
             data.get("_album_caption_entities", []),
         )
-        expected_captions = [first_caption[0]] + [""] * (len(mapped_ids) - 1)
-        expected_entities = [first_caption[1]] + [[] for _ in mapped_ids[1:]]
+        expected_captions = [""] * (len(mapped_ids) - 1) + [first_caption[0]]
+        expected_entities = [[] for _ in mapped_ids[:-1]] + [first_caption[1]]
     grouped_id = await _verify_saved_album(
         client, channel, mapped_ids, expected_captions, expected_entities, source_id
     )
@@ -395,6 +389,6 @@ async def verify_mapped_album(client, channel, data, id_map, partial, source_id)
     else:
         await sending.send_inferred_album_caption(
             client, channel, data.get("_album_caption_text", ""),
-            data.get("_album_caption_entities", []), state, source_id, mapped_ids[0],
+            data.get("_album_caption_entities", []), state, source_id, mapped_ids[-1],
         )
 
