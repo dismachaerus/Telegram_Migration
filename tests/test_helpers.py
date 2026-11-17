@@ -1134,9 +1134,16 @@ class AsyncSendTests(unittest.TestCase):
                     captions = kwargs.get("caption") or ["", ""]
                     if not isinstance(captions, (list, tuple)):
                         captions = [captions, ""]
+                    entity_rows = kwargs.get("formatting_entities") or [[], []]
                     sent_messages[:] = [
-                        SimpleNamespace(id=501, grouped_id=77, message=captions[0]),
-                        SimpleNamespace(id=502, grouped_id=77, message=captions[1]),
+                        SimpleNamespace(
+                            id=501, grouped_id=77, message=captions[0],
+                            entities=entity_rows[0],
+                        ),
+                        SimpleNamespace(
+                            id=502, grouped_id=77, message=captions[1],
+                            entities=entity_rows[1],
+                        ),
                     ]
                     return sent_messages[:]
                 async def get_messages(channel, ids=None):
