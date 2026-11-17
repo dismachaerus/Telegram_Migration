@@ -66,6 +66,12 @@ class TextAndEntityTests(unittest.TestCase):
         self.assertEqual((bold.offset, bold.length), (0, 9))
         self.assertEqual((italic.offset, italic.length), (5, 4))
 
+    def test_unsupported_telethon_entity_fails_instead_of_losing_formatting(self):
+        with self.assertRaisesRegex(RuntimeError, "does not support"):
+            richtext._make_entity(
+                "MessageEntityDefinitelyUnsupported", offset=0, length=1
+            )
+
     def test_strip_with_entities_rebases_offsets_using_utf16(self):
         entity = tl.MessageEntityItalic(offset=1, length=3)
         text, entities = textutil.strip_with_entities(" 😀x ", [entity])
