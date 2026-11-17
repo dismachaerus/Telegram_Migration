@@ -1,5 +1,5 @@
 """Regression tests for inferred-album verification edge cases and RPC no-ops."""
-import asyncio.
+import asyncio
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
