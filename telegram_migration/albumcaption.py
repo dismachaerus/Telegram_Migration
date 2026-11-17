@@ -14,6 +14,7 @@ from .textutil import (
     format_archive_timestamp,
     strip_with_entities,
     u16len,
+    validate_entities,
 )
 
 
@@ -35,13 +36,21 @@ def caption_for_group_body(group):
             text += "\n\n"
         base_offset = u16len(text)
         text += caption
-        for entity in record.get("body_entities") or []:
-            start = int(entity.offset) - trim_offset
-            end = start + int(entity.length)
-            if start < 0 or end > caption_length:
+        source_entities = validate_entities(
+            raw, record.get("body_entities") or [], record.get("msg_id")
+        )
+        visible_start = trim_offset
+        visible_end = trim_offset + caption_length
+        for entity in source_entities:
+            entity_start = int(entity.offset)
+            entity_end = entity_start + int(entity.length)
+            overlap_start = max(entity_start, visible_start)
+            overlap_end = min(entity_end, visible_end)
+            if overlap_end <= overlap_start:
                 continue
             shifted = copy(entity)
-            shifted.offset = base_offset + start
+            shifted.offset = base_offset + overlap_start - visible_start
+            shifted.length = overlap_end - overlap_start
             entities.append(shifted)
     return text, entities
 
