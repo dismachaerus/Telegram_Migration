@@ -9,11 +9,34 @@ from telethon.tl import types as tl
 from . import album, config, exportmedia, formatfallback, progress, uploads
 from .attribution import _send_sticker_with_attribution
 from .caption_sending import inferred_album_item_caption_parts, send_inferred_album_item_caption_continuations
-from .textutil import EntityValidationError, split_with_entities
+from .textutil import clean_invalid_entities, split_with_entities
 from .constants import STICKER_KINDS
 
 
 _native_warned = [False]
+
+
+async def resolve_mentions(client, entities):
+    """Bots usually cannot resolve arbitrary users; such mentions stay plain text."""
+    cls_in = getattr(tl, "InputMessageEntityMentionName", None)
+    cls_out = getattr(tl, "MessageEntityMentionName", None)
+    if cls_out is None:
+        return entities
+    out = []
+    for e in entities:
+        if isinstance(e, cls_out):
+            if cls_in is None:
+                continue
+            try:
+                inp = await client.get_input_entity(e.user_id)
+                out.append(cls_in(e.offset, e.length, inp))
+            except FloodWaitError:
+                raise
+            except Exception:
+                pass
+        else:
+            out.append(e)
+    return out
 
 
 async def _try_native_forward(client, channel, peer_hint, source_msg_id,
@@ -57,6 +80,7 @@ async def _send_text_chunks(client, channel, chunks, reply_to, state, prog_key,
     for i, (text, ents) in enumerate(chunks):
         if i < prog.get("done", 0):
             continue
+        ents = clean_invalid_entities(text, ents)
         m = await formatfallback.with_formatting_fallback(
             lambda **kw: client.send_message(channel, text, **kw),
             {"formatting_entities": ents or None,
@@ -165,11 +189,8 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
         )
 
     safe_entity_rows = [
-        formatfallback.prepare_formatting(
-            caption, entities, source_id,
-            context=f"album caption item {index}",
-        )
-        for index, (caption, entities) in enumerate(zip(captions, caption_entities))
+        clean_invalid_entities(caption, entities)
+        for caption, entities in zip(captions, caption_entities)
     ]
 
     async def send_group_caption(album_message_ids):
@@ -436,11 +457,6 @@ async def send_one(client, channel, data, chunks, reply_to, state, annotation, s
                 data["forward_source"], state, annotation,
                 source_id, data,
             )
-        except (formatfallback.FormattingDeliveryError, EntityValidationError) as exc:
-            reason = f"formatting could not be delivered safely: {exc}"
-            print(f"    failed id={data['msg_id']}: {reason}")
-            progress.log_failure(data["msg_id"], reason)
-            return None
         except FloodWaitError as fw:
             floods += 1
             if floods > config.settings.max_flood_waits:

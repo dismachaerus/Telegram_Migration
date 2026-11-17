@@ -11,133 +11,6 @@ def u16len(s):
     return len(s.encode("utf-16-le")) // 2
 
 
-class EntityValidationError(ValueError):
-    """A formatting entity cannot be represented safely for Telegram."""
-
-
-def ordered_entities(entities):
-    """Return entities in Telegram's offset order, outer spans before inner ones.
-
-    Invalid offset/length values sort to the beginning and are then reported by
-    validate_entities with the entity's type and original values.
-    """
-    def key(entity):
-        offset = getattr(entity, "offset", None)
-        length = getattr(entity, "length", None)
-        safe_offset = offset if isinstance(offset, int) and not isinstance(offset, bool) else -1
-        safe_length = length if isinstance(length, int) and not isinstance(length, bool) else 0
-        return safe_offset, -safe_length
-
-    return sorted(list(entities or []), key=key)
-
-
-def validate_entities(text, entities, *, source_id=None):
-    """Validate entity ranges without clipping, dropping, or otherwise repairing them.
-
-    Telegram entity offsets are UTF-16 code units. Ranges must start and end
-    between complete Unicode code points, remain within the message, avoid
-    crossing overlaps, and exclude trailing whitespace. Nested entities are
-    supported; preformatted entities cannot be nested with other entities.
-    """
-    text = text or ""
-    entities = ordered_entities(entities)
-    try:
-        encoded = text.encode("utf-16-le")
-    except UnicodeEncodeError as exc:
-        raise EntityValidationError(
-            f"source id={source_id}: message text contains an unpaired Unicode surrogate"
-        ) from exc
-
-    text_length = len(encoded) // 2
-    boundaries = {0}
-    position = 0
-    for char in text:
-        codepoint = ord(char)
-        if 0xD800 <= codepoint <= 0xDFFF:
-            raise EntityValidationError(
-                f"source id={source_id}: message text contains an unpaired Unicode surrogate"
-            )
-        position += 2 if codepoint > 0xFFFF else 1
-        boundaries.add(position)
-
-    ranges = []
-    for index, entity in enumerate(entities):
-        entity_type = type(entity).__name__
-        offset = getattr(entity, "offset", None)
-        length = getattr(entity, "length", None)
-
-        def fail(reason):
-            context = (
-                f"source id={source_id}, entity #{index} {entity_type}, "
-                f"offset={offset!r}, length={length!r}: {reason}; "
-                f"text_utf16_length={text_length}, text={text[:240]!r}"
-            )
-            raise EntityValidationError(context)
-
-        if isinstance(offset, bool) or not isinstance(offset, int):
-            fail("offset is not an integer")
-        if isinstance(length, bool) or not isinstance(length, int):
-            fail("length is not an integer")
-        if offset < 0:
-            fail("offset is negative")
-        if length <= 0:
-            fail("length is zero or negative")
-        end = offset + length
-        if offset >= text_length or end > text_length:
-            fail("entity range is outside the message text")
-        if offset not in boundaries or end not in boundaries:
-            fail("entity range splits a UTF-16 surrogate pair")
-
-        selected = encoded[offset * 2:end * 2].decode("utf-16-le")
-        if selected.rstrip() != selected:
-            fail("entity range includes trailing whitespace or newline")
-
-        ranges.append((offset, end, entity))
-
-    # Telegram supports properly nested entities but not crossing ranges.
-    stack = []
-    for start, end, entity in ranges:
-        while stack and start >= stack[-1][1]:
-            stack.pop()
-        if stack and end > stack[-1][1]:
-            parent = stack[-1][2]
-            raise EntityValidationError(
-                f"source id={source_id}: crossing entity ranges: "
-                f"{type(parent).__name__}({stack[-1][0]}:{stack[-1][1]}) and "
-                f"{type(entity).__name__}({start}:{end}); text={text[:240]!r}"
-            )
-        if type(entity).__name__ == "MessageEntityPre":
-            for other_start, other_end, other in ranges:
-                if other is entity:
-                    continue
-                if start < other_end and other_start < end:
-                    raise EntityValidationError(
-                        f"source id={source_id}: MessageEntityPre cannot overlap "
-                        f"{type(other).__name__}; text={text[:240]!r}"
-                    )
-        stack.append((start, end, entity))
-
-    return entities
-
-
-def prepare_entities_for_telegram(text, entities, *, source_id=None):
-    """Apply Telegram's required trailing-whitespace rule, then validate strictly.
-
-    This only shortens an entity's invisible trailing whitespace span, as
-    specified by Telegram. It never clips an out-of-range entity or drops
-    meaningful formatted text; malformed ranges raise EntityValidationError.
-    """
-    text = text or ""
-    try:
-        text.encode("utf-16-le")
-    except UnicodeEncodeError as exc:
-        raise EntityValidationError(
-            f"source id={source_id}: message text contains an unpaired Unicode surrogate"
-        ) from exc
-    prepared = trim_entity_trailing_whitespace(text, entities or [])
-    return validate_entities(text, prepared, source_id=source_id)
-
-
 def _clip_entities(entities, a, b):
     """Entities restricted to [a, b) and re-based so that `a` becomes 0."""
     out = []
@@ -258,10 +131,6 @@ def compose_message(watermark, sender, forward, body_text, body_entities, extra_
         text += part
         for e in part_ents:
             entities.append(_shift(e, base))
-    # Telegram expects entities in ascending offset order. At the same
-    # offset, an outer span must precede its shorter nested spans.
-    entities = ordered_entities(entities)
-    entities = prepare_entities_for_telegram(text, entities)
     return text, entities
 
 
@@ -281,8 +150,7 @@ def split_with_entities(text, entities, first_limit, limit):
         raise ValueError(
             f"split limits must be at least 1 (got first_limit={first_limit}, limit={limit})"
         )
-    text, entities = strip_with_entities(text, prepare_entities_for_telegram(text, entities))
-    entities = prepare_entities_for_telegram(text, entities)
+    text, entities = strip_with_entities(text, entities)
     b = text.encode("utf-16-le")
     n = len(b) // 2
     if n <= first_limit:
@@ -330,58 +198,46 @@ def split_with_entities(text, entities, first_limit, limit):
             # lim == 1 would otherwise leave nxt == start and loop forever.
             end = nxt = min(start + 2, n)
         seg = b[2 * start:2 * end].decode("utf-16-le")
-        ents = prepare_entities_for_telegram(
-            seg, _clip_entities(entities, start, end)
-        )
+        ents = _clip_entities(entities, start, end)
         if seg:
             chunks.append((seg, ents))
         start, lim = nxt, limit
     return chunks or [(text, entities)]
 
 
-def trim_entity_trailing_whitespace(text, entities):
-    """Shorten valid entity spans so they do not include trailing whitespace.
+def clean_invalid_entities(text, entities):
+    """Drop or clip entities whose bounds are invalid for `text`.
 
-    Telegram requires entity lengths to exclude trailing whitespace and
-    newlines. Invalid bounds are deliberately left untouched for callers that
-    perform strict validation; URL targets and all other metadata are preserved.
+    Telegram rejects a message outright with "Some of provided entities have
+    invalid bounds" when any entity has offset < 0, length <= 0, or
+    offset + length > UTF-16 length of the text. This helper enforces those
+    three invariants:
+
+      1. entities entirely outside the text range     -> discarded
+      2. entities that spill past the end of the text -> length shrunk
+      3. entities with zero or negative length         -> discarded
+
+    Valid entities pass through unchanged.
     """
     if not entities:
         return entities
-    encoded = (text or "").encode("utf-16-le")
-    text_len = len(encoded) // 2
+    text_len = u16len(text or "")
     out = []
-    for entity in entities:
-        offset = getattr(entity, "offset", None)
-        length = getattr(entity, "length", None)
-        if (
-            not isinstance(offset, int)
-            or not isinstance(length, int)
-            or length <= 0
-            or offset < 0
-            or offset + length > text_len
-        ):
-            out.append(entity)
+    for e in entities:
+        offset = getattr(e, "offset", None)
+        length = getattr(e, "length", None)
+        if not isinstance(offset, int) or not isinstance(length, int):
             continue
-
-        # surrogatepass leaves malformed split-pair ranges intact so a strict
-        # caller can diagnose them rather than hiding the invalid boundary.
-        visible = encoded[offset * 2:(offset + length) * 2].decode(
-            "utf-16-le", errors="surrogatepass"
-        )
-        trimmed_length = len(visible.rstrip().encode("utf-16-le", errors="surrogatepass")) // 2
-        if trimmed_length <= 0:
-            # Leave the range untouched so strict validation reports it.
-            # Never silently discard an entity that covers only whitespace.
-            out.append(entity)
+        if length <= 0:
             continue
-        if trimmed_length < length:
-            entity = copy.copy(entity)
-            entity.length = trimmed_length
-        out.append(entity)
+        if offset < 0 or offset >= text_len:
+            continue
+        if offset + length > text_len:
+            e2 = copy.copy(e)
+            e2.length = text_len - offset
+            if e2.length <= 0:
+                continue
+            out.append(e2)
+        else:
+            out.append(e)
     return out
-
-
-def clean_invalid_entities(text, entities):
-    """Backward-compatible name for strict validation; no invalid entity is repaired."""
-    return validate_entities(text, entities)

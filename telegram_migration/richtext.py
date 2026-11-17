@@ -4,47 +4,29 @@ from urllib.parse import urlparse
 
 from telethon.tl import types as tl
 
-from . import exportmedia, formatfallback
+from . import exportmedia
 from .htmlutil import css_classes
-from .textutil import (
-    ordered_entities,
-    sanitize_text, strip_with_entities, u16len,
-)
-
-
-class UnsupportedFormattingEntityError(RuntimeError):
-    """The installed Telethon schema cannot represent an exported HTML tag."""
+from .textutil import sanitize_text, strip_with_entities, u16len
 
 
 _URL_SCHEMES = ("http", "https", "tg", "ftp", "ftps")
 
 
-def _make_entity(name, source_id=None, **kwargs):
+def _make_entity(name, **kwargs):
     cls = getattr(tl, name, None)
     if cls is None:
-        raise UnsupportedFormattingEntityError(
-            f"source id={source_id}: installed Telethon does not support required HTML formatting entity {name}"
-        )
+        return None
     try:
         return cls(**kwargs)
-    except TypeError as exc:
-        # Older Telethon schema layers may not expose the optional collapsed
-        # blockquote flag. No other constructor error is silently ignored.
-        if "collapsed" not in kwargs:
-            raise UnsupportedFormattingEntityError(
-                f"source id={source_id}: could not construct required Telegram entity {name}: {exc}"
-            ) from exc
-        compatible = dict(kwargs)
-        compatible.pop("collapsed")
+    except TypeError:
+        kwargs.pop("collapsed", None)        # older Telethon: no `collapsed`
         try:
-            return cls(**compatible)
-        except TypeError as compat_exc:
-            raise UnsupportedFormattingEntityError(
-                f"source id={source_id}: could not construct required Telegram entity {name}: {compat_exc}"
-            ) from compat_exc
+            return cls(**kwargs)
+        except TypeError:
+            return None
 
 
-def _parse_rich_text(root, *, extract_stickers=False, source_id=None):
+def _parse_rich_text(root, *, extract_stickers=False):
     if root is None:
         return "", [], [], []
 
@@ -61,7 +43,7 @@ def _parse_rich_text(root, *, extract_stickers=False, source_id=None):
     def emit(name, start, end, **extra):
         length = end - start
         if length > 0:
-            e = _make_entity(name, source_id=source_id, offset=start, length=length, **extra)
+            e = _make_entity(name, offset=start, length=length, **extra)
             if e is not None:
                 entities.append(e)
 
@@ -110,11 +92,15 @@ def _parse_rich_text(root, *, extract_stickers=False, source_id=None):
                 else:
                     if sticker and sticker.get("missing"):
                         missing_stickers.append(sticker["missing"])
-                    if href.startswith("mailto:"):
+                    if href.startswith("tg://user?id="):
+                        try:
+                            uid = int(href.split("id=", 1)[1])
+                            emit("MessageEntityMentionName", start, end, user_id=uid)
+                        except (ValueError, IndexError):
+                            pass
+                    elif href.startswith("mailto:"):
                         emit("MessageEntityEmail", start, end)
                     elif urlparse(href).scheme.lower() in _URL_SCHEMES:
-                        # Preserve the exported target verbatim. Do not resolve
-                        # Telegram user IDs or test whether any link is reachable.
                         emit("MessageEntityTextUrl", start, end, url=href)
 
             elif tag in ("b", "strong"):
@@ -161,20 +147,10 @@ def _parse_rich_text(root, *, extract_stickers=False, source_id=None):
             if child.tail:
                 add(child.tail)
 
-    try:
-        walk(root)
-    except UnsupportedFormattingEntityError as exc:
-        formatfallback.record_conversion_failure(
-            "".join(parts), entities, source_id, "HTML export conversion", exc,
-        )
-        raise
+    walk(root)
     raw_text = "".join(parts)
     leading_units = u16len(raw_text) - u16len(raw_text.lstrip())
     text, entities = strip_with_entities(raw_text, entities)
-    entities = formatfallback.prepare_formatting(
-        text, ordered_entities(entities), source_id,
-        context="HTML export conversion",
-    )
     kept_stickers = []
     text_length = u16len(text)
     for sticker in inline_stickers:
@@ -185,12 +161,12 @@ def _parse_rich_text(root, *, extract_stickers=False, source_id=None):
     return text, entities, kept_stickers, list(dict.fromkeys(missing_stickers))
 
 
-def parse_rich_text(root, source_id=None):
+def parse_rich_text(root):
     """Convert HTML rich text to Telegram text and entities."""
-    text, entities, _stickers, _missing = _parse_rich_text(root, source_id=source_id)
+    text, entities, _stickers, _missing = _parse_rich_text(root)
     return text, entities
 
 
-def parse_rich_text_with_stickers(root, source_id=None):
+def parse_rich_text_with_stickers(root):
     """Parse rich text while extracting actual inline sticker files in order."""
-    return _parse_rich_text(root, extract_stickers=True, source_id=source_id)
+    return _parse_rich_text(root, extract_stickers=True)

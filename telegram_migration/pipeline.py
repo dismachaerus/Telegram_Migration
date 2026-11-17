@@ -275,12 +275,6 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         ):
             if data.get("_inferred_album"):
                 album.stop_after_failed_album(ctx, source_id)
-            else:
-                ctx["stop"] = True
-                print(
-                    f"  Stopped at failed message id={source_id}. "
-                    "Later messages were left untouched; restart to retry this message."
-                )
             return
         mark_completed = True
         await asyncio.sleep(config.settings.send_delay_seconds)
@@ -291,12 +285,6 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         stats["failed"] += 1
         if "data" in locals() and data and data.get("_inferred_album"):
             album.stop_after_failed_album(ctx, source_id)
-        else:
-            ctx["stop"] = True
-            print(
-                f"  Stopped at failed message id={source_id or mid}. "
-                "Later messages were left untouched; restart to retry this message."
-            )
     finally:
         if source_id and mark_completed:
             ctx["processed_source_ids"].add(source_id)
@@ -310,12 +298,12 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
 async def run_async(settings=None, **overrides):
     """Run (or resume) one migration pass.
 
-    Returns True when the run completed, was aborted by the user, or
-    stopped cleanly at a configured batch/oversize boundary. Returns False
-    when the run could not start or any source message failed; the run stops
-    at that message so later source messages remain untouched. Raises
-    :class:`~telegram_migration.config.ConfigError` when credentials or the
-    destination are missing or invalid.
+    Returns True when the run completed, was aborted by the user at the
+    confirmation prompt, or stopped cleanly at an oversize file (all three
+    are expected outcomes). Returns False only when the run could not start —
+    no export was found in ``base_dir``, or the destination channel could not
+    be resolved. Raises :class:`~telegram_migration.config.ConfigError` when
+    the credentials or the destination are missing or invalid.
     """
     resolved = config.resolve_settings(settings, **overrides).validate()
     with config.use_settings(resolved):
@@ -438,8 +426,7 @@ async def _run_migration():
 
     print()
     print("═" * 60)
-    run_status = "Stopped" if ctx["stop"] or stats["failed"] else "Done"
-    print(f"{run_status}.  sent={stats['sent']}   skipped={stats['skipped']}   failed={stats['failed']}   "
+    print(f"Done.  sent={stats['sent']}   skipped={stats['skipped']}   failed={stats['failed']}   "
           f"native_forwards={stats['forwarded']}   reaction_notes={stats.get('reaction_notes', 0)}")
     print(f"Reply audit: {config.settings.reply_audit_file}")
     if pending_replies:
@@ -448,4 +435,4 @@ async def _run_migration():
         print(f"Failed IDs are logged in {config.settings.failed_file}")
     print("═" * 60)
     await client.disconnect()
-    return stats["failed"] == 0
+    return True

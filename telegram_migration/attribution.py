@@ -6,6 +6,7 @@ from telethon.tl import functions as fn
 from telethon.tl import types as tl
 
 from . import formatfallback, progress, uploads
+from .textutil import clean_invalid_entities
 
 
 def prepare_message_attribution(data, text, entities):
@@ -57,7 +58,7 @@ async def _send_attribution_reply(
         progress.save_state(state["src"], state)
 
     random_id = int(progress_state["random_id"])
-    entities = formatfallback.prepare_formatting(text, entities or [], source_id)
+    entities = clean_invalid_entities(text, entities or [])
 
     if getattr(channel, "broadcast", False):
         channel_id = int(getattr(channel, "id"))
@@ -146,21 +147,7 @@ async def _send_attribution_reply(
                 entities=entities or None,
                 no_webpage=True,
             )
-        try:
-            result = await client(request)
-        except Exception as exc:
-            if entities and (
-                formatfallback.is_entity_error(exc)
-                or isinstance(exc, (TypeError, ValueError))
-            ):
-                formatfallback.record_send_failure(
-                    text, entities, source_id, "sticker attribution", exc,
-                )
-                raise formatfallback.FormattingDeliveryError(
-                    f"Telegram rejected sticker attribution formatting for "
-                    f"source id={source_id}: {exc}"
-                ) from exc
-            raise
+        result = await client(request)
         reply_message_id = _sent_message_id_from_updates(result, random_id)
         if reply_message_id is None:
             raise RuntimeError(

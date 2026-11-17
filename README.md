@@ -32,7 +32,7 @@ A Python tool for reconstructing a Telegram conversation in a destination channe
 - Maps source message IDs to destination IDs to restore reply links where possible; audits available reply links.
 - Persists partial-send state so interrupted runs can often resume without intentionally resending already-recorded pieces.
 - Checks oversized attachments before sending and stops with instructions for manual handling.
-- Uses FloodWait handling, records failures, and stops at the first failed source message so later messages remain untouched.
+- Uses FloodWait handling and records failures and formatting fallbacks.
 - Can archive reaction metadata from a compatible companion JSON export as **text notes**, including available counts and actor labels. It cannot recreate the original voters or historical totals as live Telegram reactions.
 - Uses a Telegram bot session for sending. It does not require a personal-account login for the migration itself.
 
@@ -191,7 +191,7 @@ The code is a small package instead of one long script:
 | `pipeline` | The run itself: stream the export, send each message, resume, stop cleanly. |
 | `htmlexport`, `richtext`, `htmlutil` | Read a message out of the HTML export; turn its rich text into Telegram entities. |
 | `exportmedia`, `mediatools` | Find and classify media; optional ffmpeg/hachoir helpers. |
-| `sending`, `uploads`, `formatfallback` | Send text/albums/voice/stickers/forwards; upload files; validate and diagnose formatting without dropping it. |
+| `sending`, `uploads`, `formatfallback` | Send text/albums/voice/stickers/forwards; upload files; retry without formatting if Telegram rejects it. |
 | `progress`, `replylinks`, `reaction_archive` | ID map and resume state; reply verification; reaction notes. |
 | `bigfiles` | Oversize-file check, manual-upload list and stop instructions. |
 | `textutil`, `constants` | UTF-16 text/entity helpers; fixed Telegram limits. |
@@ -202,7 +202,7 @@ The code is a small package instead of one long script:
 - Service events are reconstructed as ordinary labelled text messages, not genuine Telegram service messages; the bot cannot create native join/leave/pin system events. HTML exports usually provide the date divider but not the exact service-event clock time.
 - The destination messages are not identical to the original Telegram records. The destination bot is the technical sender; original sender names are bold archival labels and timestamps are italic archival labels unless a native forward is possible. Telegram's separate native history-import API is user-account-only and is not used by this bot-based project.
 - The source HTML and media folder must contain the required data. A missing attachment cannot be recreated by this program.
-- Formatting is never silently dropped to force an upload. If any source message cannot be reconstructed or delivered (including formatting validation or Telegram rejecting entities), the migration stops at that message, records the failure, and leaves all later source messages untouched. Inferred albums remain atomic: a failure stops the run at the album rather than scattering its remaining items.
+- If Telegram rejects formatting entities, the script can fall back to plain text for that message; check `migration_formatting_dropped.jsonl`.
 - Reaction archives are informational text notes, not native historical reactions. A bot may add its own single reaction to a message, but cannot recreate other users' original votes or historical counts.
 - Native forwards may be unavailable for source messages whose origins are inaccessible; the program's configured forwarding fallback may use a textual header.
 - Files above the upload limit (`max_upload_mb`) cause a clean stop and require manual handling. Files below the configured limit can still fail due to network, server, permissions, or media constraints.
@@ -219,7 +219,7 @@ python -m compileall -q telegram_migration
 python -m unittest discover -s tests -v
 ```
 
-The suite covers rich-text parsing and UTF-16 entity offsets, long-text chunking, export parsing, dates and replies, media classification, GIF/sticker upload options, upload-size checks, progress and ID-map persistence, manual-upload records, reaction metadata, settings and the command line, the module structure (no undefined names), and complete runs against a fake Telegram client: dry run, resume, deferred replies, message-failure stop behavior, and the oversize stop. The fake clients cannot post to a real Telegram chat.
+The suite covers rich-text parsing and UTF-16 entity offsets, long-text chunking, export parsing, dates and replies, media classification, GIF/sticker upload options, upload-size checks, progress and ID-map persistence, manual-upload records, reaction metadata, settings and the command line, the module structure (no undefined names), and complete runs against a fake Telegram client: dry run, resume, deferred replies, formatting fallback, and the oversize stop. The fake clients cannot post to a real Telegram chat.
 
 ## Security
 
