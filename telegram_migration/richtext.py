@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 
 from telethon.tl import types as tl
 
-from . import exportmedia
+from . import exportmedia, formatfallback
 from .htmlutil import css_classes
 from .textutil import (
     ordered_entities, prepare_entities_for_telegram,
@@ -165,8 +165,9 @@ def _parse_rich_text(root, *, extract_stickers=False, source_id=None):
     raw_text = "".join(parts)
     leading_units = u16len(raw_text) - u16len(raw_text.lstrip())
     text, entities = strip_with_entities(raw_text, entities)
-    entities = prepare_entities_for_telegram(
-        text, ordered_entities(entities), source_id=source_id,
+    entities = formatfallback.prepare_formatting(
+        text, ordered_entities(entities), source_id,
+        context="HTML export conversion",
     )
     kept_stickers = []
     text_length = u16len(text)
