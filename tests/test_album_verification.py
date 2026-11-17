@@ -78,6 +78,28 @@ class AlbumVerificationTests(unittest.TestCase):
             ["MessageEntityBlockquote", "MessageEntityBold", "MessageEntityItalic"],
         )
 
+    def test_album_edit_trims_trailing_whitespace_from_entity_spans(self):
+        from telethon.tl import types as tl
+
+        caption = "bold body "
+        bold = tl.MessageEntityBold(offset=0, length=5)
+        quote = tl.MessageEntityBlockquote(offset=0, length=len(caption))
+        stale = SimpleNamespace(id=82, grouped_id=9006, message="old caption")
+        edited = SimpleNamespace(id=82, grouped_id=9006, message=caption)
+        client = SimpleNamespace(edit_message=AsyncMock(return_value=edited))
+
+        grouped_id = asyncio.run(album._verify_album_delivery(
+            client, -100123, [stale], [caption], [[bold, quote]], "314",
+        ))
+
+        self.assertEqual(grouped_id, 9006)
+        passed = client.edit_message.await_args.kwargs["formatting_entities"]
+        self.assertEqual(
+            [(type(entity).__name__, entity.offset, entity.length) for entity in passed],
+            [("MessageEntityBlockquote", 0, 9), ("MessageEntityBold", 0, 4)],
+        )
+        self.assertEqual((bold.length, quote.length), (5, len(caption)))
+
     def test_album_edit_rejects_out_of_bounds_entity_before_rpc(self):
         from telethon.tl import types as tl
 
