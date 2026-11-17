@@ -956,14 +956,19 @@ class PipelineTests(unittest.TestCase):
         async def fail_send_message(_client, _channel, _text, **_kwargs):
             raise RuntimeError("synthetic standalone send failure")
 
-        with patch.object(FakeTelegram, "send_message", fail_send_message):
-            client, output, _ = self.run_once(max_retries=1)
+        settings = self.settings(max_retries=1)
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            with patch.object(FakeTelegram, "send_message", fail_send_message):
+                with config.use_settings(settings):
+                    result = asyncio.run(pipeline.run_async(settings))
+        client = FakeTelegram.instances[-1]
 
+        self.assertIs(result, False)
         self.assertEqual(client.texts(), [])
         self.assertEqual(client.kinds("send_message"), [])
-        self.assertIn("Stopped at failed message id=1", output)
-        self.assertIn("failed=1", output)
-        with config.use_settings(self.settings()):
+        self.assertIn("Stopped at failed message id=1", output.getvalue())
+        self.assertIn("failed=1", output.getvalue())
+        with config.use_settings(settings):
             self.assertEqual(progress.load_id_map(), {})
 
     def test_message_reconstruction_exception_stops_before_the_next_source_message(self):
