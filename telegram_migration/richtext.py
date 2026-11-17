@@ -15,11 +15,11 @@ from .textutil import (
 _URL_SCHEMES = ("http", "https", "tg", "ftp", "ftps")
 
 
-def _make_entity(name, **kwargs):
+def _make_entity(name, source_id=None, **kwargs):
     cls = getattr(tl, name, None)
     if cls is None:
         raise RuntimeError(
-            f"Installed Telethon does not support required HTML formatting entity {name}"
+            f"source id={source_id}: installed Telethon does not support required HTML formatting entity {name}"
         )
     try:
         return cls(**kwargs)
@@ -28,7 +28,7 @@ def _make_entity(name, **kwargs):
         # blockquote flag. No other constructor error is silently ignored.
         if "collapsed" not in kwargs:
             raise RuntimeError(
-                f"Could not construct required Telegram entity {name}: {exc}"
+                f"source id={source_id}: could not construct required Telegram entity {name}: {exc}"
             ) from exc
         compatible = dict(kwargs)
         compatible.pop("collapsed")
@@ -36,11 +36,11 @@ def _make_entity(name, **kwargs):
             return cls(**compatible)
         except TypeError as compat_exc:
             raise RuntimeError(
-                f"Could not construct required Telegram entity {name}: {compat_exc}"
+                f"source id={source_id}: could not construct required Telegram entity {name}: {compat_exc}"
             ) from compat_exc
 
 
-def _parse_rich_text(root, *, extract_stickers=False):
+def _parse_rich_text(root, *, extract_stickers=False, source_id=None):
     if root is None:
         return "", [], [], []
 
@@ -57,7 +57,7 @@ def _parse_rich_text(root, *, extract_stickers=False):
     def emit(name, start, end, **extra):
         length = end - start
         if length > 0:
-            e = _make_entity(name, offset=start, length=length, **extra)
+            e = _make_entity(name, source_id=source_id, offset=start, length=length, **extra)
             if e is not None:
                 entities.append(e)
 
@@ -162,7 +162,7 @@ def _parse_rich_text(root, *, extract_stickers=False):
     leading_units = u16len(raw_text) - u16len(raw_text.lstrip())
     text, entities = strip_with_entities(raw_text, entities)
     entities = prepare_entities_for_telegram(
-        text, ordered_entities(entities)
+        text, ordered_entities(entities), source_id=source_id,
     )
     kept_stickers = []
     text_length = u16len(text)
@@ -180,6 +180,6 @@ def parse_rich_text(root):
     return text, entities
 
 
-def parse_rich_text_with_stickers(root):
+def parse_rich_text_with_stickers(root, source_id=None):
     """Parse rich text while extracting actual inline sticker files in order."""
-    return _parse_rich_text(root, extract_stickers=True)
+    return _parse_rich_text(root, extract_stickers=True, source_id=source_id)
