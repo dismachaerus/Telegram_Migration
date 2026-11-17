@@ -49,7 +49,7 @@ class AlbumVerificationTests(unittest.TestCase):
         client.edit_message.assert_awaited_once()
         client.get_messages.assert_not_awaited()
 
-    def test_album_edit_filters_only_entities_outside_caption_bounds(self):
+    def test_album_repair_refuses_invalid_entities_without_dropping_formatting(self):
         from telethon.tl import types as tl
 
         valid = tl.MessageEntityBold(offset=0, length=7)
@@ -57,21 +57,19 @@ class AlbumVerificationTests(unittest.TestCase):
         stale = SimpleNamespace(
             id=81, grouped_id=9005, message="caption", entities=[],
         )
-        edited = SimpleNamespace(
-            id=81, grouped_id=9005, message="caption", entities=[valid],
-        )
         client = SimpleNamespace(
-            edit_message=AsyncMock(return_value=edited),
+            edit_message=AsyncMock(),
             get_messages=AsyncMock(),
         )
 
-        grouped_id = asyncio.run(album._verify_album_delivery(
-            client, -100123, [stale], ["caption"], [[valid, invalid]], "313",
-        ))
+        with self.assertRaisesRegex(
+            RuntimeError, "No formatting was discarded and no edit was attempted"
+        ):
+            asyncio.run(album._verify_album_delivery(
+                client, -100123, [stale], ["caption"], [[valid, invalid]], "313",
+            ))
 
-        self.assertEqual(grouped_id, 9005)
-        kwargs = client.edit_message.await_args.kwargs
-        self.assertEqual(kwargs["formatting_entities"], [valid])
+        client.edit_message.assert_not_awaited()
         client.get_messages.assert_not_awaited()
 
     def test_album_repair_sorts_outer_entities_before_nested_spans(self):
