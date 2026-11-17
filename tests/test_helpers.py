@@ -1466,10 +1466,13 @@ class AsyncSendTests(unittest.TestCase):
                 calls.append(dict(kwargs))
                 raise TypeError("unrelated programming error")
             entities = [tl.MessageEntityItalic(offset=0, length=1)]
-            with self.assertRaisesRegex(TypeError, "unrelated programming error"):
+            with self.assertRaisesRegex(
+                formatfallback.FormattingDeliveryError, "unrelated programming error"
+            ) as caught:
                 await formatfallback.with_formatting_fallback(
                     send, {"formatting_entities": entities}, "x", entities, "1",
                 )
+            self.assertIsInstance(caught.exception.__cause__, TypeError)
             self.assertEqual(len(calls), 1)
 
         asyncio.run(scenario())
