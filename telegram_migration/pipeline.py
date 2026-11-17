@@ -275,6 +275,12 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         ):
             if data.get("_inferred_album"):
                 album.stop_after_failed_album(ctx, source_id)
+            else:
+                ctx["stop"] = True
+                print(
+                    f"  Stopped at failed message id={source_id}. "
+                    "Later messages were left untouched; restart to retry this message."
+                )
             return
         mark_completed = True
         await asyncio.sleep(config.settings.send_delay_seconds)
@@ -285,6 +291,12 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
         stats["failed"] += 1
         if "data" in locals() and data and data.get("_inferred_album"):
             album.stop_after_failed_album(ctx, source_id)
+        else:
+            ctx["stop"] = True
+            print(
+                f"  Stopped at failed message id={source_id or mid}. "
+                "Later messages were left untouched; restart to retry this message."
+            )
     finally:
         if source_id and mark_completed:
             ctx["processed_source_ids"].add(source_id)
