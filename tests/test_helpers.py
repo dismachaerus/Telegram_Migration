@@ -126,17 +126,17 @@ class TextAndEntityTests(unittest.TestCase):
         self.assertEqual((entities[0].offset, entities[0].length), (14, 4))
 
     def test_compose_message_orders_outer_entities_before_nested_entities(self):
-        forward_text = "Forwarded from Source\\n20 August 2024 · 16:32:07\\n\\n"
+        forward_text = "Forwarded from Source\n20 August 2024 · 16:32:07\n\n"
         bold = tl.MessageEntityBold(
             offset=textutil.u16len("Forwarded from "), length=textutil.u16len("Source")
         )
         italic = tl.MessageEntityItalic(
-            offset=textutil.u16len("Forwarded from Source\\n"),
+            offset=textutil.u16len("Forwarded from Source\n"),
             length=textutil.u16len("20 August 2024 · 16:32:07"),
         )
         quote = tl.MessageEntityBlockquote(
             offset=0,
-            length=textutil.u16len("Forwarded from Source\\n20 August 2024 · 16:32:07"),
+            length=textutil.u16len("Forwarded from Source\n20 August 2024 · 16:32:07"),
         )
 
         text, entities = textutil.compose_message(
