@@ -4,6 +4,10 @@ from . import config, progress
 from . import textutil
 
 
+class FormattingDeliveryError(RuntimeError):
+    """A message failed because its formatting could not be delivered safely."""
+
+
 def _record_entity_issue(text, entities, source_id, context, exc, phase):
     try:
         progress.append_jsonl(config.settings.format_debug_file, {
@@ -105,22 +109,34 @@ async def with_formatting_fallback(send, kwargs, text, entities, src=None):
     try:
         return await send(**kwargs)
     except Exception as exc:
-        if is_entity_error(exc) or isinstance(exc, (TypeError, ValueError)):
-            captions = kwargs.get("caption")
-            entity_rows = kwargs.get("formatting_entities")
-            if (
-                isinstance(captions, (list, tuple))
-                and isinstance(entity_rows, (list, tuple))
-                and len(captions) == len(entity_rows)
-                and entity_rows
-                and isinstance(entity_rows[0], (list, tuple))
-            ):
+        captions = kwargs.get("caption")
+        entity_rows = kwargs.get("formatting_entities")
+        album_rows = (
+            isinstance(captions, (list, tuple))
+            and isinstance(entity_rows, (list, tuple))
+            and len(captions) == len(entity_rows)
+            and bool(entity_rows)
+            and isinstance(entity_rows[0], (list, tuple))
+        )
+        has_entities = bool(entities) or (
+            album_rows and any(bool(row) for row in entity_rows)
+        )
+        formatting_failure = (
+            is_entity_error(exc)
+            or (has_entities and isinstance(exc, (TypeError, ValueError)))
+        )
+        if formatting_failure and has_entities:
+            if album_rows:
                 # An album carries one entity list per caption. Record every
                 # row so a rejection on an earlier item is diagnosable too.
                 for index, (caption, row) in enumerate(zip(captions, entity_rows)):
                     record_send_failure(
                         caption, row, src, f"album caption item {index}", exc,
                     )
-            elif entities:
+            else:
                 record_send_failure(text, entities, src, "message send", exc)
+            raise FormattingDeliveryError(
+                f"Formatting could not be delivered for source id={src}: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
         raise
