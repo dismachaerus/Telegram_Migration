@@ -1,6 +1,6 @@
 """Verify Telegram media album delivery and repair missing captions."""
 
-from telethon.errors import MessageNotModifiedError
+from telethon.errors import MessageNotModifiedError.
 
 from .textutil import trim_entity_trailing_whitespace, u16len
 
