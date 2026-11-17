@@ -149,7 +149,10 @@ async def _send_attribution_reply(
         try:
             result = await client(request)
         except Exception as exc:
-            if entities and formatfallback.is_entity_error(exc):
+            if entities and (
+                formatfallback.is_entity_error(exc)
+                or isinstance(exc, (TypeError, ValueError))
+            ):
                 formatfallback.record_send_failure(
                     text, entities, source_id, "sticker attribution", exc,
                 )
