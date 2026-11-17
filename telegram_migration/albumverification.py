@@ -45,6 +45,24 @@ async def _verify_album_delivery(client, channel, messages, captions,
         if actual == expected:
             continue
 
+        # send_file can return an UpdateShortSentMessage-derived object whose
+        # cached caption is stale. Before issuing an EditMessageRequest, inspect
+        # the persisted Telegram message. This avoids an unnecessary edit (and
+        # entity revalidation by Telegram) when the upload already retained the
+        # exact caption.
+        get_messages = getattr(client, "get_messages", None)
+        if callable(get_messages):
+            refreshed_before_edit = await get_messages(channel, ids=message.id)
+            refreshed_before_edit_list = await _album_message_list(refreshed_before_edit)
+            if refreshed_before_edit_list:
+                persisted_text = getattr(refreshed_before_edit_list[0], "message", None)
+                if persisted_text is None:
+                    persisted_text = getattr(refreshed_before_edit_list[0], "text", None)
+                if persisted_text == expected:
+                    continue
+                # Use the fetched server message as the edit target/context.
+                message = refreshed_before_edit_list[0]
+
         # Validate and canonicalize at the final EditMessageRequest boundary.
         # This catches offsets outside the exact UTF-16 text sent to Telegram,
         # and guarantees outer spans precede nested entities.
