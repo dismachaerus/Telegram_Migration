@@ -258,9 +258,39 @@ def _is_tgs_sticker(path, kind):
 
 
 async def _send_individual_media(client, channel, chunks, media, reply_to, state,
-                                 source_id):
+                                 source_id, item_captions=None):
     first_text, first_ents = chunks[0]
     state.setdefault("multi_media_ids", [])
+    if item_captions is not None:
+        from .caption_sending import (
+            inferred_album_item_caption_parts,
+            send_inferred_album_item_caption_continuations,
+        )
+        item_texts, item_entities, _continuations = inferred_album_item_caption_parts(
+            item_captions
+        )
+        if len(item_texts) != len(media):
+            raise RuntimeError(
+                f"Per-item caption count {len(item_texts)} does not match "
+                f"media count {len(media)} for source id={source_id}"
+            )
+        while len(state["multi_media_ids"]) < len(media):
+            index = len(state["multi_media_ids"])
+            path, kind = media[index]
+            sent_msg = await uploads.send_media_item(
+                client, channel, path, kind, reply_to, source_id,
+                caption=item_texts[index], entities=item_entities[index],
+            )
+            state["multi_media_ids"].append(sent_msg.id)
+            progress.save_state(state["src"], state)
+        state["album_id"] = state["multi_media_ids"][0]
+        progress.save_state(state["src"], state)
+        await send_inferred_album_item_caption_continuations(
+            client, channel, item_captions, state, source_id,
+            state["multi_media_ids"],
+        )
+        return False
+
     captionable_sticker_kinds = {"sticker_static", "sticker_video"}
     has_captioned_sticker = any(
         kind in captionable_sticker_kinds for _path, kind in media
@@ -393,20 +423,10 @@ async def _do_send(client, channel, chunks, media, reply_to, forward_source,
         # item in source order, attach the caption to the first captionable
         # item (or as a prefix for voice notes), and checkpoint each
         # destination ID so an interrupted sequence resumes without duplicates.
-        first_caption, continuation = inferred_album_caption_parts(
-            album_caption, album_caption_entities,
-        )
-        sequence_chunks = [first_caption] + continuation
         await _send_individual_media(
-            client, channel, sequence_chunks, media, reply_to, state,
-            source_id,
+            client, channel, chunks, media, reply_to, state,
+            source_id, item_captions=data.get("_album_item_captions"),
         )
-        if continuation:
-            last_media_id = state["multi_media_ids"][-1]
-            await _send_text_chunks(
-                client, channel, continuation, last_media_id, state,
-                "album_caption_continuation_prog", source_id,
-            )
         return list(state.get("multi_media_ids", []))
 
     forwarded_id = await _send_native_forward(
