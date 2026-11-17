@@ -3,6 +3,15 @@
 from telethon.errors import MessageNotModifiedError
 
 
+def _album_message_list(value):
+    """Normalize Telethon's single/list return shapes to a list of messages."""
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return [value]
+
+
 def _same_entity_spans(actual_entities, expected_entities):
     """Compare entity types and UTF-16 spans, ignoring server-only flags."""
     def signature(entity):
