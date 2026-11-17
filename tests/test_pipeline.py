@@ -922,8 +922,11 @@ class PipelineTests(unittest.TestCase):
         call = [c for c in client.kinds("send_message") if "reply to the big one" in c[1]][0]
         self.assertEqual(call[2]["reply_to"], 5000)
 
-    def test_rejected_formatting_is_retried_as_plain_text(self):
-        fakes.write_export(self.folder.name, [fakes.message(1, fakes.text("some <b>bold</b> words"))])
+    def test_rejected_formatting_stops_migration_without_plain_text_retry(self):
+        fakes.write_export(self.folder.name, [
+            fakes.message(1, fakes.text("some <b>bold</b> words")),
+            fakes.message(2, fakes.text("later message must remain untouched")),
+        ])
         original = FakeTelegram.__init__
 
         def init(this, *a, **k):
@@ -932,11 +935,57 @@ class PipelineTests(unittest.TestCase):
 
         with patch.object(FakeTelegram, "__init__", init):
             client, output, _ = self.run_once()
-        self.assertEqual(len(client.texts()), 1)
-        self.assertIsNone(client.kinds("send_message")[0][2]["formatting_entities"])
-        self.assertIn("sending it as plain text", output)
+        self.assertEqual(client.texts(), [])
+        self.assertEqual(client.kinds("send_message"), [])
+        self.assertIn("Stopped at failed message id=1", output)
+        self.assertIn("failed=1", output)
+        self.assertNotIn("later message must remain untouched", client.texts())
         with open(self.path("migration_formatting_dropped.jsonl"), encoding="utf-8") as handle:
-            self.assertEqual(json.loads(handle.readline())["src"], "1")
+            issue = json.loads(handle.readline())
+        self.assertEqual(issue["source_id"], "1")
+        self.assertEqual(issue["phase"], "telegram_send")
+        with config.use_settings(self.settings()):
+            self.assertEqual(progress.load_id_map(), {})
+
+    def test_standalone_send_failure_stops_before_the_next_source_message(self):
+        fakes.write_export(self.folder.name, [
+            fakes.message(1, fakes.text("first message")),
+            fakes.message(2, fakes.text("later message must remain untouched")),
+        ])
+
+        async def fail_send_message(_client, _channel, _text, **_kwargs):
+            raise RuntimeError("synthetic standalone send failure")
+
+        with patch.object(FakeTelegram, "send_message", fail_send_message):
+            client, output, _ = self.run_once(max_retries=1)
+
+        self.assertEqual(client.texts(), [])
+        self.assertEqual(client.kinds("send_message"), [])
+        self.assertIn("Stopped at failed message id=1", output)
+        self.assertIn("failed=1", output)
+        with config.use_settings(self.settings()):
+            self.assertEqual(progress.load_id_map(), {})
+
+    def test_message_reconstruction_exception_stops_before_the_next_source_message(self):
+        fakes.write_export(self.folder.name, [
+            fakes.message(1, fakes.text("message with conversion failure")),
+            fakes.message(2, fakes.text("later message must remain untouched")),
+        ])
+        extract = htmlexport.extract_message_data
+
+        def fail_first_message(elem):
+            if elem.get("id") == "message1":
+                raise ValueError("synthetic HTML reconstruction failure")
+            return extract(elem)
+
+        with patch.object(htmlexport, "extract_message_data", side_effect=fail_first_message):
+            client, output, _ = self.run_once()
+
+        self.assertEqual(client.texts(), [])
+        self.assertIn("Stopped at failed message id=1", output)
+        self.assertIn("failed=1", output)
+        with config.use_settings(self.settings()):
+            self.assertEqual(progress.load_id_map(), {})
 
     def test_a_media_message_that_was_already_uploaded_is_not_uploaded_again(self):
         fakes.write_file(self.folder.name, "photos/p.jpg")
