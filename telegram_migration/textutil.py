@@ -16,14 +16,19 @@ class EntityValidationError(ValueError):
 
 
 def ordered_entities(entities):
-    """Return entities in Telegram's offset order, outer spans before inner ones."""
-    return sorted(
-        list(entities or []),
-        key=lambda entity: (
-            int(getattr(entity, "offset", 0)),
-            -int(getattr(entity, "length", 0)),
-        ),
-    )
+    """Return entities in Telegram's offset order, outer spans before inner ones.
+
+    Invalid offset/length values sort to the beginning and are then reported by
+    validate_entities with the entity's type and original values.
+    """
+    def key(entity):
+        offset = getattr(entity, "offset", None)
+        length = getattr(entity, "length", None)
+        safe_offset = offset if isinstance(offset, int) and not isinstance(offset, bool) else -1
+        safe_length = length if isinstance(length, int) and not isinstance(length, bool) else 0
+        return safe_offset, -safe_length
+
+    return sorted(list(entities or []), key=key)
 
 
 def validate_entities(text, entities, *, source_id=None):
