@@ -4,7 +4,9 @@ from copy import copy
 
 from telethon.tl import types as tl
 
-from .albumverification import _verify_album_delivery, _verify_saved_album
+from .albumverification import (
+    _album_message_list, _verify_album_delivery, _verify_saved_album,
+)
 from . import exportmedia
 from .albumcaption import caption_for_group, caption_for_group_body
 from .constants import STICKER_KINDS
@@ -391,14 +393,5 @@ async def verify_mapped_album(client, channel, data, id_map, partial, source_id)
             client, channel, data.get("_album_caption_text", ""),
             data.get("_album_caption_entities", []), state, source_id, mapped_ids[-1],
         )
-
-
-async def _album_message_list(value):
-    """Normalize Telethon's single/list return shapes to a list of messages."""
-    if value is None:
-        return []
-    if isinstance(value, (list, tuple)):
-        return list(value)
-    return [value]
 
 
