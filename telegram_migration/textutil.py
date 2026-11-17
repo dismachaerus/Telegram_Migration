@@ -131,6 +131,14 @@ def compose_message(watermark, sender, forward, body_text, body_entities, extra_
         text += part
         for e in part_ents:
             entities.append(_shift(e, base))
+    # Telegram expects entities in ascending offset order. At the same
+    # offset, an outer span must precede its shorter nested spans.
+    entities.sort(
+        key=lambda entity: (
+            int(getattr(entity, "offset", 0)),
+            -int(getattr(entity, "length", 0)),
+        )
+    )
     return text, entities
 
 
@@ -205,39 +213,68 @@ def split_with_entities(text, entities, first_limit, limit):
     return chunks or [(text, entities)]
 
 
+def trim_entity_trailing_whitespace(text, entities):
+    """Shorten valid entity spans so they do not include trailing whitespace.
+
+    Telegram requires entity lengths to exclude trailing whitespace and
+    newlines. Invalid bounds are deliberately left untouched for callers that
+    perform strict validation; URL targets and all other metadata are preserved.
+    """
+    if not entities:
+        return entities
+    encoded = (text or "").encode("utf-16-le")
+    text_len = len(encoded) // 2
+    out = []
+    for entity in entities:
+        offset = getattr(entity, "offset", None)
+        length = getattr(entity, "length", None)
+        if (
+            not isinstance(offset, int)
+            or not isinstance(length, int)
+            or length <= 0
+            or offset < 0
+            or offset + length > text_len
+        ):
+            out.append(entity)
+            continue
+
+        # surrogatepass leaves malformed split-pair ranges intact so a strict
+        # caller can diagnose them rather than hiding the invalid boundary.
+        visible = encoded[offset * 2:(offset + length) * 2].decode(
+            "utf-16-le", errors="surrogatepass"
+        )
+        trimmed_length = u16len(visible.rstrip())
+        if trimmed_length <= 0:
+            continue
+        if trimmed_length < length:
+            entity = copy.copy(entity)
+            entity.length = trimmed_length
+        out.append(entity)
+    return out
+
+
 def clean_invalid_entities(text, entities):
-    """Drop or clip entities whose bounds are invalid for `text`.
+    """Drop or clip invalid entity bounds, then trim trailing whitespace.
 
-    Telegram rejects a message outright with "Some of provided entities have
-    invalid bounds" when any entity has offset < 0, length <= 0, or
-    offset + length > UTF-16 length of the text. This helper enforces those
-    three invariants:
-
-      1. entities entirely outside the text range     -> discarded
-      2. entities that spill past the end of the text -> length shrunk
-      3. entities with zero or negative length         -> discarded
-
-    Valid entities pass through unchanged.
+    Bounds are measured in UTF-16 code units. An overrun is clipped to the
+    actual text, invalid or empty ranges are discarded, and trailing
+    whitespace is excluded from every remaining entity span. The text itself
+    and URL targets are never changed.
     """
     if not entities:
         return entities
     text_len = u16len(text or "")
-    out = []
-    for e in entities:
-        offset = getattr(e, "offset", None)
-        length = getattr(e, "length", None)
+    bounded = []
+    for entity in entities:
+        offset = getattr(entity, "offset", None)
+        length = getattr(entity, "length", None)
         if not isinstance(offset, int) or not isinstance(length, int):
             continue
-        if length <= 0:
-            continue
-        if offset < 0 or offset >= text_len:
+        if length <= 0 or offset < 0 or offset >= text_len:
             continue
         if offset + length > text_len:
-            e2 = copy.copy(e)
-            e2.length = text_len - offset
-            if e2.length <= 0:
-                continue
-            out.append(e2)
-        else:
-            out.append(e)
-    return out
+            entity = copy.copy(entity)
+            entity.length = text_len - offset
+        if entity.length > 0:
+            bounded.append(entity)
+    return trim_entity_trailing_whitespace(text, bounded)
