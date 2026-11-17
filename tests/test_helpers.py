@@ -1296,26 +1296,37 @@ class AsyncSendTests(unittest.TestCase):
             self.assertIn("mime_type", uploads._UNSUPPORTED_SEND_KWARGS)
         asyncio.run(scenario())
 
-    def test_formatting_fallback_retries_only_without_entities(self):
+    def test_formatting_error_is_never_retried_without_entities(self):
         async def scenario():
             calls = []
             async def send(**kwargs):
                 calls.append(dict(kwargs))
-                if len(calls) == 1:
-                    raise EntityBoundsError("invalid entity bounds")
-                return "sent"
+                raise EntityBoundsError("invalid entity bounds")
             class EntityBoundsError(Exception):
                 pass
-            with tempfile.TemporaryDirectory() as temp:
-                with patch.object(config.get_settings(), "format_debug_file", str(Path(temp) / "format.jsonl")):
-                    result = await formatfallback.with_formatting_fallback(
-                        send, {"formatting_entities": [tl.MessageEntityItalic(offset=0, length=1)]},
-                        "x", [tl.MessageEntityItalic(offset=0, length=1)], "1",
-                    )
-                self.assertEqual(result, "sent")
-                self.assertEqual(len(calls), 2)
-                self.assertIsNone(calls[1]["formatting_entities"])
-                self.assertTrue(Path(temp, "format.jsonl").exists())
+            entities = [tl.MessageEntityItalic(offset=0, length=1)]
+            with self.assertRaisesRegex(EntityBoundsError, "invalid entity bounds"):
+                await formatfallback.with_formatting_fallback(
+                    send, {"formatting_entities": entities}, "x", entities, "1",
+                )
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0]["formatting_entities"], entities)
+
+        asyncio.run(scenario())
+
+    def test_unrelated_type_error_is_never_retried(self):
+        async def scenario():
+            calls = []
+            async def send(**kwargs):
+                calls.append(dict(kwargs))
+                raise TypeError("unrelated programming error")
+            entities = [tl.MessageEntityItalic(offset=0, length=1)]
+            with self.assertRaisesRegex(TypeError, "unrelated programming error"):
+                await formatfallback.with_formatting_fallback(
+                    send, {"formatting_entities": entities}, "x", entities, "1",
+                )
+            self.assertEqual(len(calls), 1)
+
         asyncio.run(scenario())
 
 
