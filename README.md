@@ -1,4 +1,4 @@
-# Telegram Desktop Chat-History Migration
+# Telegram Desktop Chat-History Migration.
 
 ## Windows one-click launcher
 
