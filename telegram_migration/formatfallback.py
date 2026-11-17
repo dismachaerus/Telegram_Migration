@@ -1,7 +1,5 @@
 """Diagnose Telegram entity-bound errors without silently discarding formatting."""
 
-import json
-
 from telethon.errors import FloodWaitError
 
 from . import config, progress
@@ -136,7 +134,7 @@ async def with_formatting_fallback(send, kwargs, text, entities, src=None):
             _record_entity_error(
                 src,
                 kwargs.get("caption", text),
-                kwargs.get("formatting_entities", entities),
+                kwargs.get("formatting_entities") or entities,
                 exc,
             )
             if hasattr(exc, "add_note"):
