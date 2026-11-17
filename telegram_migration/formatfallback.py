@@ -4,12 +4,13 @@ from . import config, progress
 from . import textutil
 
 
-def _record_entity_failure(text, entities, source_id, context, exc):
+def _record_entity_issue(text, entities, source_id, context, exc, phase):
     try:
         progress.append_jsonl(config.settings.format_debug_file, {
             "source_id": source_id,
             "context": context,
-            "error": str(exc),
+            "phase": phase,
+            "error": f"{type(exc).__name__}: {exc}",
             "text_utf16_len": textutil.u16len(text or ""),
             "text_repr": (text or "")[:1000],
             "entities": [
@@ -25,12 +26,34 @@ def _record_entity_failure(text, entities, source_id, context, exc):
             ],
         })
     except Exception:
-        # The original validation error is more important than diagnostics.
+        # The original formatting error is more important than diagnostics.
         pass
     print(
-        f"    formatting validation failed for source id={source_id}"
+        f"    formatting {phase} issue for source id={source_id}"
         + (f" ({context})" if context else "")
-        + f": {exc} (details: {config.settings.format_debug_file})"
+        + f": {type(exc).__name__}: {exc}"
+        + f" (details: {config.settings.format_debug_file})"
+    )
+
+
+def is_entity_error(exc):
+    """Identify likely entity-specific RPC or serialization errors."""
+    name = type(exc).__name__.lower()
+    message = str(exc).lower()
+    return (
+        "entit" in name
+        or "entity_bounds" in message
+        or "entity bounds" in message
+        or "invalid bounds" in message
+        or "can't parse entities" in message
+        or "cannot parse entities" in message
+    )
+
+
+def record_send_failure(text, entities, source_id, context, exc):
+    """Persist entity details when Telegram rejects formatting at the RPC boundary."""
+    _record_entity_issue(
+        text, entities, source_id, context, exc, phase="telegram_send",
     )
 
 
@@ -41,7 +64,9 @@ def validate_formatting(text, entities, source_id=None, *, context=None):
             text, entities or [], source_id=source_id,
         )
     except textutil.EntityValidationError as exc:
-        _record_entity_failure(text, entities, source_id, context, exc)
+        _record_entity_issue(
+            text, entities, source_id, context, exc, phase="validation",
+        )
         raise
 
 
@@ -56,7 +81,9 @@ def prepare_formatting(text, entities, source_id=None, *, context=None):
             text, entities or [], source_id=source_id,
         )
     except textutil.EntityValidationError as exc:
-        _record_entity_failure(text, entities, source_id, context, exc)
+        _record_entity_issue(
+            text, entities, source_id, context, exc, phase="validation",
+        )
         raise
 
 
@@ -75,4 +102,11 @@ async def with_formatting_fallback(send, kwargs, text, entities, src=None):
     ):
         kwargs = dict(kwargs)
         kwargs["formatting_entities"] = prepared or None
-    return await send(**kwargs)
+    try:
+        return await send(**kwargs)
+    except Exception as exc:
+        if entities and (
+            is_entity_error(exc) or isinstance(exc, (TypeError, ValueError))
+        ):
+            record_send_failure(text, entities, src, "message send", exc)
+        raise
