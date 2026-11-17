@@ -2,6 +2,8 @@
 
 from telethon.errors import MessageNotModifiedError
 
+from .textutil import clean_invalid_entities
+
 
 async def _album_message_list(value):
     """Normalize Telethon's single/list return shapes to a list of messages."""
@@ -54,6 +56,9 @@ async def _verify_album_delivery(client, channel, messages, captions,
     for index, (message, expected, entities) in enumerate(
         zip(messages, captions, caption_entities), start=1
     ):
+        # Apply the same UTF-16 bounds validation used by the send path. The
+        # resume/audit path must never pass malformed source spans to EditMessage.
+        entities = clean_invalid_entities(expected, entities or [])
         actual = getattr(message, "message", None)
         if actual is None:
             actual = getattr(message, "text", None)
