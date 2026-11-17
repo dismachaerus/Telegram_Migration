@@ -161,7 +161,13 @@ def _parse_rich_text(root, *, extract_stickers=False, source_id=None):
             if child.tail:
                 add(child.tail)
 
-    walk(root)
+    try:
+        walk(root)
+    except UnsupportedFormattingEntityError as exc:
+        formatfallback.record_conversion_failure(
+            "".join(parts), entities, source_id, "HTML export conversion", exc,
+        )
+        raise
     raw_text = "".join(parts)
     leading_units = u16len(raw_text) - u16len(raw_text.lstrip())
     text, entities = strip_with_entities(raw_text, entities)
