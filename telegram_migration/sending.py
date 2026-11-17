@@ -1,7 +1,7 @@
 """Sending one migrated message: text chunks, albums, voice/stickers, native forwards."""
 
 import asyncio
-import os.
+import os
 
 from telethon.errors import FloodWaitError
 from telethon.tl import types as tl
