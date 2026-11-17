@@ -108,9 +108,11 @@ def _parse_rich_text(root, *, extract_stickers=False):
                     if href.startswith("tg://user?id="):
                         try:
                             uid = int(href.split("id=", 1)[1])
-                            emit("MessageEntityMentionName", start, end, user_id=uid)
-                        except (ValueError, IndexError):
-                            pass
+                        except (ValueError, IndexError) as exc:
+                            raise ValueError(
+                                f"Cannot preserve malformed Telegram user mention URL: {href!r}"
+                            ) from exc
+                        emit("MessageEntityMentionName", start, end, user_id=uid)
                     elif href.startswith("mailto:"):
                         emit("MessageEntityEmail", start, end)
                     elif urlparse(href).scheme.lower() in _URL_SCHEMES:
