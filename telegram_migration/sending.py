@@ -117,7 +117,7 @@ def inferred_album_caption_parts(caption, entities):
 async def send_inferred_album_caption(
     client, channel, caption, entities, state, source_id, album_message_id,
 ):
-    """Send only caption overflow as a reply to the final item in the album."""
+    """Send caption overflow as a reply to the first item in the album."""
     _first, continuation = inferred_album_caption_parts(caption, entities)
     if not continuation:
         return
