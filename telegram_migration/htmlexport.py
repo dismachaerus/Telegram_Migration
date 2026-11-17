@@ -279,7 +279,9 @@ def extract_service_event_data(msg_div, current_date=None):
         return None
 
     body = find_first(msg_div, "body")
-    body_text, body_entities = parse_rich_text(body if body is not None else msg_div)
+    body_text, body_entities = parse_rich_text(
+        body if body is not None else msg_div, source_id=match.group(1),
+    )
     body_text = body_text.strip()
     if not body_text:
         return None
@@ -365,7 +367,7 @@ def extract_message_data(msg_div):
     if text_root is None:
         text_root = find_first(msg_div, "text")
     body_text, body_entities, inline_stickers, missing_stickers = (
-        parse_rich_text_with_stickers(text_root)
+        parse_rich_text_with_stickers(text_root, source_id=msg_id)
     )
 
     media = exportmedia.find_media(msg_div)
