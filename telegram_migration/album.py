@@ -402,6 +402,23 @@ async def _album_message_list(value):
     return [value]
 
 
+def _same_entity_spans(actual_entities, expected_entities):
+    """Compare entity types and UTF-16 spans, ignoring server-only flags."""
+    def signature(entity):
+        name = type(entity).__name__
+        if name == "InputMessageEntityMentionName":
+            name = "MessageEntityMentionName"
+        return (
+            name,
+            int(getattr(entity, "offset", -1)),
+            int(getattr(entity, "length", -1)),
+        )
+
+    actual = sorted(signature(entity) for entity in (actual_entities or []))
+    expected = sorted(signature(entity) for entity in (expected_entities or []))
+    return actual == expected
+
+
 async def _verify_album_delivery(client, channel, messages, captions,
                                  caption_entities, source_id):
     """Verify Telegram created one album and retained every supplied caption.
@@ -435,11 +452,8 @@ async def _verify_album_delivery(client, channel, messages, captions,
                 f"Cannot verify caption for album item {index} "
                 f"(source id={source_id}); Telegram returned no message text field"
             )
-        # A previous text-only fallback may have retained the exact caption
-        # text while dropping all entities. Reapply formatting whenever the
-        # source expects entities; MessageNotModifiedError below confirms that
-        # both text and entities are already identical on Telegram.
-        if actual == expected and not entities:
+        actual_entities = getattr(message, "entities", None) or []
+        if actual == expected and _same_entity_spans(actual_entities, entities):
             continue
 
         # Caption text is content, not decoration. If Telegram omitted or
@@ -464,18 +478,27 @@ async def _verify_album_delivery(client, channel, messages, captions,
             # false failure and cause the whole album to be retried.
             continue
 
-        edited_text = getattr(edited, "message", None) if edited is not None else None
-        if edited_text is None:
+        edited_message = edited
+        edited_text = getattr(edited_message, "message", None) if edited_message is not None else None
+        edited_entities = getattr(edited_message, "entities", None) if edited_message is not None else None
+        if edited_text is None or (entities and edited_entities is None):
             get_messages = getattr(client, "get_messages", None)
             if callable(get_messages):
                 refreshed = await get_messages(channel, ids=message.id)
                 refreshed_list = await _album_message_list(refreshed)
                 if refreshed_list:
-                    edited_text = getattr(refreshed_list[0], "message", None)
+                    edited_message = refreshed_list[0]
+                    edited_text = getattr(edited_message, "message", None)
+                    edited_entities = getattr(edited_message, "entities", None)
         if edited_text != expected:
             raise RuntimeError(
                 f"Caption verification failed for album item {index} "
                 f"(source id={source_id}); expected text was not retained"
+            )
+        if entities and not _same_entity_spans(edited_entities, entities):
+            raise RuntimeError(
+                f"Caption formatting verification failed for album item {index} "
+                f"(source id={source_id}); expected entities were not retained"
             )
 
     return grouped_ids[0]
