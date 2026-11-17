@@ -7,7 +7,7 @@ from telethon.tl import types as tl
 from . import exportmedia, formatfallback
 from .htmlutil import css_classes
 from .textutil import (
-    ordered_entities, prepare_entities_for_telegram,
+    ordered_entities,
     sanitize_text, strip_with_entities, u16len,
 )
 
