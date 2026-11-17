@@ -25,6 +25,23 @@ class AlbumVerificationTests(unittest.TestCase):
         client.edit_message.assert_awaited_once()
         client.get_messages.assert_not_awaited()
 
+    def test_album_edit_verifies_fresh_server_message_not_stale_edit_result(self):
+        stale = SimpleNamespace(id=781, grouped_id=90021, message="stale caption")
+        edit_result = SimpleNamespace(id=781, grouped_id=90021, message="stale caption")
+        fetched = SimpleNamespace(id=781, grouped_id=90021, message="archive caption")
+        client = SimpleNamespace(
+            edit_message=AsyncMock(return_value=edit_result),
+            get_messages=AsyncMock(return_value=fetched),
+        )
+
+        grouped_id = asyncio.run(album._verify_album_delivery(
+            client, -100123, [stale], ["archive caption"], [[]], "310a",
+        ))
+
+        self.assertEqual(grouped_id, 90021)
+        client.edit_message.assert_awaited_once()
+        client.get_messages.assert_awaited_once_with(-100123, ids=781)
+
     def test_successful_edit_still_rejects_a_real_caption_mismatch(self):
         stale = SimpleNamespace(id=78, grouped_id=9002, message="stale caption")
         edited = SimpleNamespace(id=78, grouped_id=9002, message="still wrong")
