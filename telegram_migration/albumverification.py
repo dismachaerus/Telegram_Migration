@@ -58,7 +58,14 @@ async def _verify_album_delivery(client, channel, messages, captions,
     ):
         # Apply the same UTF-16 bounds validation used by the send path. The
         # resume/audit path must never pass malformed source spans to EditMessage.
-        entities = clean_invalid_entities(expected, entities or [])
+        original_entities = list(entities or [])
+        entities = clean_invalid_entities(expected, original_entities)
+        if len(entities) != len(original_entities):
+            raise RuntimeError(
+                f"Refusing to repair album item {index} (source id={source_id}): "
+                "one or more original formatting entities have invalid UTF-16 "
+                "bounds. No formatting was discarded and no edit was attempted."
+            )
         # Caption entities can arrive from several reconstruction paths. Sort
         # them here as well as in compose_message so every EditMessageRequest
         # receives canonical UTF-16 spans, with outer spans before nested ones.
