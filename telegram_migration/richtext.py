@@ -12,13 +12,17 @@ from .textutil import (
 )
 
 
+class UnsupportedFormattingEntityError(RuntimeError):
+    """The installed Telethon schema cannot represent an exported HTML tag."""
+
+
 _URL_SCHEMES = ("http", "https", "tg", "ftp", "ftps")
 
 
 def _make_entity(name, source_id=None, **kwargs):
     cls = getattr(tl, name, None)
     if cls is None:
-        raise RuntimeError(
+        raise UnsupportedFormattingEntityError(
             f"source id={source_id}: installed Telethon does not support required HTML formatting entity {name}"
         )
     try:
@@ -27,7 +31,7 @@ def _make_entity(name, source_id=None, **kwargs):
         # Older Telethon schema layers may not expose the optional collapsed
         # blockquote flag. No other constructor error is silently ignored.
         if "collapsed" not in kwargs:
-            raise RuntimeError(
+            raise UnsupportedFormattingEntityError(
                 f"source id={source_id}: could not construct required Telegram entity {name}: {exc}"
             ) from exc
         compatible = dict(kwargs)
@@ -35,7 +39,7 @@ def _make_entity(name, source_id=None, **kwargs):
         try:
             return cls(**compatible)
         except TypeError as compat_exc:
-            raise RuntimeError(
+            raise UnsupportedFormattingEntityError(
                 f"source id={source_id}: could not construct required Telegram entity {name}: {compat_exc}"
             ) from compat_exc
 
