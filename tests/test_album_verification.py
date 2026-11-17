@@ -74,6 +74,33 @@ class AlbumVerificationTests(unittest.TestCase):
         self.assertEqual(kwargs["formatting_entities"], [valid])
         client.get_messages.assert_not_awaited()
 
+    def test_album_repair_sorts_outer_entities_before_nested_spans(self):
+        from telethon.tl import types as tl
+
+        outer = tl.MessageEntityBlockquote(offset=0, length=7)
+        inner_bold = tl.MessageEntityBold(offset=1, length=3)
+        inner_italic = tl.MessageEntityItalic(offset=4, length=3)
+        stale = SimpleNamespace(
+            id=82, grouped_id=9006, message="caption", entities=[],
+        )
+        edited = SimpleNamespace(
+            id=82, grouped_id=9006, message="caption",
+            entities=[outer, inner_bold, inner_italic],
+        )
+        client = SimpleNamespace(
+            edit_message=AsyncMock(return_value=edited),
+            get_messages=AsyncMock(),
+        )
+
+        asyncio.run(album._verify_album_delivery(
+            client, -100123, [stale], ["caption"],
+            [[inner_bold, inner_italic, outer]], "314",
+        ))
+
+        supplied = client.edit_message.await_args.kwargs["formatting_entities"]
+        self.assertEqual(supplied, [outer, inner_bold, inner_italic])
+
+
     def test_successful_edit_still_rejects_a_real_caption_mismatch(self):
         stale = SimpleNamespace(id=78, grouped_id=9002, message="stale caption")
         edited = SimpleNamespace(id=78, grouped_id=9002, message="still wrong")
