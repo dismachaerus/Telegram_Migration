@@ -971,14 +971,17 @@ class PipelineTests(unittest.TestCase):
             fakes.message(1, fakes.text("message with conversion failure")),
             fakes.message(2, fakes.text("later message must remain untouched")),
         ])
-        extract = htmlexport.extract_message_data
+        apply_custom_emoji = customemoji.apply_custom_emoji_entities
 
-        def fail_first_message(elem):
-            if elem.get("id") == "message1":
-                raise ValueError("synthetic HTML reconstruction failure")
-            return extract(elem)
+        def fail_first_message(data, inline_emoji_ids):
+            if str(data["msg_id"]) == "1":
+                raise ValueError("synthetic message reconstruction failure")
+            return apply_custom_emoji(data, inline_emoji_ids)
 
-        with patch.object(htmlexport, "extract_message_data", side_effect=fail_first_message):
+        with patch.object(
+            customemoji, "apply_custom_emoji_entities",
+            side_effect=fail_first_message,
+        ):
             client, output, _ = self.run_once()
 
         self.assertEqual(client.texts(), [])
