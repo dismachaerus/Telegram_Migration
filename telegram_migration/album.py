@@ -238,6 +238,8 @@ def infer_media_groups(files, inline_emoji_ids=None):
     from lxml import etree
 
     from . import htmlexport
+    from .richtext import UnsupportedFormattingEntityError
+    from .textutil import EntityValidationError
 
     groups = {}
     for page in files:
@@ -266,7 +268,27 @@ def infer_media_groups(files, inline_emoji_ids=None):
                     forward_context["last_forward_name"] = ""
                     continue
 
-                data = htmlexport.extract_message_data(elem)
+                try:
+                    data = htmlexport.extract_message_data(elem)
+                except (EntityValidationError, UnsupportedFormattingEntityError) as exc:
+                    # This pass exists only to infer media grouping. Do not let
+                    # malformed/unsupported formatting abort the entire run
+                    # here, and never merge media across this record. The main
+                    # migration pass will parse it strictly, log its source ID,
+                    # and stop that message without uploading it.
+                    raw_id = elem.get("id", "")
+                    failed_source_id = raw_id[7:] if raw_id.startswith("message") else raw_id
+                    print(
+                        f"    album inference boundary at source id={failed_source_id}: "
+                        f"{exc}; strict validation will report it during migration"
+                    )
+                    flush()
+                    last_sender = ""
+                    forward_context["last_forward_name"] = ""
+                    elem.clear()
+                    while elem.getprevious() is not None:
+                        del elem.getparent()[0]
+                    continue
                 if data is None:
                     flush()
                     last_sender = ""
