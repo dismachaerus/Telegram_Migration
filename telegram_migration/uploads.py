@@ -8,7 +8,6 @@ from telethon import TelegramClient
 from telethon.tl import types as tl
 
 from . import formatfallback, mediatools
-from .textutil import clean_invalid_entities
 from .constants import STICKER_KINDS
 
 
@@ -123,8 +122,7 @@ async def send_media_item(client, channel, path, kind, reply_to, source_id=None,
                            caption="", entities=None):
     """Send one media item with format-specific GIF/sticker handling."""
     caption = caption or ""
-    # Enforce Telegram's entity-bounds invariants on captions too.
-    entities = clean_invalid_entities(caption, entities)
+    entities = formatfallback.validate_formatting(caption, entities, source_id)
     kwargs = {
         "reply_to": reply_to,
         "caption": caption,
