@@ -63,7 +63,7 @@ class AlbumVerificationTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(
-            RuntimeError, "No formatting was discarded and no edit was attempted"
+            ValueError, "No formatting was discarded"
         ):
             asyncio.run(album._verify_album_delivery(
                 client, -100123, [stale], ["caption"], [[valid, invalid]], "313",
