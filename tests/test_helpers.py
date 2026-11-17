@@ -100,6 +100,28 @@ class TextAndEntityTests(unittest.TestCase):
         self.assertEqual((result[0].offset, result[0].length), (0, 2))
         self.assertEqual((result[1].offset, result[1].length), (1, 2))
 
+    def test_clean_invalid_entities_excludes_trailing_whitespace_and_preserves_url(self):
+        text = "bold \nlink  "
+        bold = tl.MessageEntityBold(offset=0, length=5)
+        quote = tl.MessageEntityBlockquote(offset=0, length=textutil.u16len(text))
+        link = tl.MessageEntityTextUrl(
+            offset=6, length=4, url="https://example.test/original?x=1"
+        )
+
+        result = textutil.clean_invalid_entities(text, [bold, quote, link])
+
+        self.assertEqual(
+            [(type(entity).__name__, entity.offset, entity.length) for entity in result],
+            [
+                ("MessageEntityBold", 0, 4),
+                ("MessageEntityBlockquote", 0, 10),
+                ("MessageEntityTextUrl", 6, 4),
+            ],
+        )
+        self.assertEqual(link.url, "https://example.test/original?x=1")
+        self.assertEqual((bold.length, quote.length), (5, textutil.u16len(text)))
+        self.assertEqual(text, "bold \nlink  ")
+
     def test_archive_header_formats_sender_and_timestamp_with_utf16_entities(self):
         timestamp = datetime(2025, 3, 15, 11, 39)
         header, entities = textutil.compose_message_header(timestamp, "esprít 😀")
