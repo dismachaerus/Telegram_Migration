@@ -507,6 +507,23 @@ class InlineCustomEmojiTests(unittest.TestCase):
 
 
 class ExportParsingTests(unittest.TestCase):
+    def test_album_inference_scan_does_not_abort_on_one_unparseable_message(self):
+        from telegram_migration import album
+
+        with tempfile.TemporaryDirectory() as temp:
+            page = Path(temp) / "messages.html"
+            page.write_text(
+                '<html><body><div class="message" id="message701"></div>'
+                '</body></html>',
+                encoding="utf-8",
+            )
+            with patch(
+                "telegram_migration.htmlexport.extract_message_data",
+                side_effect=ValueError("unsupported source formatting"),
+            ):
+                groups = album.infer_media_groups([str(page)])
+        self.assertEqual(groups, [])
+
     def test_extract_message_data_reads_sender_time_text_and_reply(self):
         html = '''<div class="message default clearfix" id="message123">
           <div class="body">
