@@ -96,9 +96,12 @@ class FakeTelegram:
         return existing
 
     async def send_message(self, channel, text, **kwargs):
+        # Record the attempted request before simulating Telegram's rejection.
+        # This lets tests verify that formatting was actually sent and that no
+        # second, plain-text retry was attempted.
+        self.calls.append(("send_message", text, kwargs))
         if self.reject_formatting and kwargs.get("formatting_entities"):
             raise self.reject_formatting
-        self.calls.append(("send_message", text, kwargs))
         message = FakeMessage(self._new_id(), message=text)
         self.messages[message.id] = message
         return message
