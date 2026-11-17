@@ -122,7 +122,7 @@ async def send_media_item(client, channel, path, kind, reply_to, source_id=None,
                            caption="", entities=None):
     """Send one media item with format-specific GIF/sticker handling."""
     caption = caption or ""
-    entities = formatfallback.validate_formatting(caption, entities, source_id)
+    entities = formatfallback.prepare_formatting(caption, entities, source_id)
     kwargs = {
         "reply_to": reply_to,
         "caption": caption,
