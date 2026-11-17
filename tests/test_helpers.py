@@ -1365,7 +1365,7 @@ class AsyncSendTests(unittest.TestCase):
             self.assertIn("mime_type", uploads._UNSUPPORTED_SEND_KWARGS)
         asyncio.run(scenario())
 
-    def test_formatting_error_is_never_retried_without_entities(self):
+    def test_formatting_error_is_logged_and_never_retried_without_entities(self):
         async def scenario():
             calls = []
             async def send(**kwargs):
@@ -1374,12 +1374,20 @@ class AsyncSendTests(unittest.TestCase):
             class EntityBoundsError(Exception):
                 pass
             entities = [tl.MessageEntityItalic(offset=0, length=1)]
-            with self.assertRaisesRegex(EntityBoundsError, "invalid entity bounds"):
-                await formatfallback.with_formatting_fallback(
-                    send, {"formatting_entities": entities}, "x", entities, "1",
-                )
+            with tempfile.TemporaryDirectory() as temp:
+                debug_path = str(Path(temp) / "format.jsonl")
+                with patch.object(config.get_settings(), "format_debug_file", debug_path):
+                    with self.assertRaisesRegex(EntityBoundsError, "invalid entity bounds"):
+                        await formatfallback.with_formatting_fallback(
+                            send, {"formatting_entities": entities}, "x", entities, "1",
+                        )
+                record = json.loads(Path(debug_path).read_text(encoding="utf-8"))
             self.assertEqual(len(calls), 1)
             self.assertEqual(calls[0]["formatting_entities"], entities)
+            self.assertEqual(record["phase"], "telegram_send")
+            self.assertEqual(record["source_id"], "1")
+            self.assertEqual(record["text_repr"], "x")
+            self.assertEqual(record["entities"][0]["type"], "MessageEntityItalic")
 
         asyncio.run(scenario())
 
