@@ -2,7 +2,7 @@
 
 from telethon.errors import MessageNotModifiedError
 
-from .textutil import trim_entity_trailing_whitespace, u16len
+from . import formatfallback
 
 
 async def _album_message_list(value):
@@ -63,50 +63,13 @@ async def _verify_album_delivery(client, channel, messages, captions,
                 # Use the fetched server message as the edit target/context.
                 message = refreshed_before_edit_list[0]
 
-        # Validate and canonicalize at the final EditMessageRequest boundary.
-        # This catches offsets outside the exact UTF-16 text sent to Telegram,
-        # and guarantees outer spans precede nested entities.
-        entities = trim_entity_trailing_whitespace(expected, raw_entities or [])
-        text_utf16_len = u16len(expected)
-        entities.sort(key=lambda entity: (
-            int(getattr(entity, "offset", 0)),
-            -int(getattr(entity, "length", 0)),
-        ))
-        encoded = expected.encode("utf-16-le")
-        entity_ranges = [
-            {
-                "type": type(entity).__name__,
-                "offset": getattr(entity, "offset", None),
-                "length": getattr(entity, "length", None),
-            }
-            for entity in entities
-        ]
-
-        def splits_surrogate_pair(position):
-            if position <= 0 or position >= text_utf16_len:
-                return False
-            previous = encoded[(position - 1) * 2] | (encoded[(position - 1) * 2 + 1] << 8)
-            following = encoded[position * 2] | (encoded[position * 2 + 1] << 8)
-            return 0xD800 <= previous <= 0xDBFF and 0xDC00 <= following <= 0xDFFF
-
-        for entity in entities:
-            offset = getattr(entity, "offset", None)
-            length = getattr(entity, "length", None)
-            if (
-                not isinstance(offset, int)
-                or not isinstance(length, int)
-                or offset < 0
-                or length <= 0
-                or offset + length > text_utf16_len
-                or splits_surrogate_pair(offset)
-                or splits_surrogate_pair(offset + length)
-            ):
-                raise ValueError(
-                    "Invalid album caption entity before EditMessageRequest: "
-                    f"source id={source_id}, item={index}, "
-                    f"text_utf16_len={text_utf16_len}, entities={entity_ranges!r}"
-                )
-
+        # Apply Telegram's required trailing-whitespace rule, then strictly
+        # validate all ranges before the final EditMessageRequest. No invalid
+        # entity is clipped or discarded.
+        entities = formatfallback.prepare_formatting(
+            expected, raw_entities or [], source_id,
+            context=f"album verification item {index}",
+        )
         edit_message = getattr(client, "edit_message", None)
         if not callable(edit_message):
             raise RuntimeError(
