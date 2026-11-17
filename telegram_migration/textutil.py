@@ -214,38 +214,46 @@ def split_with_entities(text, entities, first_limit, limit):
 
 
 def clean_invalid_entities(text, entities):
-    """Drop or clip entities whose bounds are invalid for `text`.
+    """Normalize entity bounds and exclude trailing whitespace from each span.
 
-    Telegram rejects a message outright with "Some of provided entities have
-    invalid bounds" when any entity has offset < 0, length <= 0, or
-    offset + length > UTF-16 length of the text. This helper enforces those
-    three invariants:
-
-      1. entities entirely outside the text range     -> discarded
-      2. entities that spill past the end of the text -> length shrunk
-      3. entities with zero or negative length         -> discarded
-
-    Valid entities pass through unchanged.
+    Telegram entity lengths use UTF-16 code units. In addition to valid bounds,
+    Telegram requires each entity's span to exclude trailing whitespace and
+    newlines. The message text is never changed; only a copied entity's length
+    is shortened. URL targets and all other entity metadata are preserved.
     """
     if not entities:
         return entities
-    text_len = u16len(text or "")
+    encoded = (text or "").encode("utf-16-le")
+    text_len = len(encoded) // 2
     out = []
     for e in entities:
         offset = getattr(e, "offset", None)
         length = getattr(e, "length", None)
         if not isinstance(offset, int) or not isinstance(length, int):
             continue
+        if length <= 0 or offset < 0 or offset >= text_len:
+            continue
+
+        # Clip an entity that extends beyond the actual message text.
+        current = e
+        if offset + length > text_len:
+            current = copy.copy(e)
+            current.length = text_len - offset
+            length = current.length
         if length <= 0:
             continue
-        if offset < 0 or offset >= text_len:
+
+        # Telegram forbids trailing whitespace inside an entity's span.
+        # surrogatepass keeps split-pair ranges inspectable here; the final
+        # album edit validator separately rejects surrogate-pair boundaries.
+        visible = encoded[offset * 2:(offset + length) * 2].decode(
+            "utf-16-le", errors="surrogatepass"
+        )
+        trimmed_length = u16len(visible.rstrip())
+        if trimmed_length <= 0:
             continue
-        if offset + length > text_len:
-            e2 = copy.copy(e)
-            e2.length = text_len - offset
-            if e2.length <= 0:
-                continue
-            out.append(e2)
-        else:
-            out.append(e)
+        if trimmed_length < length:
+            current = copy.copy(current)
+            current.length = trimmed_length
+        out.append(current)
     return out
