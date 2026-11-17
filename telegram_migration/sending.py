@@ -467,6 +467,13 @@ async def send_one(client, channel, data, chunks, reply_to, state, annotation, s
             print(f"    FloodWait {fw.seconds}s — sleeping...")
             await asyncio.sleep(fw.seconds + 5)
         except Exception as exc:
+            # Telegram entity-bound errors are deterministic for this exact
+            # text/entity payload. Retrying the same malformed request cannot
+            # repair its offsets and only repeats a rejected send.
+            if formatfallback._is_entity_error(exc):
+                print(f"    failed id={data['msg_id']}: {exc}")
+                progress.log_failure(data["msg_id"], str(exc))
+                return None
             attempt += 1
             if attempt >= config.settings.max_retries:
                 print(f"    failed id={data['msg_id']}: {exc}")
