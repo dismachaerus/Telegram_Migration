@@ -117,7 +117,7 @@ def inferred_album_caption_parts(caption, entities):
 async def send_inferred_album_caption(
     client, channel, caption, entities, state, source_id, album_message_id,
 ):
-    """Send caption overflow as a reply to the first item in the album."""
+    """Send only caption overflow as a reply to the final item in the album."""
     _first, continuation = inferred_album_caption_parts(caption, entities)
     if not continuation:
         return
@@ -145,17 +145,16 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
             inferred_album_item_caption_parts(album_item_captions)
         )
     elif inferred_album:
-        # Telegram's proven album path places the shared caption on the first
-        # media item. Keep the caption and its entity row aligned with item 0.
-        first_caption, _continuation = inferred_album_caption_parts(
+        # Non-audio inferred albums keep one shared group caption on the final item.
+        final_caption, _continuation = inferred_album_caption_parts(
             album_caption, album_caption_entities,
         )
-        captions = [first_caption[0]] + [""] * (len(files) - 1)
-        caption_entities = [first_caption[1]] + [[] for _ in files[1:]]
+        captions = [""] * (len(files) - 1) + [final_caption[0]]
+        caption_entities = [[] for _ in files[:-1]] + [final_caption[1]]
     else:
-        captions = ([first_text] + [""] * (len(files) - 1)
+        captions = ([""] * (len(files) - 1) + [first_text]
                     if captions is None else list(captions))
-        caption_entities = ([first_ents] + [[] for _ in files[1:]]
+        caption_entities = ([[] for _ in files[:-1]] + [first_ents]
                             if caption_entities is None else list(caption_entities))
     if len(captions) != len(files):
         raise RuntimeError(
@@ -180,7 +179,7 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
         elif inferred_album:
             await send_inferred_album_caption(
                 client, channel, album_caption, album_caption_entities,
-                state, source_id, album_message_ids[0],
+                state, source_id, album_message_ids[-1],
             )
 
     if "album_message_ids" in state:
@@ -217,7 +216,7 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
 
     msgs = await formatfallback.with_formatting_fallback(
         lambda **kw: uploads.send_file(client, channel, files, **kw),
-        album_kwargs, captions[0], safe_entity_rows[0], source_id,
+        album_kwargs, captions[-1], safe_entity_rows[-1], source_id,
     )
     if not msgs:
         raise RuntimeError("Album upload returned no messages")
@@ -258,39 +257,9 @@ def _is_tgs_sticker(path, kind):
 
 
 async def _send_individual_media(client, channel, chunks, media, reply_to, state,
-                                 source_id, item_captions=None):
+                                 source_id):
     first_text, first_ents = chunks[0]
     state.setdefault("multi_media_ids", [])
-    if item_captions is not None:
-        from .caption_sending import (
-            inferred_album_item_caption_parts,
-            send_inferred_album_item_caption_continuations,
-        )
-        item_texts, item_entities, _continuations = inferred_album_item_caption_parts(
-            item_captions
-        )
-        if len(item_texts) != len(media):
-            raise RuntimeError(
-                f"Per-item caption count {len(item_texts)} does not match "
-                f"media count {len(media)} for source id={source_id}"
-            )
-        while len(state["multi_media_ids"]) < len(media):
-            index = len(state["multi_media_ids"])
-            path, kind = media[index]
-            sent_msg = await uploads.send_media_item(
-                client, channel, path, kind, reply_to, source_id,
-                caption=item_texts[index], entities=item_entities[index],
-            )
-            state["multi_media_ids"].append(sent_msg.id)
-            progress.save_state(state["src"], state)
-        state["album_id"] = state["multi_media_ids"][0]
-        progress.save_state(state["src"], state)
-        await send_inferred_album_item_caption_continuations(
-            client, channel, item_captions, state, source_id,
-            state["multi_media_ids"],
-        )
-        return False
-
     captionable_sticker_kinds = {"sticker_static", "sticker_video"}
     has_captioned_sticker = any(
         kind in captionable_sticker_kinds for _path, kind in media
@@ -355,7 +324,7 @@ async def _send_multiple_media(client, channel, chunks, media, reply_to, state, 
             or [state["album_id"]]
         )
         await _send_text_chunks(
-            client, channel, rest, group_ids[0], state, "tail_prog", source_id
+            client, channel, rest, group_ids[-1], state, "tail_prog", source_id
         )
     return state["album_id"]
 
@@ -423,10 +392,20 @@ async def _do_send(client, channel, chunks, media, reply_to, forward_source,
         # item in source order, attach the caption to the first captionable
         # item (or as a prefix for voice notes), and checkpoint each
         # destination ID so an interrupted sequence resumes without duplicates.
-        await _send_individual_media(
-            client, channel, chunks, media, reply_to, state,
-            source_id, item_captions=data.get("_album_item_captions"),
+        first_caption, continuation = inferred_album_caption_parts(
+            album_caption, album_caption_entities,
         )
+        sequence_chunks = [first_caption] + continuation
+        await _send_individual_media(
+            client, channel, sequence_chunks, media, reply_to, state,
+            source_id,
+        )
+        if continuation:
+            last_media_id = state["multi_media_ids"][-1]
+            await _send_text_chunks(
+                client, channel, continuation, last_media_id, state,
+                "album_caption_continuation_prog", source_id,
+            )
         return list(state.get("multi_media_ids", []))
 
     forwarded_id = await _send_native_forward(
