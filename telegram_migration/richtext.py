@@ -13,17 +13,30 @@ _URL_SCHEMES = ("http", "https", "tg", "ftp", "ftps")
 
 
 def _make_entity(name, **kwargs):
+    """Create a recognized source entity or stop rather than dropping formatting."""
     cls = getattr(tl, name, None)
     if cls is None:
-        return None
+        raise RuntimeError(
+            f"Cannot preserve source formatting entity {name}: "
+            "the installed Telethon version does not support it. "
+            "Upgrade Telethon instead of migrating this span as plain text."
+        )
     try:
         return cls(**kwargs)
-    except TypeError:
-        kwargs.pop("collapsed", None)        # older Telethon: no `collapsed`
-        try:
-            return cls(**kwargs)
-        except TypeError:
-            return None
+    except TypeError as first_error:
+        if "collapsed" in kwargs:
+            kwargs.pop("collapsed")
+            try:
+                return cls(**kwargs)
+            except TypeError as exc:
+                raise RuntimeError(
+                    f"Cannot preserve source formatting entity {name}: "
+                    f"Telethon rejected its fields ({exc})."
+                ) from exc
+        raise RuntimeError(
+            f"Cannot preserve source formatting entity {name}: "
+            f"Telethon rejected its fields ({first_error})."
+        ) from first_error
 
 
 def _parse_rich_text(root, *, extract_stickers=False):
