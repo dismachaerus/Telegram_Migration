@@ -205,39 +205,42 @@ def split_with_entities(text, entities, first_limit, limit):
     return chunks or [(text, entities)]
 
 
+def _is_utf16_boundary(text, offset):
+    """Whether a UTF-16 offset falls between Unicode code points."""
+    encoded = (text or "").encode("utf-16-le")
+    units = len(encoded) // 2
+    if not isinstance(offset, int) or offset < 0 or offset > units:
+        return False
+    if offset in (0, units):
+        return True
+    previous = int.from_bytes(encoded[2 * (offset - 1):2 * offset], "little")
+    following = int.from_bytes(encoded[2 * offset:2 * (offset + 1)], "little")
+    return not (0xD800 <= previous <= 0xDBFF and 0xDC00 <= following <= 0xDFFF)
+
+
 def clean_invalid_entities(text, entities):
-    """Drop or clip entities whose bounds are invalid for `text`.
+    """Remove only malformed entities and preserve every valid formatting span.
 
-    Telegram rejects a message outright with "Some of provided entities have
-    invalid bounds" when any entity has offset < 0, length <= 0, or
-    offset + length > UTF-16 length of the text. This helper enforces those
-    three invariants:
-
-      1. entities entirely outside the text range     -> discarded
-      2. entities that spill past the end of the text -> length shrunk
-      3. entities with zero or negative length         -> discarded
-
-    Valid entities pass through unchanged.
+    Telegram entity offsets are UTF-16 code units, but an offset must also land
+    on a Unicode code-point boundary. A range can be numerically within the
+    caption and still split the two UTF-16 units of a non-BMP character.
     """
     if not entities:
         return entities
-    text_len = u16len(text or "")
+    text = text or ""
+    text_len = u16len(text)
     out = []
-    for e in entities:
-        offset = getattr(e, "offset", None)
-        length = getattr(e, "length", None)
+    for entity in entities:
+        offset = getattr(entity, "offset", None)
+        length = getattr(entity, "length", None)
         if not isinstance(offset, int) or not isinstance(length, int):
             continue
-        if length <= 0:
+        end = offset + length
+        if (
+            length <= 0 or offset < 0 or end > text_len
+            or not _is_utf16_boundary(text, offset)
+            or not _is_utf16_boundary(text, end)
+        ):
             continue
-        if offset < 0 or offset >= text_len:
-            continue
-        if offset + length > text_len:
-            e2 = copy.copy(e)
-            e2.length = text_len - offset
-            if e2.length <= 0:
-                continue
-            out.append(e2)
-        else:
-            out.append(e)
+        out.append(entity)
     return out
