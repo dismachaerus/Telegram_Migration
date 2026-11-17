@@ -9,11 +9,12 @@ from telethon.tl import functions as fn
 
 
 class FakeMessage:
-    def __init__(self, message_id, grouped_id=None, message=""):
+    def __init__(self, message_id, grouped_id=None, message="", entities=None):
         self.id = message_id
         self.grouped_id = grouped_id
         self.message = message
         self.text = message
+        self.entities = entities or []
 
 
 class FakeTelegram:
@@ -93,6 +94,7 @@ class FakeTelegram:
             return None
         existing.message = text
         existing.text = text
+        existing.entities = kwargs.get("formatting_entities") or []
         self.calls.append(("edit_message", message_id, text, kwargs))
         return existing
 
@@ -115,9 +117,15 @@ class FakeTelegram:
                 captions = [captions] * len(files)
             grouped_id = self.next_grouped_id
             self.next_grouped_id -= 1
+            entity_rows = kwargs.get("formatting_entities") or []
+            if entity_rows and not isinstance(entity_rows[0], (list, tuple)):
+                entity_rows = [entity_rows]
             messages = [
-                FakeMessage(self._new_id(), grouped_id=grouped_id,
-                            message=captions[index] if index < len(captions) else "")
+                FakeMessage(
+                    self._new_id(), grouped_id=grouped_id,
+                    message=captions[index] if index < len(captions) else "",
+                    entities=entity_rows[index] if index < len(entity_rows) else [],
+                )
                 for index, _file in enumerate(files)
             ]
             for message in messages:
@@ -126,6 +134,7 @@ class FakeTelegram:
         message = FakeMessage(
             self._new_id(),
             message=captions if isinstance(captions, str) else (captions[0] if captions else ""),
+            entities=kwargs.get("formatting_entities") or [],
         )
         self.messages[message.id] = message
         return message
