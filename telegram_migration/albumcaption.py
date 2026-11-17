@@ -25,6 +25,9 @@ def caption_for_group_body(group):
     text = ""
     for record in group:
         raw = record.get("body_text") or ""
+        source_entities = validate_entities(
+            raw, record.get("body_entities") or [], record.get("msg_id")
+        )
         caption = raw.strip()
         if not caption or caption in seen:
             continue
@@ -36,9 +39,6 @@ def caption_for_group_body(group):
             text += "\n\n"
         base_offset = u16len(text)
         text += caption
-        source_entities = validate_entities(
-            raw, record.get("body_entities") or [], record.get("msg_id")
-        )
         visible_start = trim_offset
         visible_end = trim_offset + caption_length
         for entity in source_entities:
