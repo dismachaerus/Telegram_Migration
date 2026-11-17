@@ -165,7 +165,7 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
         )
 
     safe_entity_rows = [
-        formatfallback.validate_formatting(
+        formatfallback.prepare_formatting(
             caption, entities, source_id,
             context=f"album caption item {index}",
         )
