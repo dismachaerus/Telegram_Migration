@@ -1800,8 +1800,8 @@ class PipelineTests(unittest.TestCase):
         first_caption, continuation = sending.inferred_album_caption_parts(
             expected_caption, expected_entities,
         )
-        self.assertEqual(album_kwargs["caption"], [""] * 3 + [first_caption[0]])
-        self.assertEqual(album_kwargs["formatting_entities"][-1], first_caption[1])
+        self.assertEqual(album_kwargs["caption"], [first_caption[0]] + [""] * 3)
+        self.assertEqual(album_kwargs["formatting_entities"][0], first_caption[1])
         self.assertEqual(
             [text for text in client.texts() if "message after the album" not in text],
             [chunk[0] for chunk in continuation],
@@ -1846,7 +1846,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(sent_files, expected)
         self.assertFalse(album_kwargs.get("force_document", False))
         expected_caption, _entities = album.caption_for_group(groups["401"])
-        self.assertEqual(album_kwargs["caption"], ["", "", expected_caption])
+        self.assertEqual(album_kwargs["caption"], [expected_caption, "", ""])
         self.assertNotIn("Shared album description", client.texts())
         self.assertIn("after shared-caption album", client.texts()[-1])
         self.assertIn("sent=4", output)
