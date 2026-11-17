@@ -174,9 +174,9 @@ def _parse_rich_text(root, *, extract_stickers=False, source_id=None):
     return text, entities, kept_stickers, list(dict.fromkeys(missing_stickers))
 
 
-def parse_rich_text(root):
+def parse_rich_text(root, source_id=None):
     """Convert HTML rich text to Telegram text and entities."""
-    text, entities, _stickers, _missing = _parse_rich_text(root)
+    text, entities, _stickers, _missing = _parse_rich_text(root, source_id=source_id)
     return text, entities
 
 
