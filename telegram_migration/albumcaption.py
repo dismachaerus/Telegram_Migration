@@ -4,7 +4,7 @@ Telegram Desktop may flatten a grouped media post into several HTML records.
 This module combines their distinct body captions while keeping the original
 sender/date and forward attribution attached to the album itself.
 """
-from copy import copy.
+from copy import copy
 
 from telethon.tl import types as tl
 
