@@ -14,7 +14,7 @@ class AlbumVerificationTests(unittest.TestCase):
         stale = SimpleNamespace(id=77, grouped_id=9001, message="stale local caption")
         client = SimpleNamespace(
             edit_message=AsyncMock(side_effect=MessageNotModifiedError(None)),
-            get_messages=AsyncMock(),
+            get_messages=AsyncMock(return_value=stale),
         )
 
         grouped_id = asyncio.run(album._verify_album_delivery(
@@ -23,7 +23,7 @@ class AlbumVerificationTests(unittest.TestCase):
 
         self.assertEqual(grouped_id, 9001)
         client.edit_message.assert_awaited_once()
-        client.get_messages.assert_not_awaited()
+        client.get_messages.assert_awaited_once_with(-100123, ids=77)
 
     def test_album_edit_verifies_fresh_server_message_not_stale_edit_result(self):
         stale = SimpleNamespace(id=781, grouped_id=90021, message="stale caption")
@@ -71,7 +71,7 @@ class AlbumVerificationTests(unittest.TestCase):
 
         self.assertEqual(grouped_id, 9003)
         client.edit_message.assert_awaited_once()
-        client.get_messages.assert_not_awaited()
+        self.assertEqual(client.get_messages.await_count, 2)
 
     def test_album_edit_sorts_outer_blockquote_before_nested_entities(self):
         from telethon.tl import types as tl
