@@ -94,6 +94,13 @@ def prepare_inferred_group(data, group, id_map, manual_done, partial, persist_id
     if already_mapped and len(already_mapped) != len(member_ids):
         return False
 
+    # Mark the complete source group before any caption/entity composition.
+    # If strict formatting validation fails while composing a member caption,
+    # the pipeline can then stop the whole inferred album rather than allowing
+    # later members to be sent as scattered standalone posts.
+    data["_inferred_album"] = True
+    data["_album_source_ids"] = member_ids
+
     album_caption, album_caption_entities = caption_for_group(group)
     legacy_caption, legacy_caption_entities = caption_for_group_body(group)
     all_media = [item for member in group for item in member["media"]]
@@ -109,8 +116,6 @@ def prepare_inferred_group(data, group, id_map, manual_done, partial, persist_id
     ):
         audio_item_captions = [caption_for_record(member) for member in group]
 
-    data["_inferred_album"] = True
-    data["_album_source_ids"] = member_ids
     data["_album_caption_text"] = album_caption
     data["_album_caption_entities"] = album_caption_entities
     if audio_item_captions is not None:
