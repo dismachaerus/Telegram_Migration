@@ -94,11 +94,21 @@ class TextAndEntityTests(unittest.TestCase):
         self.assertEqual(pre.language, "python")
         self.assertEqual(entities, textutil.validate_entities(text, entities))
 
-    def test_rich_text_fails_instead_of_dropping_unsupported_entities(self):
+    def test_rich_text_fails_and_logs_unsupported_entities(self):
         root = etree.fromstring("<div><u>underlined</u></div>")
-        with patch.object(richtext.tl, "MessageEntityUnderline", None):
-            with self.assertRaisesRegex(RuntimeError, "source id=source-55: installed Telethon does not support required HTML formatting entity"):
-                richtext.parse_rich_text(root, source_id="source-55")
+        with tempfile.TemporaryDirectory() as temp:
+            debug_path = str(Path(temp) / "format.jsonl")
+            with patch.object(config.get_settings(), "format_debug_file", debug_path):
+                with patch.object(richtext.tl, "MessageEntityUnderline", None):
+                    with self.assertRaisesRegex(
+                        richtext.UnsupportedFormattingEntityError,
+                        "source id=source-55: installed Telethon does not support required HTML formatting entity",
+                    ):
+                        richtext.parse_rich_text(root, source_id="source-55")
+            record = json.loads(Path(debug_path).read_text(encoding="utf-8"))
+        self.assertEqual(record["phase"], "html_conversion")
+        self.assertEqual(record["source_id"], "source-55")
+        self.assertEqual(record["text_repr"], "underlined")
     def test_rich_text_handles_nested_bold_and_italic(self):
         root = etree.fromstring("<div><b>bold <i>both</i></b></div>")
         text, entities = richtext.parse_rich_text(root)
