@@ -127,6 +127,13 @@ def prepare_entities_for_telegram(text, entities, *, source_id=None):
     specified by Telegram. It never clips an out-of-range entity or drops
     meaningful formatted text; malformed ranges raise EntityValidationError.
     """
+    text = text or ""
+    try:
+        text.encode("utf-16-le")
+    except UnicodeEncodeError as exc:
+        raise EntityValidationError(
+            f"source id={source_id}: message text contains an unpaired Unicode surrogate"
+        ) from exc
     prepared = trim_entity_trailing_whitespace(text, entities or [])
     return validate_entities(text, prepared, source_id=source_id)
 
@@ -362,7 +369,7 @@ def trim_entity_trailing_whitespace(text, entities):
         visible = encoded[offset * 2:(offset + length) * 2].decode(
             "utf-16-le", errors="surrogatepass"
         )
-        trimmed_length = u16len(visible.rstrip())
+        trimmed_length = len(visible.rstrip().encode("utf-16-le", errors="surrogatepass")) // 2
         if trimmed_length <= 0:
             # Leave the range untouched so strict validation reports it.
             # Never silently discard an entity that covers only whitespace.
