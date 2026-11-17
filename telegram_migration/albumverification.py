@@ -2,7 +2,7 @@
 
 from telethon.errors import MessageNotModifiedError
 
-from .textutil import clean_invalid_entities
+from .textutil import validate_entities
 
 
 async def _album_message_list(value):
@@ -58,24 +58,8 @@ async def _verify_album_delivery(client, channel, messages, captions,
     ):
         # Apply the same UTF-16 bounds validation used by the send path. The
         # resume/audit path must never pass malformed source spans to EditMessage.
-        original_entities = list(entities or [])
-        entities = clean_invalid_entities(expected, original_entities)
-        if len(entities) != len(original_entities):
-            raise RuntimeError(
-                f"Refusing to repair album item {index} (source id={source_id}): "
-                "one or more original formatting entities have invalid UTF-16 "
-                "bounds. No formatting was discarded and no edit was attempted."
-            )
-        # Caption entities can arrive from several reconstruction paths. Sort
-        # them here as well as in compose_message so every EditMessageRequest
-        # receives canonical UTF-16 spans, with outer spans before nested ones.
-        entities = sorted(
-            entities,
-            key=lambda entity: (
-                int(getattr(entity, "offset", 0)),
-                -int(getattr(entity, "length", 0)),
-            ),
-        )
+        # Validate and order entities without silently dropping formatting.
+        entities = validate_entities(expected, entities or [], source_id)
         actual = getattr(message, "message", None)
         if actual is None:
             actual = getattr(message, "text", None)
