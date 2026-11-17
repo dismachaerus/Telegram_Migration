@@ -9,7 +9,7 @@ from telethon.tl import types as tl
 from . import album, config, exportmedia, formatfallback, progress, uploads
 from .attribution import _send_sticker_with_attribution
 from .caption_sending import inferred_album_item_caption_parts, send_inferred_album_item_caption_continuations
-from .textutil import split_with_entities
+from .textutil import EntityValidationError, split_with_entities
 from .constants import STICKER_KINDS
 
 
@@ -436,6 +436,11 @@ async def send_one(client, channel, data, chunks, reply_to, state, annotation, s
                 data["forward_source"], state, annotation,
                 source_id, data,
             )
+        except (formatfallback.FormattingDeliveryError, EntityValidationError) as exc:
+            reason = f"formatting could not be delivered safely: {exc}"
+            print(f"    failed id={data['msg_id']}: {reason}")
+            progress.log_failure(data["msg_id"], reason)
+            return None
         except FloodWaitError as fw:
             floods += 1
             if floods > config.settings.max_flood_waits:
