@@ -933,7 +933,7 @@ class PipelineTests(unittest.TestCase):
         with patch.object(FakeTelegram, "__init__", init):
             client, _output, settings = self.run_once()
         self.assertEqual(client.texts(), [])
-        attempted = client.kinds("send_message")
+        attempted = client.attempts
         self.assertEqual(len(attempted), 1)
         self.assertTrue(attempted[0][2]["formatting_entities"])
         with open(settings.format_debug_file, encoding="utf-8") as handle:
