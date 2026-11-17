@@ -57,6 +57,13 @@ class TextAndEntityTests(unittest.TestCase):
         italic = next(e for e in entities if isinstance(e, tl.MessageEntityItalic))
         self.assertEqual((italic.offset, italic.length), (2, 1))
 
+    def test_malformed_telegram_user_link_fails_instead_of_losing_mention_entity(self):
+        root = etree.fromstring(
+            '<div><a href="tg://user?id=not-a-number">Alice</a></div>'
+        )
+        with self.assertRaisesRegex(ValueError, "malformed Telegram user mention"):
+            richtext.parse_rich_text(root)
+
     def test_rich_text_handles_nested_bold_and_italic(self):
         root = etree.fromstring("<div><b>bold <i>both</i></b></div>")
         text, entities = richtext.parse_rich_text(root)
@@ -65,6 +72,19 @@ class TextAndEntityTests(unittest.TestCase):
         italic = next(e for e in entities if isinstance(e, tl.MessageEntityItalic))
         self.assertEqual((bold.offset, bold.length), (0, 9))
         self.assertEqual((italic.offset, italic.length), (5, 4))
+
+    def test_unresolvable_user_mention_fails_instead_of_becoming_plain_text(self):
+        async def get_input_entity(user_id):
+            raise ValueError("user is not available to this bot")
+
+        mention = tl.MessageEntityMentionName(
+            offset=0, length=5, user_id=123456789
+        )
+        client = SimpleNamespace(get_input_entity=get_input_entity)
+        with self.assertRaisesRegex(RuntimeError, "source message id=703"):
+            asyncio.run(sending.resolve_mentions(
+                client, [mention], source_id="703"
+            ))
 
     def test_unsupported_telethon_entity_fails_instead_of_losing_formatting(self):
         with self.assertRaisesRegex(RuntimeError, "does not support"):
