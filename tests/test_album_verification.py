@@ -69,8 +69,8 @@ class AlbumVerificationTests(unittest.TestCase):
             get_messages=AsyncMock(side_effect=get_messages),
         )
 
-        grouped_id = asyncio.run(album._verify_album_delivery(
-            client, -100123, messages,
+        grouped_id = asyncio.run(album._verify_saved_album(
+            client, -100123, [901, 902, 903, 904],
             [caption, "", "", ""], [[bold], [], [], []], "27425",
         ))
 
