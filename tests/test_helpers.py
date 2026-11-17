@@ -1229,27 +1229,36 @@ class AsyncSendTests(unittest.TestCase):
             self.assertIn("mime_type", uploads._UNSUPPORTED_SEND_KWARGS)
         asyncio.run(scenario())
 
-    def test_formatting_fallback_retries_only_without_entities(self):
+    def test_formatting_error_is_not_retried_after_stripping_all_entities(self):
         async def scenario():
             calls = []
             async def send(**kwargs):
                 calls.append(dict(kwargs))
-                if len(calls) == 1:
-                    raise EntityBoundsError("invalid entity bounds")
-                return "sent"
+                raise EntityBoundsError("invalid entity bounds")
             class EntityBoundsError(Exception):
                 pass
             with tempfile.TemporaryDirectory() as temp:
-                with patch.object(config.get_settings(), "format_debug_file", str(Path(temp) / "format.jsonl")):
-                    result = await formatfallback.with_formatting_fallback(
-                        send, {"formatting_entities": [tl.MessageEntityItalic(offset=0, length=1)]},
-                        "x", [tl.MessageEntityItalic(offset=0, length=1)], "1",
-                    )
-                self.assertEqual(result, "sent")
-                self.assertEqual(len(calls), 2)
-                self.assertIsNone(calls[1]["formatting_entities"])
-                self.assertTrue(Path(temp, "format.jsonl").exists())
+                debug_file = Path(temp) / "format.jsonl"
+                with patch.object(config.get_settings(), "format_debug_file", str(debug_file)):
+                    with self.assertRaises(EntityBoundsError):
+                        await formatfallback.with_formatting_fallback(
+                            send, {"formatting_entities": [tl.MessageEntityItalic(offset=0, length=1)]},
+                            "x", [tl.MessageEntityItalic(offset=0, length=1)], "1",
+                        )
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(len(calls[0]["formatting_entities"]), 1)
+                self.assertTrue(debug_file.exists())
         asyncio.run(scenario())
+
+    def test_clean_invalid_entities_drops_only_surrogate_splitting_span(self):
+        text = "A😀B"
+        valid_before = tl.MessageEntityBold(offset=0, length=1)
+        invalid_middle = tl.MessageEntityItalic(offset=2, length=1)
+        valid_after = tl.MessageEntityUnderline(offset=3, length=1)
+        cleaned = textutil.clean_invalid_entities(
+            text, [valid_before, invalid_middle, valid_after]
+        )
+        self.assertEqual(cleaned, [valid_before, valid_after])
 
 
 if __name__ == "__main__":
