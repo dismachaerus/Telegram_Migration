@@ -3,7 +3,7 @@
 from telethon.errors import MessageNotModifiedError
 
 
-def _album_message_list(value):
+async def _album_message_list(value):
     """Normalize Telethon's single/list return shapes to a list of messages."""
     if value is None:
         return []
