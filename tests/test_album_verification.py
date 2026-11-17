@@ -150,7 +150,7 @@ class AlbumVerificationTests(unittest.TestCase):
         client = SimpleNamespace(edit_message=AsyncMock())
         invalid = tl.MessageEntityBold(offset=0, length=99)
 
-        with self.assertRaisesRegex(ValueError, "text_utf16_len=7"):
+        with self.assertRaisesRegex(ValueError, "text_utf16_length=7"):
             asyncio.run(album._verify_album_delivery(
                 client, -100123, [stale], ["caption"], [[invalid]], "313",
             ))
