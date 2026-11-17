@@ -56,6 +56,42 @@ class AlbumVerificationTests(unittest.TestCase):
         client.edit_message.assert_awaited_once()
         client.get_messages.assert_not_awaited()
 
+    def test_album_edit_sorts_outer_blockquote_before_nested_entities(self):
+        from telethon.tl import types as tl
+
+        caption = "Forwarded from Source\\n20 August 2024 · 16:32:07"
+        bold = tl.MessageEntityBold(offset=16, length=6)
+        italic = tl.MessageEntityItalic(offset=23, length=25)
+        quote = tl.MessageEntityBlockquote(offset=0, length=len(caption))
+        stale = SimpleNamespace(id=80, grouped_id=9004, message="old caption")
+        edited = SimpleNamespace(id=80, grouped_id=9004, message=caption)
+        client = SimpleNamespace(edit_message=AsyncMock(return_value=edited))
+
+        grouped_id = asyncio.run(album._verify_album_delivery(
+            client, -100123, [stale], [caption], [[bold, italic, quote]], "312",
+        ))
+
+        self.assertEqual(grouped_id, 9004)
+        passed_entities = client.edit_message.await_args.kwargs["formatting_entities"]
+        self.assertEqual(
+            [type(entity).__name__ for entity in passed_entities],
+            ["MessageEntityBlockquote", "MessageEntityBold", "MessageEntityItalic"],
+        )
+
+    def test_album_edit_rejects_out_of_bounds_entity_before_rpc(self):
+        from telethon.tl import types as tl
+
+        stale = SimpleNamespace(id=81, grouped_id=9005, message="old caption")
+        client = SimpleNamespace(edit_message=AsyncMock())
+        invalid = tl.MessageEntityBold(offset=0, length=99)
+
+        with self.assertRaisesRegex(ValueError, "text_utf16_len=7"):
+            asyncio.run(album._verify_album_delivery(
+                client, -100123, [stale], ["caption"], [[invalid]], "313",
+            ))
+
+        client.edit_message.assert_not_awaited()
+
 
 if __name__ == "__main__":
     unittest.main()

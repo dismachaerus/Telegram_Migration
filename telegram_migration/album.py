@@ -438,6 +438,39 @@ async def _verify_album_delivery(client, channel, messages, captions,
         if actual == expected:
             continue
 
+        # This is the final edit boundary. Canonicalize here rather than
+        # relying on an upstream caption builder to have preserved entity
+        # ordering through trimming, deduplication, and chunk clipping.
+        entities = list(entities or [])
+        text_utf16_len = u16len(expected)
+        entities.sort(key=lambda entity: (
+            int(getattr(entity, "offset", 0)),
+            -int(getattr(entity, "length", 0)),
+        ))
+        entity_ranges = [
+            {
+                "type": type(entity).__name__,
+                "offset": getattr(entity, "offset", None),
+                "length": getattr(entity, "length", None),
+            }
+            for entity in entities
+        ]
+        for entity in entities:
+            offset = getattr(entity, "offset", None)
+            length = getattr(entity, "length", None)
+            if (
+                not isinstance(offset, int)
+                or not isinstance(length, int)
+                or offset < 0
+                or length <= 0
+                or offset + length > text_utf16_len
+            ):
+                raise ValueError(
+                    "Invalid album caption entity before EditMessageRequest: "
+                    f"source id={source_id}, item={index}, "
+                    f"text_utf16_len={text_utf16_len}, entities={entity_ranges!r}"
+                )
+
         # Caption text is content, not decoration. If Telegram omitted or
         # altered it on upload, try to restore it on the already-sent message.
         edit_message = getattr(client, "edit_message", None)
@@ -459,6 +492,14 @@ async def _verify_album_delivery(client, channel, messages, captions,
             # comparing its raw entities would turn a confirmed no-op into a
             # false failure and cause the whole album to be retried.
             continue
+        except Exception as exc:
+            if "entityboundsinvalid" in type(exc).__name__.lower():
+                raise RuntimeError(
+                    "Telegram rejected the canonical album caption entities "
+                    f"for source id={source_id}, item={index}; "
+                    f"text_utf16_len={text_utf16_len}, entities={entity_ranges!r}"
+                ) from exc
+            raise
 
         edited_text = getattr(edited, "message", None) if edited is not None else None
         if edited_text is None:
