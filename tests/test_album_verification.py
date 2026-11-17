@@ -25,13 +25,38 @@ class AlbumVerificationTests(unittest.TestCase):
         client.edit_message.assert_awaited_once()
         client.get_messages.assert_awaited_once_with(-100123, ids=77)
 
+    def test_stale_upload_result_does_not_trigger_unnecessary_caption_edit(self):
+        stale_upload_result = SimpleNamespace(
+            id=781, grouped_id=90021, message="stale caption"
+        )
+        persisted = SimpleNamespace(
+            id=781, grouped_id=90021, message="archive caption"
+        )
+        client = SimpleNamespace(
+            edit_message=AsyncMock(),
+            get_messages=AsyncMock(return_value=persisted),
+        )
+
+        grouped_id = asyncio.run(album._verify_album_delivery(
+            client, -100123, [stale_upload_result], ["archive caption"], [[]], "310a",
+        ))
+
+        self.assertEqual(grouped_id, 90021)
+        client.edit_message.assert_not_awaited()
+        client.get_messages.assert_awaited_once_with(-100123, ids=781)
+
     def test_album_edit_verifies_fresh_server_message_not_stale_edit_result(self):
         stale = SimpleNamespace(id=781, grouped_id=90021, message="stale caption")
         edit_result = SimpleNamespace(id=781, grouped_id=90021, message="stale caption")
-        fetched = SimpleNamespace(id=781, grouped_id=90021, message="archive caption")
+        fetched_before_edit = SimpleNamespace(
+            id=781, grouped_id=90021, message="still stale"
+        )
+        fetched_after_edit = SimpleNamespace(
+            id=781, grouped_id=90021, message="archive caption"
+        )
         client = SimpleNamespace(
             edit_message=AsyncMock(return_value=edit_result),
-            get_messages=AsyncMock(return_value=fetched),
+            get_messages=AsyncMock(side_effect=[fetched_before_edit, fetched_after_edit]),
         )
 
         grouped_id = asyncio.run(album._verify_album_delivery(
@@ -40,7 +65,8 @@ class AlbumVerificationTests(unittest.TestCase):
 
         self.assertEqual(grouped_id, 90021)
         client.edit_message.assert_awaited_once()
-        client.get_messages.assert_awaited_once_with(-100123, ids=781)
+        self.assertEqual(client.get_messages.await_count, 2)
+        client.get_messages.assert_any_await(-100123, ids=781)
 
     def test_successful_edit_still_rejects_a_real_caption_mismatch(self):
         stale = SimpleNamespace(id=78, grouped_id=9002, message="stale caption")
@@ -71,7 +97,7 @@ class AlbumVerificationTests(unittest.TestCase):
 
         self.assertEqual(grouped_id, 9003)
         client.edit_message.assert_awaited_once()
-        self.assertEqual(client.get_messages.await_count, 2)
+        self.assertEqual(client.get_messages.await_count, 1)
 
     def test_album_edit_sorts_outer_blockquote_before_nested_entities(self):
         from telethon.tl import types as tl
