@@ -9,7 +9,7 @@ from telethon.tl import types as tl
 from . import album, config, exportmedia, formatfallback, progress, uploads
 from .attribution import _send_sticker_with_attribution
 from .caption_sending import inferred_album_item_caption_parts, send_inferred_album_item_caption_continuations
-from .textutil import clean_invalid_entities, split_with_entities
+from .textutil import split_with_entities
 from .constants import STICKER_KINDS
 
 
@@ -57,7 +57,6 @@ async def _send_text_chunks(client, channel, chunks, reply_to, state, prog_key,
     for i, (text, ents) in enumerate(chunks):
         if i < prog.get("done", 0):
             continue
-        ents = clean_invalid_entities(text, ents)
         m = await formatfallback.with_formatting_fallback(
             lambda **kw: client.send_message(channel, text, **kw),
             {"formatting_entities": ents or None,
@@ -166,8 +165,11 @@ async def _send_album(client, channel, chunks, media, reply_to, state, source_id
         )
 
     safe_entity_rows = [
-        clean_invalid_entities(caption, entities)
-        for caption, entities in zip(captions, caption_entities)
+        formatfallback.validate_formatting(
+            caption, entities, source_id,
+            context=f"album caption item {index}",
+        )
+        for index, (caption, entities) in enumerate(zip(captions, caption_entities))
     ]
 
     async def send_group_caption(album_message_ids):
