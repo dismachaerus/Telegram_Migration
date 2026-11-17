@@ -438,7 +438,8 @@ async def _run_migration():
 
     print()
     print("═" * 60)
-    print(f"Done.  sent={stats['sent']}   skipped={stats['skipped']}   failed={stats['failed']}   "
+    run_status = "Stopped" if ctx["stop"] or stats["failed"] else "Done"
+    print(f"{run_status}.  sent={stats['sent']}   skipped={stats['skipped']}   failed={stats['failed']}   "
           f"native_forwards={stats['forwarded']}   reaction_notes={stats.get('reaction_notes', 0)}")
     print(f"Reply audit: {config.settings.reply_audit_file}")
     if pending_replies:
