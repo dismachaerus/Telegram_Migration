@@ -16,26 +16,37 @@ from .constants import STICKER_KINDS
 _native_warned = [False]
 
 
-async def resolve_mentions(client, entities):
-    """Bots usually cannot resolve arbitrary users; such mentions stay plain text."""
+async def resolve_mentions(client, entities, source_id=None):
+    """Resolve user mentions or fail rather than silently stripping their entity."""
     cls_in = getattr(tl, "InputMessageEntityMentionName", None)
     cls_out = getattr(tl, "MessageEntityMentionName", None)
     if cls_out is None:
         return entities
     out = []
-    for e in entities:
-        if isinstance(e, cls_out):
+    for entity in entities:
+        if isinstance(entity, cls_out):
             if cls_in is None:
-                continue
+                raise RuntimeError(
+                    "Cannot preserve a source user mention: this Telethon version "
+                    "does not support InputMessageEntityMentionName."
+                )
             try:
-                inp = await client.get_input_entity(e.user_id)
-                out.append(cls_in(e.offset, e.length, inp))
+                input_user = await client.get_input_entity(entity.user_id)
+                out.append(cls_in(entity.offset, entity.length, input_user))
             except FloodWaitError:
                 raise
-            except Exception:
-                pass
+            except Exception as exc:
+                source = (
+                    f" in source message id={source_id}"
+                    if source_id is not None else ""
+                )
+                raise RuntimeError(
+                    f"Cannot preserve user-mention formatting{source} "
+                    f"for user id={entity.user_id}: Telegram could not resolve "
+                    "the input user. The message was not sent without its mention."
+                ) from exc
         else:
-            out.append(e)
+            out.append(entity)
     return out
 
 
