@@ -364,6 +364,9 @@ def trim_entity_trailing_whitespace(text, entities):
         )
         trimmed_length = u16len(visible.rstrip())
         if trimmed_length <= 0:
+            # Leave the range untouched so strict validation reports it.
+            # Never silently discard an entity that covers only whitespace.
+            out.append(entity)
             continue
         if trimmed_length < length:
             entity = copy.copy(entity)
