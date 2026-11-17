@@ -268,7 +268,20 @@ def infer_media_groups(files, inline_emoji_ids=None):
                     forward_context["last_forward_name"] = ""
                     continue
 
-                data = htmlexport.extract_message_data(elem)
+                # Album inference is a pre-scan, not the migration itself.
+                # A formatting/parser problem in one record must not abort the
+                # entire run before the normal per-message error handler can
+                # report that source ID. Treat it as an inference boundary.
+                try:
+                    data = htmlexport.extract_message_data(elem)
+                except Exception as exc:
+                    source_label = elem.get("id", "unknown")
+                    print(
+                        f"  warning: could not inspect {source_label} while "
+                        f"inferring albums ({type(exc).__name__}: {exc}); "
+                        "the normal migration pass will report that message"
+                    )
+                    data = None
                 if data is None:
                     flush()
                     last_sender = ""
