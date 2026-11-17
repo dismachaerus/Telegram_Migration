@@ -48,5 +48,11 @@ async def with_formatting_fallback(send, kwargs, text, entities, src=None):
     That could silently damage the archive. This compatibility wrapper now validates
     before the API call and propagates every send error without a plain-text retry.
     """
-    validate_formatting(text, entities, src)
+    validated = validate_formatting(text, entities, src)
+    formatting = kwargs.get("formatting_entities")
+    if isinstance(formatting, (list, tuple)) and (
+        not formatting or hasattr(formatting[0], "offset")
+    ):
+        kwargs = dict(kwargs)
+        kwargs["formatting_entities"] = validated or None
     return await send(**kwargs)
