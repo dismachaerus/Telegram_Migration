@@ -1394,6 +1394,45 @@ class AsyncSendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_album_inference_treats_formatting_errors_as_group_boundaries(self):
+        with tempfile.TemporaryDirectory() as temp:
+            page = Path(temp) / "messages.html"
+            page.write_text(
+                '<html><body>'
+                '<div class="message" id="message1">one</div>'
+                '<div class="message" id="message2">bad formatting</div>'
+                '<div class="message" id="message3">three</div>'
+                '<div class="message" id="message4">four</div>'
+                '</body></html>',
+                encoding="utf-8",
+            )
+
+            def fake_extract(elem):
+                source_id = elem.get("id", "")[7:]
+                if source_id == "2":
+                    raise textutil.EntityValidationError(
+                        "source id=2: invalid exported formatting range"
+                    )
+                return {
+                    "msg_id": source_id,
+                    "media": [(f"photos/{source_id}.jpg", "photo")],
+                    "media_note": "",
+                    "is_forwarded": False,
+                    "forward_name": "",
+                    "sender": "Alice",
+                    "joined": False,
+                    "reply_src_id": None,
+                    "forward_reply_src_id": None,
+                    "body_text": "same album caption",
+                    "timestamp": datetime(2025, 1, 1, 12, 0),
+                    "forward_timestamp": None,
+                }
+
+            with patch.object(htmlexport, "extract_message_data", side_effect=fake_extract):
+                groups = sending.album.infer_media_groups([str(page)])
+
+        self.assertEqual(list(groups), ["3"])
+        self.assertEqual([row["msg_id"] for row in groups["3"]], ["3", "4"])
     def test_send_one_does_not_retry_telegram_entity_rejections(self):
         async def scenario():
             calls = []
