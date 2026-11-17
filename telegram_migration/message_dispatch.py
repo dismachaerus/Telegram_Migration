@@ -19,7 +19,7 @@ def _print_dry_run(source_id, data, text, entities, first_limit, reply_to,
 async def _send_migrated_message(client, channel, data, source_id, text, entities,
                                  first_limit, reply_to, annotation, partial,
                                  pending_replies, id_map, stats, ctx, kind_summary, when):
-    entities = await sending.resolve_mentions(client, entities)
+    entities = await sending.resolve_mentions(client, entities, source_id)
     chunks = split_with_entities(text, entities, first_limit, config.settings.text_limit)
     state = {
         "src": source_id,
