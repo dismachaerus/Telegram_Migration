@@ -68,6 +68,22 @@ class AlbumVerificationTests(unittest.TestCase):
         self.assertEqual(client.get_messages.await_count, 2)
         client.get_messages.assert_any_await(-100123, ids=781)
 
+    def test_album_caption_edit_type_error_is_non_retryable_formatting_failure(self):
+        from telethon.tl import types as tl
+        from telegram_migration import formatfallback
+
+        stale = SimpleNamespace(id=88, grouped_id=9008, message="old caption")
+        client = SimpleNamespace(
+            edit_message=AsyncMock(side_effect=TypeError("invalid entity serialization")),
+        )
+        entity = tl.MessageEntityBold(offset=0, length=7)
+        with patch.object(formatfallback, "record_send_failure") as record:
+            with self.assertRaises(formatfallback.FormattingDeliveryError):
+                asyncio.run(album._verify_album_delivery(
+                    client, -100123, [stale], ["caption"], [[entity]], "315",
+                ))
+        client.edit_message.assert_awaited_once()
+        record.assert_called_once()
     def test_successful_edit_still_rejects_a_real_caption_mismatch(self):
         stale = SimpleNamespace(id=78, grouped_id=9002, message="stale caption")
         edited = SimpleNamespace(id=78, grouped_id=9002, message="still wrong")
