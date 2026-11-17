@@ -213,39 +213,33 @@ def split_with_entities(text, entities, first_limit, limit):
     return chunks or [(text, entities)]
 
 
-def clean_invalid_entities(text, entities):
-    """Normalize entity bounds and exclude trailing whitespace from each span.
+def trim_entity_trailing_whitespace(text, entities):
+    """Shorten valid entity spans so they do not include trailing whitespace.
 
-    Telegram entity lengths use UTF-16 code units. In addition to valid bounds,
-    Telegram requires each entity's span to exclude trailing whitespace and
-    newlines. The message text is never changed; only a copied entity's length
-    is shortened. URL targets and all other entity metadata are preserved.
+    Telegram requires entity lengths to exclude trailing whitespace and
+    newlines. Invalid bounds are deliberately left untouched for callers that
+    perform strict validation; URL targets and all other metadata are preserved.
     """
     if not entities:
         return entities
     encoded = (text or "").encode("utf-16-le")
     text_len = len(encoded) // 2
     out = []
-    for e in entities:
-        offset = getattr(e, "offset", None)
-        length = getattr(e, "length", None)
-        if not isinstance(offset, int) or not isinstance(length, int):
-            continue
-        if length <= 0 or offset < 0 or offset >= text_len:
-            continue
-
-        # Clip an entity that extends beyond the actual message text.
-        current = e
-        if offset + length > text_len:
-            current = copy.copy(e)
-            current.length = text_len - offset
-            length = current.length
-        if length <= 0:
+    for entity in entities:
+        offset = getattr(entity, "offset", None)
+        length = getattr(entity, "length", None)
+        if (
+            not isinstance(offset, int)
+            or not isinstance(length, int)
+            or length <= 0
+            or offset < 0
+            or offset + length > text_len
+        ):
+            out.append(entity)
             continue
 
-        # Telegram forbids trailing whitespace inside an entity's span.
-        # surrogatepass keeps split-pair ranges inspectable here; the final
-        # album edit validator separately rejects surrogate-pair boundaries.
+        # surrogatepass leaves malformed split-pair ranges intact so a strict
+        # caller can diagnose them rather than hiding the invalid boundary.
         visible = encoded[offset * 2:(offset + length) * 2].decode(
             "utf-16-le", errors="surrogatepass"
         )
@@ -253,7 +247,34 @@ def clean_invalid_entities(text, entities):
         if trimmed_length <= 0:
             continue
         if trimmed_length < length:
-            current = copy.copy(current)
-            current.length = trimmed_length
-        out.append(current)
+            entity = copy.copy(entity)
+            entity.length = trimmed_length
+        out.append(entity)
     return out
+
+
+def clean_invalid_entities(text, entities):
+    """Drop or clip invalid entity bounds, then trim trailing whitespace.
+
+    Bounds are measured in UTF-16 code units. An overrun is clipped to the
+    actual text, invalid or empty ranges are discarded, and trailing
+    whitespace is excluded from every remaining entity span. The text itself
+    and URL targets are never changed.
+    """
+    if not entities:
+        return entities
+    text_len = u16len(text or "")
+    bounded = []
+    for entity in entities:
+        offset = getattr(entity, "offset", None)
+        length = getattr(entity, "length", None)
+        if not isinstance(offset, int) or not isinstance(length, int):
+            continue
+        if length <= 0 or offset < 0 or offset >= text_len:
+            continue
+        if offset + length > text_len:
+            entity = copy.copy(entity)
+            entity.length = text_len - offset
+        if entity.length > 0:
+            bounded.append(entity)
+    return trim_entity_trailing_whitespace(text, bounded)
