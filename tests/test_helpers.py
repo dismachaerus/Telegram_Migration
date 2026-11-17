@@ -107,6 +107,35 @@ class TextAndEntityTests(unittest.TestCase):
         self.assertEqual(text, "[date]\nAlice:\nword")
         self.assertEqual((entities[0].offset, entities[0].length), (14, 4))
 
+    def test_compose_message_orders_outer_entities_before_nested_entities(self):
+        # Album forwarding attribution previously appended its blockquote
+        # after the bold/italic entities inside it, producing an unsorted
+        # Telegram entity vector and EntityBoundsInvalidError.
+        forward_text = "Forwarded from Source\n20 August 2024 · 16:32:07\n\n"
+        bold = tl.MessageEntityBold(offset=textutil.u16len("Forwarded from "), length=6)
+        italic = tl.MessageEntityItalic(
+            offset=textutil.u16len("Forwarded from Source\n"),
+            length=textutil.u16len("20 August 2024 · 16:32:07"),
+        )
+        quote = tl.MessageEntityBlockquote(
+            offset=0,
+            length=textutil.u16len("Forwarded from Source\n20 August 2024 · 16:32:07"),
+        )
+
+        text, entities = textutil.compose_message(
+            ("", []), ("", []), (forward_text, [bold, italic, quote]), "", [],
+        )
+
+        self.assertEqual(text, forward_text)
+        self.assertEqual(
+            [(type(entity).__name__, entity.offset, entity.length) for entity in entities],
+            [
+                ("MessageEntityBlockquote", 0, quote.length),
+                ("MessageEntityBold", bold.offset, bold.length),
+                ("MessageEntityItalic", italic.offset, italic.length),
+            ],
+        )
+
     def test_split_long_text_respects_limit_and_does_not_split_surrogate_pair(self):
         text = "abcdefgh😀ijklmnopqrs"
         chunks = textutil.split_with_entities(text, [], first_limit=9, limit=9)
