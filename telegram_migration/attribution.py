@@ -153,6 +153,10 @@ async def _send_attribution_reply(
                 formatfallback.record_send_failure(
                     text, entities, source_id, "sticker attribution", exc,
                 )
+                raise formatfallback.FormattingDeliveryError(
+                    f"Telegram rejected sticker attribution formatting for "
+                    f"source id={source_id}: {exc}"
+                ) from exc
             raise
         reply_message_id = _sent_message_id_from_updates(result, random_id)
         if reply_message_id is None:
