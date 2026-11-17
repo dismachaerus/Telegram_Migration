@@ -57,7 +57,7 @@ async def _send_attribution_reply(
         progress.save_state(state["src"], state)
 
     random_id = int(progress_state["random_id"])
-    entities = formatfallback.validate_formatting(text, entities or [], source_id)
+    entities = formatfallback.prepare_formatting(text, entities or [], source_id)
 
     if getattr(channel, "broadcast", False):
         channel_id = int(getattr(channel, "id"))
