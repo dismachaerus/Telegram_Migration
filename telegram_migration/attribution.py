@@ -146,7 +146,14 @@ async def _send_attribution_reply(
                 entities=entities or None,
                 no_webpage=True,
             )
-        result = await client(request)
+        try:
+            result = await client(request)
+        except Exception as exc:
+            if entities and formatfallback.is_entity_error(exc):
+                formatfallback.record_send_failure(
+                    text, entities, source_id, "sticker attribution", exc,
+                )
+            raise
         reply_message_id = _sent_message_id_from_updates(result, random_id)
         if reply_message_id is None:
             raise RuntimeError(
