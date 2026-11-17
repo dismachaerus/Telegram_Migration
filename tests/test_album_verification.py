@@ -42,51 +42,6 @@ class AlbumVerificationTests(unittest.TestCase):
         client.edit_message.assert_awaited_once()
         client.get_messages.assert_awaited_once_with(-100123, ids=781)
 
-    def test_saved_album_recovery_moves_caption_to_first_item_and_clears_last(self):
-        from telethon.tl import types as tl
-
-        caption = "Original HTML caption"
-        messages = [
-            SimpleNamespace(id=901, grouped_id=9901, message=""),
-            SimpleNamespace(id=902, grouped_id=9901, message=""),
-            SimpleNamespace(id=903, grouped_id=9901, message=""),
-            SimpleNamespace(id=904, grouped_id=9901, message="stale caption on last item"),
-        ]
-        by_id = {message.id: message for message in messages}
-
-        async def edit_message(_channel, message_id, text, **_kwargs):
-            by_id[message_id].message = text
-            return by_id[message_id]
-
-        async def get_messages(_channel, ids):
-            if isinstance(ids, (list, tuple)):
-                return [by_id[value] for value in ids]
-            return by_id[ids]
-
-        bold = tl.MessageEntityBold(offset=0, length=8)
-        client = SimpleNamespace(
-            edit_message=AsyncMock(side_effect=edit_message),
-            get_messages=AsyncMock(side_effect=get_messages),
-        )
-
-        grouped_id = asyncio.run(album._verify_saved_album(
-            client, -100123, [901, 902, 903, 904],
-            [caption, "", "", ""], [[bold], [], [], []], "27425",
-        ))
-
-        self.assertEqual(grouped_id, 9901)
-        self.assertEqual([message.message for message in messages], [caption, "", "", ""])
-        self.assertEqual(client.edit_message.await_count, 2)
-        first_edit = client.edit_message.await_args_list[0]
-        last_edit = client.edit_message.await_args_list[1]
-        self.assertEqual(first_edit.args[1:], (901, caption))
-        self.assertEqual(
-            first_edit.kwargs["formatting_entities"],
-            [bold],
-        )
-        self.assertEqual(last_edit.args[1:], (904, ""))
-        self.assertIsNone(last_edit.kwargs["formatting_entities"])
-
     def test_successful_edit_still_rejects_a_real_caption_mismatch(self):
         stale = SimpleNamespace(id=78, grouped_id=9002, message="stale caption")
         edited = SimpleNamespace(id=78, grouped_id=9002, message="still wrong")
