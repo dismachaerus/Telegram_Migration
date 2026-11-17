@@ -435,7 +435,11 @@ async def _verify_album_delivery(client, channel, messages, captions,
                 f"Cannot verify caption for album item {index} "
                 f"(source id={source_id}); Telegram returned no message text field"
             )
-        if actual == expected:
+        # A previous text-only fallback may have retained the exact caption
+        # text while dropping all entities. Reapply formatting whenever the
+        # source expects entities; MessageNotModifiedError below confirms that
+        # both text and entities are already identical on Telegram.
+        if actual == expected and not entities:
             continue
 
         # Caption text is content, not decoration. If Telegram omitted or
