@@ -72,16 +72,15 @@ class TextAndEntityTests(unittest.TestCase):
         self.assertEqual(text, "😀x")
         self.assertEqual((entities[0].offset, entities[0].length), (0, 3))
 
-    def test_clean_invalid_entities_drops_invalid_and_clips_overrun(self):
+    def test_clean_invalid_entities_drops_malformed_spans_without_clipping(self):
         good = tl.MessageEntityBold(offset=0, length=2)
         overrun = tl.MessageEntityItalic(offset=1, length=8)
         negative = tl.MessageEntityUnderline(offset=-1, length=1)
         empty = tl.MessageEntityStrike(offset=1, length=0)
         outside = tl.MessageEntityCode(offset=8, length=1)
         result = textutil.clean_invalid_entities("abc", [good, overrun, negative, empty, outside])
-        self.assertEqual([type(item).__name__ for item in result], [type(good).__name__, type(overrun).__name__])
+        self.assertEqual([type(item).__name__ for item in result], [type(good).__name__])
         self.assertEqual((result[0].offset, result[0].length), (0, 2))
-        self.assertEqual((result[1].offset, result[1].length), (1, 2))
 
     def test_archive_header_formats_sender_and_timestamp_with_utf16_entities(self):
         timestamp = datetime(2025, 3, 15, 11, 39)
