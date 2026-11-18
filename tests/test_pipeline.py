@@ -1629,6 +1629,60 @@ class PipelineTests(unittest.TestCase):
                 [str(i) for i in range(int(first_id), int(first_id) + size)],
             )
 
+    def test_joined_mixed_documents_and_photos_with_distinct_captions_stay_individual(self):
+        records = []
+        expected = []
+        specifications = (
+            (1501, "files/one.txt", "document", "Caption for document one"),
+            (1502, "files/two.docx", "document", "Caption for document two"),
+            (1503, "photos/one.jpg", "photo", "Caption for photo one"),
+            (1504, "photos/two.jpg", "photo", "Caption for photo two"),
+        )
+        for index, (source_id, relative, kind, caption) in enumerate(specifications):
+            fakes.write_file(self.folder.name, relative)
+            expected.append(os.path.join(self.folder.name, relative))
+            if kind == "document":
+                media = (
+                    '<div class="media_wrap clearfix">'
+                    '<a class="media clearfix pull_left block_link media_file" '
+                    f'href="{relative}"></a></div>'
+                )
+            else:
+                media = fakes.photo(relative)
+            records.append(fakes.message(
+                source_id,
+                media + fakes.text(caption),
+                sender="Archive owner",
+                classes="joined" if index else "",
+                minute=10 + index,
+            ))
+        fakes.write_export(self.folder.name, records)
+
+        with config.use_settings(self.settings()):
+            groups = htmlexport.infer_media_groups([self.path("messages.html")])
+        self.assertEqual(groups, {})
+
+        client, output, _ = self.run_once()
+        calls = client.kinds("send_file")
+        self.assertEqual(len(calls), 4)
+        self.assertEqual([call[1] for call in calls], expected)
+        for index, ((source_id, _relative, _kind, caption), call) in enumerate(
+            zip(specifications, calls)
+        ):
+            expected_caption = (
+                f"Archive owner\n12 March 2023 · 10:{10 + index:02d}\n\n{caption}"
+            )
+            self.assertEqual(call[2]["caption"], expected_caption)
+        self.assertIn("sent=4", output)
+        self.assertIn("skipped=0", output)
+        self.assertIn("failed=0", output)
+        with config.use_settings(self.settings()):
+            self.assertEqual(
+                set(progress.load_id_map()),
+                {str(source_id) for source_id, *_rest in specifications},
+            )
+
+
     def test_joined_jpg_documents_keep_owner_and_caption_in_one_album(self):
         records = []
         expected_files = []
@@ -1925,12 +1979,11 @@ class PipelineTests(unittest.TestCase):
                 '<div class="from_name">⛯⛯</div>'
                 if source_id in (454, 463) else ""
             )
+            # One caption belongs to this whole source album. Later
+            # captionless members must remain eligible to join it.
             caption_html = (
                 '<div class="text">Paranoid schizophrenia<br>You want more?</div>'
-                if source_id == 458 else (
-                    f'<div class="text">Different caption on item {source_id}</div>'
-                    if source_id == 459 else ""
-                )
+                if source_id == 458 else ""
             )
             records.append(
                 f'<div class="message default clearfix{classes}" id="message{source_id}">'
@@ -1961,7 +2014,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual([row["msg_id"] for row in groups["448"]], list(map(str, range(448, 458))))
         self.assertEqual([row["msg_id"] for row in groups["458"]], list(map(str, range(458, 465))))
         self.assertEqual(groups["458"][0]["body_text"], "Paranoid schizophrenia\nYou want more?")
-        self.assertEqual(groups["458"][1]["body_text"], "Different caption on item 459")
+        self.assertTrue(all(not row["body_text"] for row in groups["458"][1:]))
         caption, _entities = album.caption_for_group(groups["458"])
         self.assertIn("Paranoid schizophrenia\nYou want more?", caption)
         self.assertIn("Forwarded from espritzeit", caption)
@@ -1978,7 +2031,6 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(first_kwargs["caption"], [""] * 9 + [first_caption])
         self.assertEqual(second_kwargs["caption"], [""] * 6 + [second_caption])
         self.assertIn("Paranoid schizophrenia\nYou want more?", second_kwargs["caption"][-1])
-        self.assertIn("Different caption on item 459", second_kwargs["caption"][-1])
         self.assertIn("Forwarded from espritzeit", second_kwargs["caption"][-1])
         self.assertFalse(any("Paranoid schizophrenia" in text for text in client.texts()))
         grouped_ids = {message.grouped_id for message in client.messages.values()
@@ -2167,7 +2219,7 @@ class PipelineTests(unittest.TestCase):
                 ("stickers/first.webp", "sticker_static"),
                 ("photos/second.jpg", "photo"),
             ]
-            caption = "Forwarded from Original sender\\n5 November 2026"
+            caption = "Forwarded from Original sender\n5 November 2026"
             with patch.object(progress, "save_state"):
                 result = await sending._send_multiple_media(
                     client, "channel", [(caption, [])],
