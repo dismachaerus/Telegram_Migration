@@ -1,4 +1,4 @@
-"""Media-agnostic source album grouping regression matrix..
+"""Media-agnostic source album grouping regression matrix.
 
 These tests use synthetic records only. They verify source grouping separately
 from Telegram's narrower native sendMediaGroup compatibility rules.
