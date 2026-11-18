@@ -92,15 +92,11 @@ def _parse_rich_text(root, *, extract_stickers=False):
                 else:
                     if sticker and sticker.get("missing"):
                         missing_stickers.append(sticker["missing"])
-                    if href.startswith("tg://user?id="):
-                        try:
-                            uid = int(href.split("id=", 1)[1])
-                            emit("MessageEntityMentionName", start, end, user_id=uid)
-                        except (ValueError, IndexError):
-                            pass
-                    elif href.startswith("mailto:"):
+                    if href.startswith("mailto:"):
                         emit("MessageEntityEmail", start, end)
                     elif urlparse(href).scheme.lower() in _URL_SCHEMES:
+                        # Preserve the exported target verbatim. Do not resolve
+                        # Telegram user IDs or test whether any link is reachable.
                         emit("MessageEntityTextUrl", start, end, url=href)
 
             elif tag in ("b", "strong"):

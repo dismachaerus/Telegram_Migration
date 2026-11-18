@@ -50,6 +50,23 @@ class TextAndEntityTests(unittest.TestCase):
         self.assertEqual(link.url, "https://example.test/path")
         self.assertEqual(text[link.offset:link.offset + link.length], "site")
 
+    def test_rich_text_preserves_link_targets_without_resolving_them(self):
+        # These targets need not exist or be accessible. The exporter already
+        # supplied the URL; migration preserves it without network/account lookup.
+        for href in (
+            "https://this-host-does-not-exist.invalid/path%20with%20spaces",
+            "tg://user?id=987654321",
+        ):
+            with self.subTest(href=href):
+                root = etree.fromstring(
+                    f'<div><a href="{href}">target</a></div>'
+                )
+                text, entities = richtext.parse_rich_text(root)
+                self.assertEqual(text, "target")
+                self.assertEqual(len(entities), 1)
+                self.assertIsInstance(entities[0], tl.MessageEntityTextUrl)
+                self.assertEqual(entities[0].url, href)
+
     def test_rich_text_measures_offsets_in_utf16_units(self):
         root = etree.fromstring("<div>😀<i>x</i></div>")
         text, entities = richtext.parse_rich_text(root)
@@ -83,6 +100,28 @@ class TextAndEntityTests(unittest.TestCase):
         self.assertEqual((result[0].offset, result[0].length), (0, 2))
         self.assertEqual((result[1].offset, result[1].length), (1, 2))
 
+    def test_clean_invalid_entities_excludes_trailing_whitespace_and_preserves_url(self):
+        text = "bold \nlink  "
+        bold = tl.MessageEntityBold(offset=0, length=5)
+        quote = tl.MessageEntityBlockquote(offset=0, length=textutil.u16len(text))
+        link = tl.MessageEntityTextUrl(
+            offset=6, length=4, url="https://example.test/original?x=1"
+        )
+
+        result = textutil.clean_invalid_entities(text, [bold, quote, link])
+
+        self.assertEqual(
+            [(type(entity).__name__, entity.offset, entity.length) for entity in result],
+            [
+                ("MessageEntityBold", 0, 4),
+                ("MessageEntityBlockquote", 0, 10),
+                ("MessageEntityTextUrl", 6, 4),
+            ],
+        )
+        self.assertEqual(link.url, "https://example.test/original?x=1")
+        self.assertEqual((bold.length, quote.length), (5, textutil.u16len(text)))
+        self.assertEqual(text, "bold \nlink  ")
+
     def test_archive_header_formats_sender_and_timestamp_with_utf16_entities(self):
         timestamp = datetime(2025, 3, 15, 11, 39)
         header, entities = textutil.compose_message_header(timestamp, "esprít 😀")
@@ -107,6 +146,34 @@ class TextAndEntityTests(unittest.TestCase):
         )
         self.assertEqual(text, "[date]\nAlice:\nword")
         self.assertEqual((entities[0].offset, entities[0].length), (14, 4))
+
+    def test_compose_message_orders_outer_entities_before_nested_entities(self):
+        forward_text = "Forwarded from Source\n20 August 2024 · 16:32:07\n\n"
+        bold = tl.MessageEntityBold(
+            offset=textutil.u16len("Forwarded from "), length=textutil.u16len("Source")
+        )
+        italic = tl.MessageEntityItalic(
+            offset=textutil.u16len("Forwarded from Source\n"),
+            length=textutil.u16len("20 August 2024 · 16:32:07"),
+        )
+        quote = tl.MessageEntityBlockquote(
+            offset=0,
+            length=textutil.u16len("Forwarded from Source\n20 August 2024 · 16:32:07"),
+        )
+
+        text, entities = textutil.compose_message(
+            ("", []), ("", []), (forward_text, [bold, italic, quote]), "", [],
+        )
+
+        self.assertEqual(text, forward_text)
+        self.assertEqual(
+            [(type(entity).__name__, entity.offset, entity.length) for entity in entities],
+            [
+                ("MessageEntityBlockquote", 0, quote.length),
+                ("MessageEntityBold", bold.offset, bold.length),
+                ("MessageEntityItalic", italic.offset, italic.length),
+            ],
+        )
 
     def test_split_long_text_respects_limit_and_does_not_split_surrogate_pair(self):
         text = "abcdefgh😀ijklmnopqrs"

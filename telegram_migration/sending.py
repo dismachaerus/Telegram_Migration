@@ -16,29 +16,6 @@ from .constants import STICKER_KINDS
 _native_warned = [False]
 
 
-async def resolve_mentions(client, entities):
-    """Bots usually cannot resolve arbitrary users; such mentions stay plain text."""
-    cls_in = getattr(tl, "InputMessageEntityMentionName", None)
-    cls_out = getattr(tl, "MessageEntityMentionName", None)
-    if cls_out is None:
-        return entities
-    out = []
-    for e in entities:
-        if isinstance(e, cls_out):
-            if cls_in is None:
-                continue
-            try:
-                inp = await client.get_input_entity(e.user_id)
-                out.append(cls_in(e.offset, e.length, inp))
-            except FloodWaitError:
-                raise
-            except Exception:
-                pass
-        else:
-            out.append(e)
-    return out
-
-
 async def _try_native_forward(client, channel, peer_hint, source_msg_id,
                                archive_source_id=None):
     try:
