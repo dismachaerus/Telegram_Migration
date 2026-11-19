@@ -98,6 +98,18 @@ def prepare_inferred_group(data, group, id_map, manual_done, partial, persist_id
     legacy_caption, legacy_caption_entities = caption_for_group_body(group)
     all_media = [item for member in group for item in member["media"]]
 
+    # When Telegram cannot represent this inferred source group as one native
+    # media album, keep every original message's own caption/author/time for
+    # the individual-upload fallback. Do not change captions for native albums.
+    if not exportmedia.album_compatible(all_media):
+        individual_captions = [caption_for_record(member) for member in group]
+        if len(individual_captions) != len(all_media):
+            raise RuntimeError(
+                "Inferred mixed-media group has a different number of source "
+                "records and media items; refusing to lose per-message attribution"
+            )
+        data["_individual_media_captions"] = individual_captions
+
     # Consecutive audio records are separate source messages, even when the
     # destination supports sending them together as one media group. Preserve
     # each record's own sender/date and body beside its corresponding audio.
@@ -160,6 +172,21 @@ def _caption_signature(record):
     return re.sub(r"\s+", " ", (record.get("body_text") or "")).strip()
 
 
+def _caption_conflicts_with_group(group, candidate):
+    """Whether a candidate adds a different caption to the pending source run.
+
+    Compare against every caption already in the run, not only the immediately
+    preceding record. This catches A -> no caption -> B as a hard boundary.
+    """
+    candidate_caption = _caption_signature(candidate)
+    if not candidate_caption:
+        return False
+    return any(
+        existing_caption and existing_caption != candidate_caption
+        for existing_caption in (_caption_signature(record) for record in group)
+    )
+
+
 def _album_records_compatible(left, right):
     """Check whether adjacent records share a plausible album context.
 
@@ -186,6 +213,11 @@ def _album_records_compatible(left, right):
     left_caption = _caption_signature(left)
     right_caption = _caption_signature(right)
     same_caption = bool(left_caption and right_caption and left_caption == right_caption)
+    # Different non-empty captions are always separate source-message
+    # boundaries. Telegram Desktop's generic "joined" layout marker must
+    # never override an explicit caption difference.
+    if left_caption and right_caption and not same_caption:
+        return False
 
     left_time, right_time = left.get("timestamp"), right.get("timestamp")
     outer_gap = None
@@ -198,9 +230,6 @@ def _album_records_compatible(left, right):
     # Do not discard that structural evidence because clocks are missing or
     # differ by more than an arbitrary number of seconds.
     joined_continuation = bool(right.get("joined"))
-    if left_caption and right_caption and not same_caption and not joined_continuation:
-        return False
-
     left_forward_time = left.get("forward_timestamp")
     right_forward_time = right.get("forward_timestamp")
     if left.get("is_forwarded"):
@@ -297,7 +326,10 @@ def infer_media_groups(files, inline_emoji_ids=None):
                     last_sender = effective_sender
                     if not pending:
                         pending = [data]
-                    elif _album_records_compatible(pending[-1], data):
+                    elif (
+                        _album_records_compatible(pending[-1], data)
+                        and not _caption_conflicts_with_group(pending, data)
+                    ):
                         pending.append(data)
                         # Preserve source order when a compatible run exceeds
                         # Telegram's ten-item album limit. The first ten stay
