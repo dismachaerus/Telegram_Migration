@@ -1,4 +1,4 @@
-"""Offline regression tests for the telegram_migration package..
+"""Offline regression tests for the telegram_migration package.
 
 These tests never sign in to Telegram and never call the live API. They use
 real Telethon entity objects when dependencies are installed by requirements.txt.
