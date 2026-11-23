@@ -29,6 +29,7 @@ class FakeTelegram:
         self.messages = {}
         self.disconnected = False
         self.reject_formatting = None       # set to an Exception to reject any message with entities
+        self.pin_error = None                # set to an Exception to reject pinning in a test
         self.linked_chat_id = self.linked_chat_id_default
         FakeTelegram.instances.append(self)
 
@@ -103,8 +104,11 @@ class FakeTelegram:
         self.messages[message.id] = message
         return message
 
-    async def pin_message(self, channel, message, *, notify=False):
+    async def pin_message(self, channel, message, notify=True):
         self.calls.append(("pin_message", int(message), {"notify": notify}))
+        if self.pin_error:
+            raise self.pin_error
+        return True
 
     async def send_file(self, channel, files, **kwargs):
         self.calls.append(("send_file", files, kwargs))
