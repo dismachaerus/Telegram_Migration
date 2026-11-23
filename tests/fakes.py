@@ -103,6 +103,9 @@ class FakeTelegram:
         self.messages[message.id] = message
         return message
 
+    async def pin_message(self, channel, message, *, notify=False):
+        self.calls.append(("pin_message", int(message), {"notify": notify}))
+
     async def send_file(self, channel, files, **kwargs):
         self.calls.append(("send_file", files, kwargs))
         captions = kwargs.get("caption") or ""
