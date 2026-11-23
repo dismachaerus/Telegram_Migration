@@ -71,6 +71,25 @@ class PipelineTests(unittest.TestCase):
         with config.use_settings(self.settings()):
             self.assertEqual(progress.load_id_map(), {"1": 1001})
 
+    def test_text_messages_accept_gmt_timezone_suffix(self):
+        message = (
+            '<div class="message default clearfix" id="message88">'
+            '<div class="body">'
+            '<div class="pull_right date details" '
+            'title="19.08.2026 21:46:54 GMT+02:00">21:46</div>'
+            '<div class="from_name">Alice</div>'
+            '<div class="text">GMT date test</div>'
+            '</div></div>'
+        )
+        fakes.write_export(self.folder.name, [message])
+
+        client, _, _ = self.run_once()
+
+        self.assertEqual(
+            client.texts(),
+            ["Alice\\n19 August 2026 · 21:46\\n\\nGMT date test"],
+        )
+
     def test_missing_media_only_message_is_sent_as_placeholder_not_skipped(self):
         fakes.write_export(self.folder.name, [
             fakes.message(1, '<div class="media_wrap clearfix">'
