@@ -8,7 +8,7 @@ from lxml import etree
 from telethon import TelegramClient
 from telethon.tl import types as tl
 
-from . import attribution, album, bigfiles, cli, config, customemoji, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
+from . import attribution, album, bigfiles, cli, config, customemoji, htmlexport, mediatools, pinning, progress, reaction_archive, replylinks, sending, uploads
 from .htmlutil import css_classes
 from .message_dispatch import _print_dry_run, _send_migrated_message
 from .constants import STICKER_KINDS
@@ -50,6 +50,13 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
                 ctx["current_export_date"] = date_separator
                 ctx["last_forward_name"] = ""
                 return
+            pinned_source_id = pinning.extract_pinned_message_id(elem)
+            if pinned_source_id and source_id:
+                await pinning.apply_pin_event(
+                    client, channel, source_id, pinned_source_id, id_map,
+                    ctx["applied_pin_events"], config.settings.base_dir,
+                    dry_run=config.settings.dry_run,
+                )
             data = (htmlexport.extract_service_event_data(
                 elem, ctx.get("current_export_date")
             ) if config.settings.preserve_service_messages else None)
@@ -365,6 +372,7 @@ async def _run_migration():
     stats = {"sent": 0, "skipped": 0, "failed": 0, "forwarded": 0, "reaction_notes": 0}
     ctx = {
         "inline_custom_emoji_ids": inline_custom_emoji_ids,
+        "applied_pin_events": pinning.load_applied_pin_events(config.settings.base_dir),
         "last_sender": "",
         "current_export_date": None,
         "stop": False,
