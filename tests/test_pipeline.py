@@ -138,6 +138,94 @@ class PipelineTests(unittest.TestCase):
         with config.use_settings(self.settings()):
             self.assertEqual(progress.load_id_map(), {"2": 1001, "3": 1002})
 
+    def test_pin_service_event_is_pinned_when_encountered_and_migrated_as_reply(self):
+        fakes.write_export(self.folder.name, [
+            fakes.message(1, fakes.text("message to be pinned")),
+            '<div class="message service" id="message2">'
+            '<div class="body details">'
+            '<div class="pull_right date details" '
+            'title="12.03.2023 10:02:17 UTC+02:00">10:02</div>'
+            'Alice pinned <a href="#go_to_message1">this message</a>'
+            '</div></div>',
+            fakes.message(3, fakes.text("after the pin event")),
+        ])
+        client, _, _ = self.run_once()
+
+        pin_call = client.kinds("pin_message")[0]
+        self.assertEqual(pin_call[1], 1001)
+        self.assertFalse(pin_call[2]["notify"])
+        event_call = [
+            call for call in client.kinds("send_message")
+            if "Alice pinned this message" in call[1]
+        ][0]
+        self.assertEqual(
+            event_call[1],
+            "Telegram service event\n\n"
+            "10:02Alice pinned this message",
+        )
+        self.assertEqual(event_call[2]["reply_to"], 1001)
+        ordered = [
+            call[0] for call in client.calls
+            if call[0] in ("send_message", "pin_message")
+        ]
+        self.assertEqual(
+            ordered,
+            ["send_message", "pin_message", "send_message", "send_message"],
+        )
+        with open(self.path("migration_pins_report.jsonl"), encoding="utf-8") as handle:
+            report = [json.loads(line) for line in handle]
+        self.assertEqual(report[0]["event_src_id"], "2")
+        self.assertEqual(report[0]["target_src_id"], "1")
+        self.assertEqual(report[0]["target_dst_id"], 1001)
+        self.assertEqual(report[0]["timestamp"], "2023-03-12 10:02:17")
+        self.assertEqual(report[0]["status"], "pinned")
+
+    def test_pin_event_does_not_change_labels_on_following_normal_messages(self):
+        fakes.write_export(self.folder.name, [
+            fakes.message(1, fakes.text("before pin"), sender="Alice", minute=1),
+            '<div class="message service" id="message2">'
+            '<div class="body details">Alice pinned '
+            '<a href="#go_to_message1">this message</a></div></div>',
+            fakes.message(3, fakes.text("after pin"), sender="", classes="joined", minute=3),
+        ])
+        client, _, _ = self.run_once()
+
+        normal_messages = [
+            text for text in client.texts()
+            if "before pin" in text or "after pin" in text
+        ]
+        self.assertEqual(normal_messages, [
+            "Alice\n12 March 2023 · 10:01\n\nbefore pin",
+            "Alice\n12 March 2023 · 10:03\n\nafter pin",
+        ])
+
+    def test_existing_pin_event_mapping_still_restores_a_missing_pin_without_resending_event(self):
+        fakes.write_export(self.folder.name, [
+            fakes.message(1, fakes.text("message to be pinned")),
+            '<div class="message service" id="message2">'
+            '<div class="body details">Alice pinned '
+            '<a href="#go_to_message1">this message</a></div></div>',
+        ])
+        self.run_once()
+        os.remove(self.path("migration_pins_report.jsonl"))
+
+        client, _, _ = self.run_once()
+        self.assertEqual(len(client.kinds("pin_message")), 1)
+        self.assertEqual(client.kinds("send_message"), [])
+
+    def test_pin_service_events_are_restored_when_service_archiving_is_disabled(self):
+        fakes.write_export(self.folder.name, [
+            fakes.message(1, fakes.text("message to be pinned")),
+            '<div class="message service" id="message2">'
+            '<div class="body details">Alice pinned '
+            '<a href="#go_to_message1">this message</a></div></div>',
+        ])
+        client, _, _ = self.run_once(preserve_service_messages=False)
+        self.assertEqual(len(client.kinds("pin_message")), 1)
+        self.assertEqual(client.texts(), [
+            "Alice\n12 March 2023 · 10:01\n\nmessage to be pinned"
+        ])
+
     def test_service_events_can_be_disabled(self):
         fakes.write_export(self.folder.name, [
             '<div class="message service" id="message-1">'
@@ -2337,77 +2425,6 @@ class PipelineTests(unittest.TestCase):
         with config.use_settings(self.settings()):
             mapped = progress.load_id_map()
         self.assertEqual(set(mapped), {"881", "882"})
-
-
-    def test_pin_service_event_pins_the_mapped_destination_message_in_order(self):
-        fakes.write_export(self.folder.name, [
-            '<div class="message service" id="message-1">'
-            '<div class="body details">12 March 2023</div></div>',
-            fakes.message(1, fakes.text("message to pin")),
-            '<div class="message service" id="message2">'
-            '<div class="body details">Alice pinned '
-            '<a href="#go_to_message1">this message</a></div></div>',
-            fakes.message(3, fakes.text("after the pin")),
-        ])
-
-        client, _, _ = self.run_once()
-
-        pin_calls = client.kinds("pin_message")
-        self.assertEqual(len(pin_calls), 1)
-        self.assertEqual(pin_calls[0][1], 1001)
-        self.assertEqual(pin_calls[0][2], {"notify": False})
-
-        names = [call[0] for call in client.calls]
-        first_send = names.index("send_message")
-        pin_index = names.index("pin_message")
-        self.assertGreater(pin_index, first_send)
-        self.assertLess(pin_index, len(names) - 1)
-        self.assertIn(
-            "Telegram service event\\n12 March 2023\\n\\nAlice pinned this message",
-            client.texts(),
-        )
-
-        with config.use_settings(self.settings()):
-            with open(self.path("migration_pins_report.jsonl"), encoding="utf-8") as handle:
-                report = [json.loads(line) for line in handle if line.strip()]
-        self.assertEqual(report, [{
-            "event_src": "2",
-            "target_src": "1",
-            "target_dst": 1001,
-            "status": "pinned",
-        }])
-
-    def test_pin_service_event_is_applied_when_service_archiving_is_disabled(self):
-        fakes.write_export(self.folder.name, [
-            '<div class="message service" id="message-1">'
-            '<div class="body details">12 March 2023</div></div>',
-            fakes.message(1, fakes.text("message to pin")),
-            '<div class="message service" id="message2">'
-            '<div class="body details">Alice pinned '
-            '<a href="#go_to_message1">this message</a></div></div>',
-        ])
-
-        client, _, _ = self.run_once(preserve_service_messages=False)
-
-        self.assertEqual(client.texts(), ["Alice\\n12 March 2023 · 10:01\\n\\nmessage to pin"])
-        self.assertEqual(len(client.kinds("pin_message")), 1)
-        self.assertTrue(os.path.isfile(self.path("migration_pins_report.jsonl")))
-
-    def test_pin_service_event_is_not_reapplied_on_resume(self):
-        fakes.write_export(self.folder.name, [
-            '<div class="message service" id="message-1">'
-            '<div class="body details">12 March 2023</div></div>',
-            fakes.message(1, fakes.text("message to pin")),
-            '<div class="message service" id="message2">'
-            '<div class="body details">Alice pinned '
-            '<a href="#go_to_message1">this message</a></div></div>',
-        ])
-
-        first, _, _ = self.run_once()
-        second, _, _ = self.run_once()
-
-        self.assertEqual(len(first.kinds("pin_message")), 1)
-        self.assertEqual(second.kinds("pin_message"), [])
 
 
 if __name__ == "__main__":
