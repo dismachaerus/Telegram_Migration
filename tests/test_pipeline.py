@@ -87,7 +87,7 @@ class PipelineTests(unittest.TestCase):
 
         self.assertEqual(
             client.texts(),
-            ["Alice\\n19 August 2026 · 21:46\\n\\nGMT date test"],
+            ["Alice\n19 August 2026 · 21:46\n\nGMT date test"],
         )
 
     def test_missing_media_only_message_is_sent_as_placeholder_not_skipped(self):
