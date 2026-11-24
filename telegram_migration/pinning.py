@@ -1,6 +1,6 @@
 """Restore each Telegram pin service event at its position in the export."""
 
-import json.
+import json
 import os
 
 
