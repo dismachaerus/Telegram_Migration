@@ -199,6 +199,52 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(report[0]["timestamp"], "2023-03-12 10:02:17")
         self.assertEqual(report[0]["status"], "pinned")
 
+    def test_failed_pin_api_call_is_reported_but_migration_continues(self):
+        fakes.write_export(self.folder.name, [
+            fakes.message(1, fakes.text("message to be pinned")),
+            '<div class="message service" id="message2">'
+            '<div class="body details">Alice pinned '
+            '<a href="#go_to_message1">this message</a></div></div>',
+            fakes.message(3, fakes.text("after failed pin")),
+        ])
+
+        async def fail_pin(self, channel, message, notify=True):
+            self.calls.append(("pin_message", int(message), {"notify": notify}))
+            raise RuntimeError("simulated pin API failure")
+
+        with patch.object(FakeTelegram, "pin_message", new=fail_pin):
+            client, output, _ = self.run_once()
+
+        self.assertIn("message to be pinned", client.texts()[0])
+        self.assertTrue(any("Alice pinned this message" in text for text in client.texts()))
+        self.assertTrue(any("after failed pin" in text for text in client.texts()))
+        self.assertIn("PIN WARNING event id=2", output)
+        self.assertIn("failed=0", output)
+        with open(self.path("migration_pins_report.jsonl"), encoding="utf-8") as handle:
+            report = [json.loads(line) for line in handle]
+        self.assertEqual(report[0]["status"], "failed")
+        with config.use_settings(self.settings()):
+            self.assertEqual(set(progress.load_id_map()), {"1", "2", "3"})
+
+    def test_unresolved_pin_target_is_reported_but_migration_continues(self):
+        fakes.write_export(self.folder.name, [
+            '<div class="message service" id="message2">'
+            '<div class="body details">Alice pinned '
+            '<a href="#go_to_message999">this message</a></div></div>',
+            fakes.message(3, fakes.text("after unresolved pin")),
+        ])
+        client, output, _ = self.run_once()
+
+        self.assertTrue(any("Alice pinned this message" in text for text in client.texts()))
+        self.assertTrue(any("after unresolved pin" in text for text in client.texts()))
+        self.assertIn("PIN WARNING event id=2", output)
+        self.assertIn("failed=0", output)
+        with open(self.path("migration_pins_report.jsonl"), encoding="utf-8") as handle:
+            report = [json.loads(line) for line in handle]
+        self.assertEqual(report[0]["status"], "unresolved")
+        with config.use_settings(self.settings()):
+            self.assertEqual(set(progress.load_id_map()), {"2", "3"})
+
     def test_pin_event_does_not_change_labels_on_following_normal_messages(self):
         fakes.write_export(self.folder.name, [
             fakes.message(1, fakes.text("before pin"), sender="Alice", minute=1),
