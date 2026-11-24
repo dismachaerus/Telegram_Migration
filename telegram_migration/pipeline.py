@@ -75,14 +75,15 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
                     if not config.settings.dry_run:
                         progress.save_pending_replies(pending_replies)
                 elif pin_status in ("failed", "unresolved"):
-                    reason = (
-                        f"Pin service event {source_id} could not pin source message "
-                        f"{pin_target_src_id}; see migration_pins_report.jsonl."
+                    # Pin restoration is best-effort: pinning.py has already
+                    # recorded the failure in migration_pins_report.jsonl.
+                    # Preserve the service event and continue migrating; a
+                    # pin API failure must not be treated as message loss.
+                    print(
+                        f"    PIN WARNING event id={source_id}: "
+                        f"could not pin source message {pin_target_src_id}; "
+                        "continuing migration (see migration_pins_report.jsonl)."
                     )
-                    progress.log_failure("message" + source_id, reason)
-                    stats["failed"] += 1
-                    ctx["stop"] = True
-                    return
             data = service_data if config.settings.preserve_service_messages else None
         else:
             data = htmlexport.extract_message_data(elem)
