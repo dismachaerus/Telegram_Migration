@@ -1,6 +1,6 @@
 """Parse pin references and timestamps without changing service-message content."""
 
-import re.
+import re
 from datetime import datetime
 
 from .htmlutil import css_classes, find_first, inner_text
