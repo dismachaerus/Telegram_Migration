@@ -8,7 +8,8 @@ from lxml import etree
 from telethon import TelegramClient
 from telethon.tl import types as tl
 
-from . import attribution, album, bigfiles, cli, config, customemoji, htmlexport, mediatools, progress, reaction_archive, replylinks, sending, uploads
+from . import attribution, album, bigfiles, cli, config, customemoji, htmlexport, mediatools, pinning, progress, reaction_archive, replylinks, sending, uploads
+from .service_events import extract_pinned_message_id, extract_pin_event_timestamp
 from .htmlutil import css_classes
 from .message_dispatch import _print_dry_run, _send_migrated_message
 from .constants import STICKER_KINDS
@@ -44,20 +45,59 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             mark_completed = True
             return
         classes = css_classes(elem)
+        pin_target_src_id = None
+        pin_status = None
         if "service" in classes:
             date_separator = htmlexport.extract_date_separator(elem)
             if date_separator is not None:
                 ctx["current_export_date"] = date_separator
                 ctx["last_forward_name"] = ""
                 return
-            data = (htmlexport.extract_service_event_data(
-                elem, ctx.get("current_export_date")
-            ) if config.settings.preserve_service_messages else None)
+
+            pin_target_src_id = extract_pinned_message_id(elem)
+            service_data = htmlexport.extract_service_event_data(
+                elem, ctx.get("current_export_date"),
+            )
+            if service_data is not None and pin_target_src_id:
+                service_data["reply_src_id"] = str(pin_target_src_id)
+            if pin_target_src_id:
+                pin_status = await pinning.pin_service_event(
+                    client, channel, source_id, pin_target_src_id, id_map,
+                    ctx["source_ids"], ctx["processed_source_ids"],
+                    extract_pin_event_timestamp(
+                        elem, ctx.get("current_export_date")
+                    ),
+                    os.path.join(config.settings.base_dir, "migration_pins_report.jsonl"),
+                    dry_run=config.settings.dry_run,
+                )
+                if pin_status == "deferred":
+                    pending_replies[source_id] = str(pin_target_src_id)
+                    if not config.settings.dry_run:
+                        progress.save_pending_replies(pending_replies)
+                elif pin_status in ("failed", "unresolved"):
+                    # Pin restoration is best-effort: pinning.py has already
+                    # recorded the failure in migration_pins_report.jsonl.
+                    # Preserve the service event and continue migrating; a
+                    # pin API failure must not be treated as message loss.
+                    print(
+                        f"    PIN WARNING event id={source_id}: "
+                        f"could not pin source message {pin_target_src_id}; "
+                        "continuing migration (see migration_pins_report.jsonl)."
+                    )
+            data = service_data if config.settings.preserve_service_messages else None
         else:
             data = htmlexport.extract_message_data(elem)
 
         if data is None:
             ctx["last_forward_name"] = ""
+            if pin_status == "deferred":
+                # Service-event preservation may be disabled, but its pin still
+                # has to wait until the referenced source message is migrated.
+                return
+            if pin_target_src_id and source_id in pending_replies:
+                pending_replies.pop(source_id, None)
+                if not config.settings.dry_run:
+                    progress.save_pending_replies(pending_replies)
             if "service" in classes and source_id:
                 stats["skipped"] += 1
             mark_completed = bool(source_id)
@@ -121,6 +161,10 @@ async def _process_message(elem, client, channel, id_map, partial, pending_repli
             return
 
         if source_id in id_map or source_id in ctx["manual_done"]:
+            if pin_status == "deferred":
+                # The service event itself may already be migrated; retain its
+                # pending pin operation without duplicating the archived reply.
+                return
             was_pending = source_id in pending_replies
             pending_replies.pop(source_id, None)
             if was_pending and not config.settings.dry_run:

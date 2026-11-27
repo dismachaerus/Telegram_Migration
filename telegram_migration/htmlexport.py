@@ -13,7 +13,7 @@ from .textutil import sanitize_text
 from .constants import HTML_FILE_PATTERN
 
 
-_DATE_SUFFIX = re.compile(r"\s*UTC[+-]\d{2}:\d{2}\s*$|\s*UTC\s*$")
+_DATE_SUFFIX = re.compile(r"\s*(?:UTC|GMT)(?:[+-]\d{2}:\d{2})?\s*$", re.IGNORECASE)
 
 
 def discover_export_files(base_dir):
